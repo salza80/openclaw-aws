@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib/core';
-import { MoltbotawsStack } from '../lib/moltbotaws-stack';
+import { MoltbotawsStack } from '../lib/moltbotaws-stack2';
 
 const app = new cdk.App();
 new MoltbotawsStack(app, 'MoltbotawsStack', {
