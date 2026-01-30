@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "projectName": "my-openclaw-bot",
+  "aws": {
+    "region": "us-east-1",
+    "profile": "default"
+  },
+  "instance": {
+    "type": "t3.micro",
+    "name": "openclaw-my-bot",
+    "nodeVersion": 22,
+    "amiType": "amazon-linux-2"
+  },
+  "features": {
+    "cloudWatchLogs": true
+  },
+  "stack": {
+    "name": "OpenclawStack-my-bot"
+  }
+}

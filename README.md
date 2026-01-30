@@ -1,32 +1,38 @@
-# Moltbotaws - OpenClaw AWS CDK Deployment
+# openclaw-aws
 
-A secure, cloud-based deployment of the OpenClaw AI agent (moltbot) on AWS infrastructure using AWS CDK.
+Deploy OpenClaw AI agents on AWS with a simple, interactive CLI.
 
-## Overview
+## Features
 
-This project automates the deployment of an OpenClaw conversational AI agent on AWS with security best practices:
+- 🚀 **One-command deployment** - Interactive setup wizard
+- 🔒 **Secure by default** - SSM-only access, no SSH, no open ports
+- 💰 **Cost-effective** - ~$7.50/month (t3.micro free tier eligible)
+- 🎯 **Easy management** - Simple commands for all operations
+- 📦 **Automated setup** - Node.js and OpenClaw CLI pre-installed
 
-- **Infrastructure as Code**: AWS CDK (TypeScript) defines all resources
-- **Zero Trust Security**: No SSH, no open inbound ports, SSM-only access
-- **Automated Setup**: EC2 instance with Node.js and OpenClaw CLI pre-installed
-- **Secure Management**: All access audited via AWS Systems Manager
-- **Private Dashboard**: Access OpenClaw UI via SSM port forwarding (not exposed to internet)
+## Quick Start
 
-## Architecture
+```bash
+# Initialize configuration (interactive wizard)
+openclaw-aws init
 
-- **EC2 Instance**: Amazon Linux 2, t3.micro
-- **Security**: No inbound rules, SSM-only access, least-privilege IAM
-- **Networking**: Default VPC, public subnet (for outbound internet only)
-- **Management**: AWS Systems Manager (SSM) Session Manager
+# Deploy to AWS
+openclaw-aws deploy
+
+# Connect and run onboarding
+openclaw-aws onboard
+
+# Access dashboard
+openclaw-aws dashboard
+```
 
 ## Prerequisites
 
-Before deploying, ensure you have:
+Before using openclaw-aws, ensure you have:
 
-1. **AWS CLI** installed and configured with credentials
-2. **AWS CDK** installed: `npm install -g aws-cdk`
-3. **Node.js** (version 22 or higher)
-4. **SSM Plugin** for AWS CLI:
+1. **Node.js 18+** installed
+2. **AWS CLI** configured with credentials (`aws configure`)
+3. **AWS SSM Plugin** installed:
    ```bash
    # macOS
    brew install --cask session-manager-plugin
@@ -34,575 +40,286 @@ Before deploying, ensure you have:
    # Ubuntu/Debian
    curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o "session-manager-plugin.deb"
    sudo dpkg -i session-manager-plugin.deb
-   
-   # Windows (PowerShell as Administrator)
-   # Download from: https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe
    ```
 
-5. **Anthropic API Key** or OAuth credentials for Claude (recommended - get from https://console.anthropic.com/)
-6. **(Optional) Brave Search API Key** for web search capabilities
+4. **Anthropic API Key** (for Claude) from https://console.anthropic.com/
+5. **(Optional) Brave Search API Key** for web search capabilities
 
-## Quick Start Commands
+## Installation
 
-This project includes npm scripts for common tasks. Here's a quick reference:
-
-```bash
-npm run deploy      # Build and deploy stack (no approval prompt)
-npm run outputs     # Show all stack outputs (connection commands)
-npm run connect     # Connect to instance via SSM
-npm run dashboard   # Forward dashboard port (access at http://localhost:18789)
-npm run status      # Check instance SSM status
-npm run logs        # View instance console output
-npm run destroy     # Remove all AWS resources
-```
-
-## Deployment
-
-### 1. Install Dependencies
+### From GitHub Packages (Private)
 
 ```bash
-npm install
+# First, authenticate with GitHub Packages
+echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
+
+# Install globally
+npm install -g @YOUR_GITHUB_USERNAME/openclaw-aws
 ```
 
-### 2. Bootstrap CDK (First Time Only)
-
-If this is your first CDK deployment in this AWS account/region:
+### From Git Repository
 
 ```bash
-npx cdk bootstrap
+npm install -g git+ssh://git@github.com/YOUR_GITHUB_USERNAME/openclaw-aws.git
 ```
 
-### 3. Deploy the Stack
-
-**Option A: Using the convenience script (recommended)**
-```bash
-npm run deploy
-```
-
-**Option B: Manual deployment**
-```bash
-npm run build
-npx cdk deploy
-```
-
-The deployment will output three important values:
-- **InstanceId**: Used for SSM connections
-- **SSMConnectCommand**: Command to connect to the instance
-- **SSMPortForwardCommand**: Command to access the dashboard
-
-Save these outputs - you'll need them for the next steps.
-
-**Quick access to outputs anytime:**
-```bash
-npm run outputs
-```
-
-## Post-Deployment Setup
-
-### Step 1: Connect to the EC2 Instance via SSM
-
-Wait 2-3 minutes after deployment for the instance to fully initialize, then connect:
-
-**Option A: Using the convenience script (recommended)**
-```bash
-npm run connect
-```
-
-**Option B: Manual connection**
-```bash
-aws ssm start-session --target <INSTANCE_ID>
-```
-
-You should see a shell prompt like:
-```
-Starting session with SessionId: your-session-id
-sh-4.2$
-```
-
-Switch to the ec2-user home directory:
-```bash
-sudo su - ec2-user
-```
-
-**Tip:** Check if the instance is ready:
-```bash
-npm run status
-```
-
-### Step 2: Run OpenClaw Onboarding
-
-The OpenClaw CLI is already installed. Now run the interactive onboarding wizard:
+### Local Development
 
 ```bash
+# Clone the repo
+git clone https://github.com/YOUR_GITHUB_USERNAME/openclaw-aws.git
+cd openclaw-aws
+
+# Install dependencies
+pnpm install
+
+# Build
+pnpm run build
+
+# Link for local testing
+npm link
+```
+
+## Commands
+
+### `openclaw-aws init`
+
+Interactive setup wizard to create your deployment configuration.
+
+**Options:**
+- `--region <region>` - AWS region (default: prompts)
+- `--instance-type <type>` - EC2 instance type (default: prompts)
+- `--yes, -y` - Use defaults, no prompts
+
+**Example:**
+```bash
+# Interactive mode
+openclaw-aws init
+
+# Non-interactive with defaults
+openclaw-aws init --yes --region us-east-1
+```
+
+### `openclaw-aws deploy`
+
+Deploy infrastructure to AWS.
+
+**Options:**
+- `--auto-approve` - Skip confirmation prompt
+- `--config <path>` - Use specific config file
+
+**Example:**
+```bash
+openclaw-aws deploy
+openclaw-aws deploy --auto-approve
+```
+
+### `openclaw-aws connect`
+
+Connect to your EC2 instance via SSM.
+
+**Example:**
+```bash
+openclaw-aws connect
+```
+
+### `openclaw-aws onboard`
+
+Connect to instance with onboarding instructions and guidance.
+
+**Example:**
+```bash
+openclaw-aws onboard
+
+# Once connected, run:
 openclaw onboard --install-daemon
 ```
 
-The wizard will guide you through:
+### `openclaw-aws dashboard`
 
-#### A. Choose Gateway Type
-- Select **Local** (the instance will run its own gateway)
+Forward port 18789 to access the OpenClaw dashboard locally.
 
-#### B. Configure Authentication
-You'll need to provide LLM credentials. Recommended options:
+**Options:**
+- `--no-open` - Don't open browser automatically
 
-**Option 1: Anthropic API Key (Recommended)**
-- Select "Anthropic API Key" when prompted
-- Enter your API key from https://console.anthropic.com/
-- The wizard will store it securely in `~/.openclaw/agents/<agentId>/agent/auth-profiles.json`
-
-**Option 2: Claude OAuth (claude setup-token)**
-- If you have Claude Code, run `claude setup-token` first
-- The wizard will detect and import these credentials
-
-**Option 3: OpenAI**
-- Select OpenAI and enter your API key from https://platform.openai.com/
-
-#### C. Configure Channels (Communication Platforms)
-
-Choose which platforms you want to connect:
-
-**WhatsApp** (Most Popular)
-- Select WhatsApp when prompted
-- You'll get a QR code in the terminal
-- Open WhatsApp on your phone → Settings → Linked Devices → Link a Device
-- Scan the QR code
-- Default: DM safety enabled (unknown contacts require pairing approval)
-
-**Telegram**
-- Create a bot via @BotFather on Telegram
-- Copy the bot token
-- Paste it when the wizard asks
-- Your first DM will require pairing approval (see below)
-
-**Discord**
-- Create a Discord application at https://discord.com/developers/applications
-- Create a bot and copy the token
-- Paste it when the wizard asks
-
-**Skip Channels** (Optional)
-- You can skip channel setup and use only the web dashboard
-- Configure channels later with: `openclaw channels configure`
-
-#### D. Install Background Service
-- Select **Yes** to install the systemd service
-- This ensures OpenClaw runs automatically on boot
-- **Important**: Must use Node runtime (NOT Bun) for WhatsApp/Telegram
-
-#### E. Gateway Token
-- The wizard generates a secure token automatically
-- This token protects your dashboard and API
-- Stored in `~/.openclaw/config/gateway.json` under `gateway.auth.token`
-
-After onboarding completes, verify the service is running:
-
+**Example:**
 ```bash
-openclaw status
-openclaw health
-systemctl status openclaw
+openclaw-aws dashboard
+# Opens http://localhost:18789 in your browser
 ```
 
-### Step 3: Approve DM Pairings (If Using WhatsApp/Telegram)
+### `openclaw-aws status`
 
-For security, unknown contacts are blocked by default until you approve them.
+Check deployment and instance status.
 
-**When someone first messages your bot:**
-1. They'll receive a pairing code (e.g., "4-digit code")
-2. Messages won't be processed until you approve
-
-**To approve:**
-
+**Example:**
 ```bash
-# List pending pairings
-openclaw pairing list whatsapp
-openclaw pairing list telegram
-
-# Approve a specific pairing
-openclaw pairing approve whatsapp <CODE>
-openclaw pairing approve telegram <CODE>
+openclaw-aws status
 ```
 
-After approval, the contact can chat with the bot normally.
+### `openclaw-aws outputs`
 
-### Step 4: Access the OpenClaw Dashboard
+Show CloudFormation stack outputs.
 
-The OpenClaw dashboard runs on port 18789 but is NOT exposed to the internet. Access it securely via SSM port forwarding.
-
-#### On Your Local Machine (New Terminal Window):
-
-**Option A: Using the convenience script (recommended)**
+**Example:**
 ```bash
-npm run dashboard
+openclaw-aws outputs
 ```
 
-**Option B: Manual port forwarding**
+### `openclaw-aws destroy`
+
+Delete all AWS resources.
+
+**Options:**
+- `--force` - Skip confirmation
+- `--keep-config` - Keep configuration file
+
+**Example:**
 ```bash
-aws ssm start-session \
-  --target <INSTANCE_ID> \
-  --document-name AWS-StartPortForwardingSession \
-  --parameters "portNumber=18789,localPortNumber=18789"
+openclaw-aws destroy
+
+# Force delete without confirmation
+openclaw-aws destroy --force
 ```
 
-**Keep this terminal window open** while you use the dashboard.
+## Configuration
 
-#### Access the Dashboard in Your Browser:
+Configuration is stored in `.openclaw-aws/config.json` in your project directory.
 
-1. Open http://localhost:18789 in your browser
-2. You'll see the OpenClaw Control UI
-3. Click the settings icon (gear) in the top right
-4. Paste your gateway token (from onboarding) into the auth field
-5. Click Save/Connect
-
-You can now:
-- Chat with the agent directly in the browser
-- View and manage channels
-- Monitor conversations
-- Configure agent settings
-
-#### Get Your Gateway Token (If Needed):
-
-If you need to retrieve the token later:
-
-```bash
-# On the EC2 instance via SSM:
-cat ~/.openclaw/config/gateway.json | grep -A 1 '"token"'
+**Example configuration:**
+```json
+{
+  "version": "1.0",
+  "projectName": "my-openclaw-bot",
+  "aws": {
+    "region": "us-east-1",
+    "profile": "default"
+  },
+  "instance": {
+    "type": "t3.micro",
+    "name": "openclaw-my-bot",
+    "nodeVersion": 22,
+    "amiType": "amazon-linux-2"
+  },
+  "features": {
+    "cloudWatchLogs": true
+  },
+  "stack": {
+    "name": "OpenclawStack-my-bot"
+  }
+}
 ```
 
-## Common Operations
+## Architecture
 
-### Quick Commands (npm scripts)
+The deployment creates:
 
-```bash
-# Connect to instance
-npm run connect
+- **EC2 Instance** - Amazon Linux 2, t3.micro (or your chosen type)
+- **Security Group** - No inbound rules (SSM only)
+- **IAM Role** - Least-privilege with SSM access
+- **VPC** - Uses default VPC, public subnet (for outbound only)
 
-# Access dashboard (then browse to http://localhost:18789)
-npm run dashboard
+## Security
 
-# Check if instance is SSM-ready
-npm run status
+- ✅ **No SSH** - All access via AWS Systems Manager (SSM)
+- ✅ **No Open Ports** - Security group has zero inbound rules
+- ✅ **IAM Least Privilege** - Only SSM permissions
+- ✅ **Private Dashboard** - Access via SSM port forwarding only
+- ✅ **Audited Access** - All SSM sessions are logged
 
-# View all stack outputs
-npm run outputs
+## Cost Breakdown
 
-# View instance console logs
-npm run logs
-```
+**Monthly AWS Costs:**
+- EC2 t3.micro: ~$7.50/month (free tier: 750 hours/month for 12 months)
+- SSM: No additional cost
+- Data Transfer: Minimal (mostly outbound API calls)
 
-### Instance Management
+**Variable Costs:**
+- Anthropic Claude API: Usage-based
+- Other LLM APIs: Usage-based
 
-#### Connect to Instance
-```bash
-# Quick connect (recommended)
-npm run connect
-
-# Or manually
-aws ssm start-session --target <INSTANCE_ID>
-```
-
-#### Check Instance Status
-```bash
-# Check SSM connectivity
-npm run status
-
-# View console output (troubleshooting UserData execution)
-npm run logs
-```
-
-### OpenClaw Operations (After Connecting via SSM)
-
-#### Check OpenClaw Status
-```bash
-# Connect first, then switch to ec2-user
-sudo su - ec2-user
-
-# Check status
-openclaw status --all
-openclaw health
-systemctl status openclaw
-```
-
-#### View OpenClaw Logs
-```bash
-# Connect via SSM first, then:
-sudo su - ec2-user
-journalctl -u openclaw -f
-```
-
-#### Restart OpenClaw Service
-```bash
-# Connect via SSM first, then:
-sudo systemctl restart openclaw
-systemctl status openclaw
-```
-
-#### Re-run Onboarding (Add Channels Later)
-```bash
-# Connect via SSM first, then:
-sudo su - ec2-user
-openclaw channels configure
-# Or for WhatsApp QR login:
-openclaw channels login
-```
-
-#### Send a Test Message
-```bash
-# From your local machine (with port forward active) or via SSM:
-openclaw message send --target <phone_number> --message "Hello from OpenClaw"
-```
-
-#### Security Audit
-```bash
-# Connect via SSM first, then:
-sudo su - ec2-user
-openclaw security audit --deep
-```
+**Total Infrastructure**: ~$7.50/month after free tier
 
 ## Troubleshooting
 
-### Instance Not Appearing in SSM
+### Instance not appearing in SSM
 
-Wait 2-3 minutes after deployment for SSM agent to register. Check:
-
+Wait 2-3 minutes after deployment. Check status:
 ```bash
-# List SSM-managed instances
-aws ssm describe-instance-information --query "InstanceInformationList[?starts_with(InstanceId, 'i-')].[InstanceId,PingStatus,ComputerName]" --output table
+openclaw-aws status
 ```
 
-If not listed after 5 minutes, check EC2 console for the instance logs.
+### "Config file not found"
 
-### OpenClaw CLI Not Found
-
-The UserData script installs it automatically. If missing:
-
+Run the init command first:
 ```bash
-# Connect via SSM, then:
-sudo su - ec2-user
-npm install -g openclaw@latest
+openclaw-aws init
 ```
 
-### Gateway Not Starting
+### Deployment fails
 
-Check logs and auth configuration:
-
+Check AWS credentials:
 ```bash
-journalctl -u openclaw -n 50
-openclaw health
-cat ~/.openclaw/config/gateway.json
+aws sts get-caller-identity
 ```
 
-### Port Forward Fails
-
-Ensure:
-1. SSM plugin is installed locally
-2. Instance has SSM connectivity (check above)
-3. OpenClaw gateway is running on the instance: `systemctl status openclaw`
-
-### WhatsApp QR Code Not Appearing
-
-Ensure:
-1. You're connected via SSM (interactive terminal required)
-2. Running as ec2-user: `sudo su - ec2-user`
-3. Gateway is using Node (NOT Bun): `ps aux | grep node`
-
-### Messages Not Processing
-
-Check pairing status:
-
+Ensure CDK is bootstrapped:
 ```bash
-openclaw pairing list <channel>
-openclaw pairing approve <channel> <code>
+cdk bootstrap aws://ACCOUNT-ID/REGION
 ```
 
-## Security Considerations
+### Port forwarding fails
 
-- **No SSH**: All access via SSM (audited, session-recorded)
-- **No Inbound Ports**: Security group has no inbound rules
-- **IAM Least Privilege**: Instance role only has SSM permissions
-- **Private Dashboard**: Access via SSM port forward only
-- **DM Safety**: Unknown contacts blocked by default (pairing approval required)
-- **Token Auth**: Gateway API protected by authentication token
-
-## Cost Estimate
-
-- **EC2 t3.micro**: ~$7.50/month (free tier: 750 hours/month for 12 months)
-- **SSM**: No additional cost
-- **Data Transfer**: Minimal (mostly outbound API calls)
-- **LLM API Costs**: Variable (Claude, GPT, etc.)
-
-**Total AWS Infrastructure**: ~$7.50/month after free tier
-
-## Cleanup / Uninstalling
-
-To completely remove the project and avoid ongoing charges:
-
-### Option 1: Using npm script (Recommended)
-
+Ensure SSM plugin is installed and instance is ready:
 ```bash
-npm run destroy
+openclaw-aws status
 ```
 
-### Option 2: Manual cleanup
+## Publishing to GitHub Packages
 
-```bash
-npx cdk destroy
-```
-
-Both methods will prompt for confirmation before deleting resources.
-
-### What Gets Deleted
-
-The destroy command will remove:
-- ✅ EC2 instance (including all data on the instance)
-- ✅ Security group
-- ✅ IAM role
-- ✅ CloudFormation stack
-
-### What Doesn't Get Deleted
-
-- ❌ Default VPC (it's looked up, not created by this stack)
-- ❌ CDK bootstrap resources (S3 bucket, IAM roles) - these are reusable for other CDK projects
-
-### Full Cleanup Checklist
-
-If you want to completely remove everything:
-
-1. **Destroy the stack**
+1. **Update package.json** with your GitHub username
+2. **Create GitHub repo** and push code
+3. **Generate GitHub token** with `write:packages` permission
+4. **Authenticate:**
    ```bash
-   npm run destroy
+   npm login --registry=https://npm.pkg.github.com
+   ```
+5. **Publish:**
+   ```bash
+   npm publish
    ```
 
-2. **Remove CDK bootstrap (optional - only if not using CDK for other projects)**
-   ```bash
-   aws cloudformation delete-stack --stack-name CDKToolkit
-   ```
-
-3. **Verify all resources deleted**
-   ```bash
-   # Check for any remaining instances
-   aws ec2 describe-instances --filters "Name=tag:Name,Values=moltbot-openclaw" --query "Reservations[].Instances[].[InstanceId,State.Name]" --output table
-   
-   # Check for the stack
-   aws cloudformation describe-stacks --stack-name MoltbotawsStack
-   # Should return: "Stack with id MoltbotawsStack does not exist"
-   ```
-
-4. **Remove local project files (if desired)**
-   ```bash
-   cd ..
-   rm -rf moltbotaws
-   ```
-
-### Cost After Deletion
-
-After running `npm run destroy`, you should incur:
-- **$0/month** - All billable resources are removed
-- If you kept CDK bootstrap: minimal S3 storage costs (typically < $0.01/month)
-
-### Troubleshooting Cleanup
-
-**If destroy fails:**
+## Development
 
 ```bash
-# Check what resources still exist
-aws cloudformation describe-stack-resources --stack-name MoltbotawsStack
+# Install dependencies
+pnpm install
 
-# Force delete via AWS Console:
-# 1. Go to CloudFormation console
-# 2. Select MoltbotawsStack
-# 3. Delete (with "Retain" option if needed)
-# 4. Manually delete any remaining resources from EC2 console
-```
+# Build
+pnpm run build
 
-**If you can't find the instance:**
+# Watch mode
+pnpm run watch
 
-```bash
-# List all your instances
-aws ec2 describe-instances --query "Reservations[].Instances[].[InstanceId,Tags[?Key=='Name'].Value|[0],State.Name]" --output table
-```
+# Link for local testing
+npm link
 
-## Project Structure
-
-```
-moltbotaws/
-├── bin/
-│   └── moltbotaws.ts          # CDK app entry point
-├── lib/
-│   └── moltbotaws-stack2.ts   # Main stack definition
-├── test/                       # Jest tests
-├── cdk.json                    # CDK configuration
-├── package.json                # Dependencies
-└── README.md                   # This file
-```
-
-## Command Reference
-
-### Convenience Scripts (npm)
-
-| Command | Description |
-|---------|-------------|
-| `npm run deploy` | Build TypeScript and deploy stack (no approval prompt) |
-| `npm run destroy` | Delete all stack resources |
-| `npm run outputs` | Show all stack outputs (connection commands, instance ID) |
-| `npm run connect` | Start SSM session to the instance |
-| `npm run dashboard` | Forward port 18789 for dashboard access |
-| `npm run status` | Check if instance is SSM-ready |
-| `npm run logs` | View instance console output (UserData execution) |
-| `npm run build` | Compile TypeScript to JavaScript |
-| `npm run watch` | Watch for changes and compile |
-| `npm run test` | Run Jest unit tests |
-
-### CDK Commands (Manual)
-
-| Command | Description |
-|---------|-------------|
-| `npx cdk deploy` | Deploy stack to AWS (with approval prompt) |
-| `npx cdk destroy` | Delete all stack resources (with confirmation) |
-| `npx cdk diff` | Compare deployed stack with current code |
-| `npx cdk synth` | Emit CloudFormation template (for review) |
-| `npx cdk ls` | List all stacks in the app |
-
-### AWS CLI Commands (Direct)
-
-These are used internally by the npm scripts, but can be run manually:
-
-```bash
-# Get instance ID
-aws cloudformation describe-stacks \
-  --stack-name MoltbotawsStack \
-  --query 'Stacks[0].Outputs[?OutputKey==`InstanceId`].OutputValue' \
-  --output text
-
-# Connect to instance
-aws ssm start-session --target <INSTANCE_ID>
-
-# Port forward for dashboard
-aws ssm start-session \
-  --target <INSTANCE_ID> \
-  --document-name AWS-StartPortForwardingSession \
-  --parameters "portNumber=18789,localPortNumber=18789"
-
-# Check SSM status
-aws ssm describe-instance-information \
-  --filters "Key=InstanceIds,Values=<INSTANCE_ID>" \
-  --query 'InstanceInformationList[0].[InstanceId,PingStatus,PlatformName]' \
-  --output table
-
-# View console logs
-aws ec2 get-console-output --instance-id <INSTANCE_ID> --output text
+# Test commands
+openclaw-aws --help
+openclaw-aws init
 ```
 
 ## Learn More
 
 - **OpenClaw Documentation**: https://docs.openclaw.ai/
 - **OpenClaw GitHub**: https://github.com/openclaw/openclaw
-- **AWS CDK Guide**: https://docs.aws.amazon.com/cdk/
+- **AWS CDK**: https://docs.aws.amazon.com/cdk/
 - **AWS Systems Manager**: https://docs.aws.amazon.com/systems-manager/
-
-## Support
-
-- OpenClaw Issues: https://github.com/openclaw/openclaw/issues
-- AWS CDK Issues: https://github.com/aws/aws-cdk/issues
 
 ## License
 
-This project is open source. OpenClaw is licensed under its own terms (see OpenClaw repository).
+MIT
+
+## Author
+
+Sally Mclean <smclean17@gmail.com>
