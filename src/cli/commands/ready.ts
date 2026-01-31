@@ -58,9 +58,36 @@ export const readyCommand: CommandModule<{}, ReadyArgs> = {
           new GetConsoleOutputCommand({ InstanceId: instanceId, Latest: true })
         );
         const consoleOutput = outputResponse.Output || '';
+        console.log("response output", consoleOutput);
         const progress = getInstallationProgress(consoleOutput);
 
         spinner.stop();
+
+        // Show last 15 lines of logs for debugging
+        console.log('\n' + chalk.bold('Recent Installation Logs:'));
+        console.log(chalk.gray('─'.repeat(60)));
+        const logLines = consoleOutput.split('\n').filter(line => 
+          line.includes('cloud-init') || 
+          line.includes('npm') || 
+          line.includes('node') ||
+          line.includes('openclaw') ||
+          line.includes('Complete') ||
+          line.includes('finished')
+        ).slice(-15);
+        
+        logLines.forEach(line => {
+          // Clean up ANSI codes and format
+          const cleanLine = line.replace(/\[\s*[\d.]+\]\s*cloud-init\[\d+\]:\s*/, '');
+          if (cleanLine.includes('error') || cleanLine.includes('Error') || cleanLine.includes('FAILED')) {
+            console.log(chalk.red(cleanLine));
+          } else if (cleanLine.includes('Complete') || cleanLine.includes('finished')) {
+            console.log(chalk.green(cleanLine));
+          } else {
+            console.log(chalk.gray(cleanLine));
+          }
+        });
+        console.log(chalk.gray('─'.repeat(60)));
+        console.log('');
 
         if (status.isComplete && status.isOpenClawInstalled) {
           // Installation complete!

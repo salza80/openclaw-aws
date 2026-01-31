@@ -30,19 +30,17 @@ export class MoltbotawsStack extends Stack {
     // Note: Onboarding must be done manually via SSM (requires interactive input)
     const userData = UserData.forLinux();
     userData.addCommands(
-      'yum update -y',
-      'curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -',
-      'yum install -y nodejs git',
-      'npm install -g openclaw@latest',
-      'echo "OpenClaw CLI installed successfully. Connect via SSM to run: openclaw onboard --install-daemon" > /home/ec2-user/SETUP_INSTRUCTIONS.txt',
-      'chown ec2-user:ec2-user /home/ec2-user/SETUP_INSTRUCTIONS.txt'
+      'dnf update -y',
+      'dnf install -y nodejs22 git',  // Install Node.js 22 and git
+      'npm install -g openclaw@latest',  // Install OpenClaw
+      'echo "Ready" > /tmp/openclaw-ready'
     );
 
     // EC2 instance
     const instance = new Instance(this, 'MoltbotEc2', {
       vpc,
       instanceType: InstanceType.of(InstanceClass.T3, InstanceSize.MICRO),
-      machineImage: new AmazonLinuxImage({ generation: AmazonLinuxGeneration.AMAZON_LINUX_2 }),
+      machineImage: new AmazonLinuxImage({ generation: AmazonLinuxGeneration.AMAZON_LINUX_2023 }),
       securityGroup: sg,
       role,
       userData,
