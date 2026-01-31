@@ -55,8 +55,8 @@ export function validateConfig(config: OpenClawConfig): void {
     
     if (!config.instance.amiType) {
       errors.push('Missing instance.amiType');
-    } else if (!['amazon-linux-2', 'amazon-linux-2023'].includes(config.instance.amiType)) {
-      errors.push('instance.amiType must be either "amazon-linux-2" or "amazon-linux-2023"');
+    } else if (config.instance.amiType !== 'amazon-linux-2023') {
+      errors.push('Only Amazon Linux 2023 is supported (use "amazon-linux-2023")');
     }
   }
   

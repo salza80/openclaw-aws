@@ -43,13 +43,23 @@ export class OpenClawStack extends Stack {
       ],
     });
 
+    // Determine AMI and package manager based on config
+    const isAL2023 = config.amiType === 'amazon-linux-2023';
+    const amiGeneration = isAL2023 
+      ? AmazonLinuxGeneration.AMAZON_LINUX_2023 
+      : AmazonLinuxGeneration.AMAZON_LINUX_2;
+    const pkgManager = isAL2023 ? 'dnf' : 'yum';
+
     // UserData script to install Node.js and OpenClaw CLI
     // Note: Onboarding must be done manually via SSM (requires interactive input)
     const userData = UserData.forLinux();
+    
+    // Both AL2 and AL2023 need NodeSource for Node.js 22
+    // AL2023 default repos only have Node 18
     userData.addCommands(
-      'yum update -y',
+      `${pkgManager} update -y`,
       `curl -fsSL https://rpm.nodesource.com/setup_${config.nodeVersion}.x | bash -`,
-      'yum install -y nodejs git',
+      `${pkgManager} install -y nodejs git`,
       'npm install -g openclaw@latest',
       'echo "OpenClaw CLI installed successfully. Connect via SSM to run: openclaw onboard --install-daemon" > /home/ec2-user/SETUP_INSTRUCTIONS.txt',
       'chown ec2-user:ec2-user /home/ec2-user/SETUP_INSTRUCTIONS.txt'
@@ -63,7 +73,7 @@ export class OpenClawStack extends Stack {
     const instance = new Instance(this, 'OpenClawEc2', {
       vpc,
       instanceType: InstanceType.of(instanceClass, instanceSize),
-      machineImage: new AmazonLinuxImage({ generation: AmazonLinuxGeneration.AMAZON_LINUX_2 }),
+      machineImage: new AmazonLinuxImage({ generation: amiGeneration }),
       securityGroup: sg,
       role,
       userData,

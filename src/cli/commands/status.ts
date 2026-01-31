@@ -61,7 +61,11 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
             if (status.instanceStatus === 'running') {
               instanceStatusDisplay = chalk.green('✓ Running');
             } else if (status.instanceStatus === 'stopped') {
-              instanceStatusDisplay = chalk.yellow('⚠ Stopped');
+              instanceStatusDisplay = chalk.yellow('○ Stopped') + chalk.gray(' (not incurring compute costs)');
+            } else if (status.instanceStatus === 'stopping') {
+              instanceStatusDisplay = chalk.yellow('⚙ Stopping...');
+            } else if (status.instanceStatus === 'pending') {
+              instanceStatusDisplay = chalk.yellow('⚙ Starting...');
             } else if (status.instanceStatus === 'terminated') {
               instanceStatusDisplay = chalk.red('✗ Terminated');
             } else {
@@ -80,15 +84,30 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
           console.log(chalk.bold('Type:'), config.instance.type);
         }
 
-        // OpenClaw Gateway status
-        console.log('\n' + chalk.bold('OpenClaw Gateway:'));
-        console.log(chalk.bold('Status:'), chalk.yellow('⚠ Unknown'), chalk.gray('(run openclaw-aws dashboard to check)'));
+        // OpenClaw Gateway status (only if instance is running)
+        if (status.instanceStatus === 'running') {
+          console.log('\n' + chalk.bold('OpenClaw Gateway:'));
+          console.log(chalk.bold('Status:'), chalk.yellow('⚠ Unknown'), chalk.gray('(run openclaw-aws dashboard to check)'));
+        }
 
-        // Quick commands
+        // Quick commands based on instance state
         console.log('\n' + chalk.bold('Quick Commands:'));
-        console.log(`  ${chalk.cyan('openclaw-aws connect')}    - Connect via SSM`);
-        console.log(`  ${chalk.cyan('openclaw-aws dashboard')}  - Access dashboard`);
-        console.log(`  ${chalk.cyan('openclaw-aws destroy')}    - Delete deployment`);
+        
+        if (status.instanceStatus === 'running') {
+          console.log(`  ${chalk.cyan('openclaw-aws connect')}    - Connect via SSM`);
+          console.log(`  ${chalk.cyan('openclaw-aws dashboard')}  - Access dashboard`);
+          console.log(`  ${chalk.cyan('openclaw-aws stop')}       - Stop instance (save costs)`);
+          console.log(`  ${chalk.cyan('openclaw-aws restart')}    - Reboot instance`);
+        } else if (status.instanceStatus === 'stopped') {
+          console.log(`  ${chalk.cyan('openclaw-aws start')}      - Start instance`);
+          console.log(`  ${chalk.cyan('openclaw-aws destroy')}    - Delete deployment`);
+        } else {
+          console.log(`  ${chalk.cyan('openclaw-aws status')}     - Check current status`);
+        }
+        
+        if (status.instanceStatus === 'running' || status.instanceStatus === 'stopped') {
+          console.log(`  ${chalk.cyan('openclaw-aws destroy')}    - Delete deployment`);
+        }
 
       } catch (error) {
         spinner.fail('Failed to get status');

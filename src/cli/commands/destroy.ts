@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js';
 import { loadConfig, configExists, getConfigPath } from '../utils/config.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError, withRetry } from '../utils/errors.js';
+import { getCDKBinary } from '../utils/cdk.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -92,6 +93,9 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         }
       }
 
+      // Get CDK binary (local from node_modules or global fallback)
+      const cdkBinary = getCDKBinary();
+
       // Get CDK app path
       const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
       
@@ -109,7 +113,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
       
       try {
-        await execa('cdk', [
+        await execa(cdkBinary, [
           'destroy',
           '--app', `node ${cdkAppPath}`,
           '--force',

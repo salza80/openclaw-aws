@@ -28,6 +28,7 @@ const stackConfig: StackConfig = {
   instanceName: config.instance.name,
   instanceType: parseInstanceType(config.instance.type),
   nodeVersion: config.instance.nodeVersion,
+  amiType: config.instance.amiType,
   enableCloudWatchLogs: config.features.cloudWatchLogs,
 };
 

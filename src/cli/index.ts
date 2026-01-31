@@ -9,23 +9,31 @@ import onboardCommand from './commands/onboard.js';
 import dashboardCommand from './commands/dashboard.js';
 import statusCommand from './commands/status.js';
 import outputsCommand from './commands/outputs.js';
+import stopCommand from './commands/stop.js';
+import startCommand from './commands/start.js';
+import restartCommand from './commands/restart.js';
+import readyCommand from './commands/ready.js';
 
 yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
   .usage('$0 <command> [options]')
   .command(initCommand)
   .command(deployCommand)
+  .command(statusCommand)
+  .command(readyCommand)
   .command(connectCommand)
   .command(onboardCommand)
   .command(dashboardCommand)
-  .command(statusCommand)
   .command(outputsCommand)
+  .command(stopCommand)
+  .command(startCommand)
+  .command(restartCommand)
   .command(destroyCommand)
   .demandCommand(1, 'You must specify a command')
   .help()
   .alias('h', 'help')
   .version()
   .alias('v', 'version')
-  .epilogue('For more information, visit: https://github.com/YOUR_GITHUB_USERNAME/openclaw-aws')
+  .epilogue('For more information, visit: https://github.com/salza80/openclaw-aws')
   .strict()
   .parse();

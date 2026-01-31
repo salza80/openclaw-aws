@@ -1,1 +1,0 @@
-{"version":3,"file":"onboard.d.ts","sourceRoot":"","sources":["../../../src/cli/commands/onboard.ts"],"names":[],"mappings":"AAAA,OAAO,KAAK,EAAE,aAAa,EAAE,MAAM,OAAO,CAAC;AAO3C,UAAU,WAAW;IACnB,MAAM,CAAC,EAAE,MAAM,CAAC;CACjB;AAED,eAAO,MAAM,cAAc,EAAE,aAAa,CAAC,EAAE,EAAE,WAAW,CAwDzD,CAAC;AAEF,eAAe,cAAc,CAAC"}

@@ -9,7 +9,7 @@ export interface OpenClawConfig {
     type: string;
     name: string;
     nodeVersion: number;
-    amiType: 'amazon-linux-2' | 'amazon-linux-2023';
+    amiType: 'amazon-linux-2023';
   };
   features: {
     cloudWatchLogs: boolean;
@@ -27,6 +27,7 @@ export interface StackConfig {
     size: string;
   };
   nodeVersion: number;
+  amiType: 'amazon-linux-2023';
   enableCloudWatchLogs: boolean;
 }
 

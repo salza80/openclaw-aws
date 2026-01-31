@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js';
 import { loadConfig, getConfigDir, getOutputsPath } from '../utils/config.js';
 import { handleError, AWSError, withRetry, isRetryableError } from '../utils/errors.js';
 import { validatePreDeploy, validateNodeVersion } from '../utils/aws-validation.js';
+import { getCDKBinary } from '../utils/cdk.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -77,21 +78,24 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         }
       }
 
-      // Check for CDK CLI
-      const spinner = ora('Checking CDK CLI...').start();
-      try {
-        await execa('cdk', ['--version']);
-        spinner.succeed('CDK CLI found');
-      } catch {
-        spinner.fail('CDK CLI not found');
-        throw new AWSError('AWS CDK CLI not found', [
-          'Install: npm install -g aws-cdk',
-          'Or with homebrew: brew install aws-cdk'
-        ]);
-      }
+      // Get CDK binary (local from node_modules or global fallback)
+      const cdkBinary = getCDKBinary();
 
       // Get CDK app path
       const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
+      
+      // Verify CDK is available
+      const spinner = ora('Verifying CDK CLI...').start();
+      try {
+        await execa(cdkBinary, ['--version'], { reject: true });
+        spinner.succeed('CDK CLI ready');
+      } catch (error) {
+        spinner.fail('CDK CLI not available');
+        throw new AWSError('AWS CDK CLI not available', [
+          'Reinstall this package: npm install -g @salza80/openclaw-aws',
+          'Or install CDK globally: npm install -g aws-cdk'
+        ]);
+      }
       
       // Set up environment
       const env: Record<string, string | undefined> = {
@@ -111,7 +115,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         
         await withRetry(
           async () => {
-            await execa('cdk', [
+            await execa(cdkBinary, [
               'deploy',
               '--app', `node ${cdkAppPath}`,
               '--require-approval', 'never',
@@ -152,9 +156,12 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           }
 
           console.log('\n' + chalk.bold('Next steps:'));
-          console.log('  ' + chalk.cyan('1.') + ' Wait 2-3 minutes for instance to initialize');
-          console.log('  ' + chalk.cyan('2.') + ' Run: ' + chalk.yellow('openclaw-aws onboard'));
-          console.log('  ' + chalk.cyan('3.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
+          console.log('  ' + chalk.cyan('1.') + ' Wait 10-15 minutes for OpenClaw installation');
+          console.log('  ' + chalk.cyan('2.') + ' Check if ready: ' + chalk.yellow('openclaw-aws ready'));
+          console.log('  ' + chalk.cyan('3.') + ' When ready, run: ' + chalk.yellow('openclaw-aws onboard'));
+          console.log('  ' + chalk.cyan('4.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
+          
+          console.log('\n' + chalk.gray('💡 Tip: Use ') + chalk.cyan('openclaw-aws ready --watch') + chalk.gray(' to monitor installation progress'));
         }
 
       } catch (error) {

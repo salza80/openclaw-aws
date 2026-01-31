@@ -68,7 +68,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: argv.instanceType || 't3.micro',
             name: 'openclaw-my-openclaw-bot',
             nodeVersion: 22,
-            amiType: 'amazon-linux-2',
+            amiType: 'amazon-linux-2023',
           },
           features: {
             cloudWatchLogs: true,
@@ -132,7 +132,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: argv.instanceType || answers.instanceType,
             name: answers.instanceName,
             nodeVersion: 22,
-            amiType: 'amazon-linux-2',
+            amiType: 'amazon-linux-2023',
           },
           features: {
             cloudWatchLogs: answers.cloudWatchLogs,
@@ -153,6 +153,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       console.log(`  ${chalk.bold('Region:')} ${chalk.cyan(config.aws.region)}`);
       console.log(`  ${chalk.bold('Instance:')} ${chalk.cyan(config.instance.type)}`);
       console.log(`  ${chalk.bold('Name:')} ${chalk.cyan(config.instance.name)}`);
+      console.log(`  ${chalk.bold('AMI:')} ${chalk.cyan('Amazon Linux 2023')}`);
+      console.log(`  ${chalk.bold('Node.js:')} ${chalk.cyan('v22')}`);
       console.log(`  ${chalk.bold('Stack:')} ${chalk.cyan(config.stack.name)}`);
 
       // Ask to deploy now
