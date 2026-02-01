@@ -77,6 +77,10 @@ pnpm install
 pnpm run build
 
 # Link for local testing
+export PATH="/Users/smclean/.nvm/versions/node/v22.20.0/bin:$PATH"
+cd /Users/smclean/openclaw-aws
+npm link
+
 npm link
 ```
 

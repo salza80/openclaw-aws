@@ -11,10 +11,7 @@ import {
   UserData, 
   SubnetType, 
   Vpc,
-  InterfaceVpcEndpoint,
-  InterfaceVpcEndpointAwsService,
-  GatewayVpcEndpoint,
-  GatewayVpcEndpointAwsService
+  HttpTokens,
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
 import type { StackConfig } from '../cli/types/index.js';
@@ -56,39 +53,33 @@ export class OpenClawStack extends Stack {
 
     // UserData script to install Node.js and OpenClaw CLI
     // Note: Onboarding must be done manually via SSM (requires interactive input)
-    // Run installations in background to avoid blocking SSM Session Manager
     const userData = UserData.forLinux();
     
+    // Use sequential installation (not background) for reliability
     userData.addCommands(
-      // Quick system update (don't block SSM)
+      // Update system
+      `sudo systemctl enable amazon-ssm-agent`,
+      `sudo systemctl start amazon-ssm-agent`,
+      `sleep 10`,  // Give SSM Agent time to start
+  
       `${pkgManager} update -y`,
+      `${pkgManager} install -y nodejs22 git`,
+      `curl -fsSL https://openclaw.ai/install.sh | bash -`,
+      // Install Node.js 22 via NodeSource
+      //`${pkgManager} install -y nodejs22 git`,
+      // Install OpenClaw CLI
+      // 'npm install -g openclaw@latest',
+      // 'npm list -g openclaw || exit 1',
       
-      // Ensure SSM agent is running (AL2023 specific)
-      'systemctl enable amazon-ssm-agent',
-      'systemctl start amazon-ssm-agent',
+      // // Create marker file to indicate completion
+      'touch /tmp/openclaw-ready',
       
-      // Run heavy installations in background to not block SSM
-      // This allows SSM sessions to connect while installation continues
-      `nohup bash -c '
-        # Install Node.js 22 via NodeSource
-        curl -fsSL https://rpm.nodesource.com/setup_${config.nodeVersion}.x | bash -
-        ${pkgManager} install -y nodejs git
-        
-        # Install OpenClaw CLI
-        npm install -g openclaw@latest
-        
-        # Create completion markers
-        echo "OpenClaw CLI installed successfully. Connect via SSM to run: openclaw onboard --install-daemon" > /home/ec2-user/SETUP_INSTRUCTIONS.txt
-        chown ec2-user:ec2-user /home/ec2-user/SETUP_INSTRUCTIONS.txt
-        echo "READY" > /tmp/openclaw-install-complete
-        
-        # Log completion
-        echo "$(date): OpenClaw installation completed" >> /var/log/openclaw-setup.log
-      ' > /var/log/openclaw-setup.log 2>&1 &`,
+      // // Create setup instructions
+      'echo "OpenClaw CLI installed successfully. Connect via SSM to run: openclaw onboard --install-daemon" > /home/ec2-user/SETUP_INSTRUCTIONS.txt',
+      'chown ec2-user:ec2-user /home/ec2-user/SETUP_INSTRUCTIONS.txt',
       
-      // Leave a note that installation is running in background
-      'echo "OpenClaw installation running in background. Check progress: tail -f /var/log/openclaw-setup.log" > /home/ec2-user/README.txt',
-      'chown ec2-user:ec2-user /home/ec2-user/README.txt'
+      // // Log completion
+      'echo "$(date): OpenClaw installation completed" > /var/log/openclaw-install.log'
     );
 
     // Parse instance type from config
