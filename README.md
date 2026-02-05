@@ -126,6 +126,15 @@ Connect to your EC2 instance via SSM.
 ```bash
 openclaw-aws connect
 ```
+#### commands to view logs:
+```bash
+sudo cat /var/log/cloud-init-output.log
+Cloud-init general log:
+sudo cat /var/log/cloud-init.log
+User data script log (if any errors):
+sudo cat /var/log/user-data.log
+```
+
 
 ### `openclaw-aws onboard`
 

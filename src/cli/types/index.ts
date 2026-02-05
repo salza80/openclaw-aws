@@ -17,6 +17,11 @@ export interface OpenClawConfig {
   stack: {
     name: string;
   };
+  openclaw?: {
+    apiProvider: 'anthropic' | 'openrouter' | 'openai' | 'custom';
+    model?: string;
+    enableSandbox?: boolean;
+  };
 }
 
 export interface StackConfig {

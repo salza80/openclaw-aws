@@ -11,7 +11,33 @@ interface InitArgs {
   region?: string;
   instanceType?: string;
   yes?: boolean;
+  apiProvider?: string;
+  model?: string;
 }
+
+// API Provider options
+const API_PROVIDERS = [
+  { title: 'Anthropic (Claude)', value: 'anthropic', description: 'Official Anthropic API (claude.ai)' },
+  { title: 'OpenRouter', value: 'openrouter', description: 'Multi-provider API (100+ models)' },
+  { title: 'OpenAI (GPT)', value: 'openai', description: 'Official OpenAI API' },
+  { title: 'Custom', value: 'custom', description: 'Custom API endpoint' },
+];
+
+// Default models for each provider
+const DEFAULT_MODELS: Record<string, string> = {
+  anthropic: 'anthropic/claude-sonnet-4',
+  openrouter: 'openrouter/anthropic/claude-sonnet-4',
+  openai: 'gpt-4',
+  custom: 'custom-model',
+};
+
+// Environment variable names for each provider
+const API_KEY_ENV_VARS: Record<string, string> = {
+  anthropic: 'ANTHROPIC_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  custom: 'CUSTOM_API_KEY',
+};
 
 export const initCommand: CommandModule<{}, InitArgs> = {
   command: 'init',
@@ -26,6 +52,14 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       .option('instance-type', {
         type: 'string',
         describe: 'EC2 instance type',
+      })
+      .option('api-provider', {
+        type: 'string',
+        describe: 'API provider (anthropic, openrouter, openai, custom)',
+      })
+      .option('model', {
+        type: 'string',
+        describe: 'AI model to use',
       })
       .option('yes', {
         type: 'boolean',
@@ -58,6 +92,9 @@ export const initCommand: CommandModule<{}, InitArgs> = {
 
       if (argv.yes) {
         // Use defaults
+        const apiProvider = (argv.apiProvider as 'anthropic' | 'openrouter' | 'openai' | 'custom') || 'anthropic';
+        const model = argv.model || DEFAULT_MODELS[apiProvider];
+        
         config = {
           version: '1.0',
           projectName: 'my-openclaw-bot',
@@ -75,6 +112,11 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           },
           stack: {
             name: 'OpenclawStack-my-openclaw-bot',
+          },
+          openclaw: {
+            apiProvider,
+            model,
+            enableSandbox: true,
           },
         };
       } else {
@@ -109,6 +151,20 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             validate: (value) => validateInstanceName(value) === true ? true : String(validateInstanceName(value))
           },
           {
+            type: 'select',
+            name: 'apiProvider',
+            message: 'Select AI API Provider:',
+            choices: API_PROVIDERS,
+            initial: 0
+          },
+          {
+            type: 'text',
+            name: 'model',
+            message: 'AI Model:',
+            initial: (prev: any, values: any) => DEFAULT_MODELS[values.apiProvider],
+            hint: 'Press Enter for default model'
+          },
+          {
             type: 'confirm',
             name: 'cloudWatchLogs',
             message: 'Enable CloudWatch Logs?',
@@ -140,6 +196,11 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           stack: {
             name: `OpenclawStack-${answers.projectName}`,
           },
+          openclaw: {
+            apiProvider: answers.apiProvider,
+            model: answers.model,
+            enableSandbox: true,
+          },
         };
       }
 
@@ -156,6 +217,22 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       console.log(`  ${chalk.bold('AMI:')} ${chalk.cyan('Amazon Linux 2023')}`);
       console.log(`  ${chalk.bold('Node.js:')} ${chalk.cyan('v22')}`);
       console.log(`  ${chalk.bold('Stack:')} ${chalk.cyan(config.stack.name)}`);
+      console.log(`  ${chalk.bold('API Provider:')} ${chalk.cyan(config.openclaw?.apiProvider || 'anthropic')}`);
+      console.log(`  ${chalk.bold('Model:')} ${chalk.cyan(config.openclaw?.model || 'default')}`);
+
+      // Show required environment variable
+      const apiProvider = config.openclaw?.apiProvider || 'anthropic';
+      const envVarName = API_KEY_ENV_VARS[apiProvider];
+      console.log(`\n${chalk.yellow('⚠ Required before deployment:')}`);
+      console.log(`  Set your API key: export ${envVarName}=your-api-key`);
+      
+      if (apiProvider === 'openrouter') {
+        console.log(`  Get your key: https://openrouter.ai/keys`);
+      } else if (apiProvider === 'anthropic') {
+        console.log(`  Get your key: https://console.anthropic.com/settings/keys`);
+      } else if (apiProvider === 'openai') {
+        console.log(`  Get your key: https://platform.openai.com/api-keys`);
+      }
 
       // Ask to deploy now
       if (!argv.yes) {

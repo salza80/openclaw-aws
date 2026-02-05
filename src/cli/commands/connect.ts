@@ -92,6 +92,8 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
             'ssm', 'start-session',
             '--target', instanceId,
             '--region', config.aws.region,
+            '--document-name', 'AWS-StartInteractiveCommand',
+            '--parameters', 'command="sudo su - ubuntu"',
           ], { 
             stdio: 'inherit',
             env,
