@@ -5,16 +5,27 @@
     "region": "us-east-1",
     "profile": "default"
   },
+  "network": {
+    "useDefaultVpc": true
+  },
   "instance": {
     "type": "t3.micro",
     "name": "openclaw-my-bot",
-    "nodeVersion": 22,
-    "amiType": "amazon-linux-2"
+    "nodeVersion": 22
+  },
+  "security": {
+    "enableSsh": false,
+    "sshSourceIp": "0.0.0.0/0"
   },
   "features": {
     "cloudWatchLogs": true
   },
   "stack": {
     "name": "OpenclawStack-my-bot"
+  },
+  "openclaw": {
+    "apiProvider": "anthropic",
+    "model": "anthropic/claude-sonnet-4",
+    "enableSandbox": true
   }
 }

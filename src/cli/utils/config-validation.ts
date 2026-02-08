@@ -52,12 +52,6 @@ export function validateConfig(config: OpenClawConfig): void {
     } else if (config.instance.nodeVersion < 18) {
       errors.push('instance.nodeVersion must be 18 or higher');
     }
-    
-    if (!config.instance.amiType) {
-      errors.push('Missing instance.amiType');
-    } else if (config.instance.amiType !== 'amazon-linux-2023') {
-      errors.push('Only Amazon Linux 2023 is supported (use "amazon-linux-2023")');
-    }
   }
   
   // Validate features

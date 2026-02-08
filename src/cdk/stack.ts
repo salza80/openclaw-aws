@@ -10,14 +10,14 @@ import {
   UserData, 
   SubnetType, 
   Vpc,
+  IVpc,
   Peer,
   Port,
   CfnKeyPair,
-  CfnEIP,
-  CfnEIPAssociation,
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
+import { StringParameter, ParameterTier, ParameterType } from 'aws-cdk-lib/aws-ssm';
 import * as crypto from 'crypto';
 import type { StackConfig } from '../cli/types/index.js';
 
@@ -30,6 +30,9 @@ export interface OpenClawStackProps extends StackProps {
   gatewayPort?: number;
   browserPort?: number;
   customApiBaseUrl?: string;
+  useDefaultVpc: boolean;
+  enableSsh?: boolean;
+  sshSourceIp?: string;
 }
 
 export class OpenClawStack extends Stack {
@@ -49,29 +52,46 @@ export class OpenClawStack extends Stack {
       .digest('hex')
       .substring(0, 48);
 
-    // Create VPC with public subnet
-    const vpc = new Vpc(this, 'OpenClawVpc', {
-      cidr: '10.0.0.0/16',
-      maxAzs: 1,
-      subnetConfiguration: [
-        {
-          cidrMask: 24,
-          name: 'Public',
-          subnetType: SubnetType.PUBLIC,
-        },
-      ],
-      natGateways: 0,
-    });
+    // VPC Configuration - Use default or create new based on config
+    let vpc: IVpc;
+    if (props.useDefaultVpc) {
+      // Use default VPC (exists in every AWS account)
+      vpc = Vpc.fromLookup(this, 'DefaultVpc', {
+        isDefault: true,
+      });
+    } else {
+      // Create new dedicated VPC with public subnet
+      vpc = new Vpc(this, 'OpenClawVpc', {
+        cidr: '10.0.0.0/16',
+        maxAzs: 1,
+        subnetConfiguration: [
+          {
+            cidrMask: 24,
+            name: 'Public',
+            subnetType: SubnetType.PUBLIC,
+          },
+        ],
+        natGateways: 0,
+      });
+    }
 
-    // Security group: allow SSH and all outbound
+    // Security group - SSM access only by default
     const sg = new SecurityGroup(this, 'OpenClawEc2Sg', {
       vpc,
-      description: 'Security group for OpenClaw instance - SSH and SSM access',
+      description: 'Security group for OpenClaw instance - SSM access' + 
+                   (props.enableSsh ? ' and SSH' : ''),
       allowAllOutbound: true,
     });
     
-    // Allow SSH access from anywhere (you may want to restrict this to your IP)
-    sg.addIngressRule(Peer.anyIpv4(), Port.tcp(22), 'SSH access');
+    // Conditionally allow SSH if enabled
+    if (props.enableSsh) {
+      const sshSource = props.sshSourceIp || '0.0.0.0/0';
+      sg.addIngressRule(
+        Peer.ipv4(sshSource), 
+        Port.tcp(22), 
+        `SSH access from ${sshSource}`
+      );
+    }
 
     // IAM role for SSM and CloudWatch
     const role = new Role(this, 'OpenClawEc2Role', {
@@ -81,6 +101,18 @@ export class OpenClawStack extends Stack {
         ManagedPolicy.fromAwsManagedPolicyName('CloudWatchAgentServerPolicy'),
       ],
     });
+
+    // Store API key in Parameter Store (SecureString for encryption)
+    const apiKeyParameter = new StringParameter(this, 'ApiKeyParameter', {
+      parameterName: `/openclaw/${Stack.of(this).stackName}/api-key`,
+      stringValue: apiKey,
+      description: `API key for OpenClaw instance (${apiProvider})`,
+      tier: ParameterTier.ADVANCED,
+      type: ParameterType.SECURE_STRING,
+    });
+
+    // Grant EC2 instance permission to read the parameter
+    apiKeyParameter.grantRead(role);
 
     // Generate SSH key pair
     const keyPair = new CfnKeyPair(this, 'OpenClawKeyPair', {
@@ -182,8 +214,10 @@ export class OpenClawStack extends Stack {
       '# Install build-essential for Homebrew (as root)',
       'apt-get install -y build-essential',
       '',
-      // Set API key environment variable
-      `echo 'export ${apiKeyEnvVar}="${apiKey}"' >> /home/ubuntu/.bashrc`,
+      // Retrieve API key from Parameter Store
+      '# Retrieve API key from Parameter Store',
+      `API_KEY=$(aws ssm get-parameter --name "${apiKeyParameter.parameterName}" --with-decryption --query Parameter.Value --output text --region ${Stack.of(this).region})`,
+      `echo "export ${apiKeyEnvVar}=\\"$API_KEY\\"" >> /home/ubuntu/.bashrc`,
       '',
       '# Enable systemd linger for ubuntu user (required for user services to run at boot)',
       'loginctl enable-linger ubuntu',
@@ -207,11 +241,12 @@ export class OpenClawStack extends Stack {
       'export NVM_DIR="$HOME/.nvm"',
       '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
       'export XDG_RUNTIME_DIR=/run/user/1000',
-      `export ${apiKeyEnvVar}="${apiKey}"`,
+      `API_KEY=$(aws ssm get-parameter --name "${apiKeyParameter.parameterName}" --with-decryption --query Parameter.Value --output text --region ${Stack.of(this).region})`,
+      `export ${apiKeyEnvVar}="$API_KEY"`,
       '',
       apiProvider === 'openrouter' 
-        ? `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --token-provider openrouter \\\n    --token "${apiKey}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`
-        : `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --${apiProvider === 'custom' ? 'anthropic' : apiProvider}-api-key "${apiKey}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`,
+        ? `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --token-provider openrouter \\\n    --token "$API_KEY" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`
+        : `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --${apiProvider === 'custom' ? 'anthropic' : apiProvider}-api-key "$API_KEY" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`,
       'ONBOARD_SCRIPT',
       '',
       '# Install daemon service',
@@ -274,6 +309,7 @@ export class OpenClawStack extends Stack {
       userData,
       vpcSubnets: { subnetType: SubnetType.PUBLIC },
       keyName: keyPair.keyName as string,
+      requireImdsv2: true,
       blockDevices: [
         {
           deviceName: '/dev/sda1',
@@ -281,21 +317,12 @@ export class OpenClawStack extends Stack {
             ebsDevice: {
               volumeSize: 30,
               volumeType: 'gp3' as any,
+              encrypted: true,
               deleteOnTermination: true,
             },
           },
         },
       ],
-    });
-
-    // Create Elastic IP for stable public IP
-    const eip = new CfnEIP(this, 'OpenClawEIP', {
-      domain: 'vpc',
-    });
-
-    new CfnEIPAssociation(this, 'OpenClawEIPAssoc', {
-      eip: eip.ref,
-      instanceId: instance.instanceId,
     });
 
     // Add tags for easy identification
@@ -331,11 +358,6 @@ export class OpenClawStack extends Stack {
       description: 'EC2 Instance Name',
     });
 
-    new CfnOutput(this, 'PublicIp', {
-      value: eip.ref,
-      description: 'Public IP address (Elastic IP)',
-    });
-
     new CfnOutput(this, 'SSHKeyName', {
       value: keyPair.keyName,
       description: 'SSH Key Pair Name',
@@ -352,8 +374,8 @@ export class OpenClawStack extends Stack {
     });
 
     new CfnOutput(this, 'SSHConnectCommand', {
-      value: `ssh -i <path-to-key> ubuntu@${eip.ref}`,
-      description: 'SSH connection command',
+      value: `ssh -i <path-to-key> ubuntu@<instance-public-ip>`,
+      description: 'SSH connection command (get IP from EC2 console)',
     });
 
     new CfnOutput(this, 'SSMConnectCommand', {
@@ -373,10 +395,10 @@ export class OpenClawStack extends Stack {
         `   aws secretsmanager get-secret-value --secret-id ${sshSecret.secretName} --query SecretString --output text | jq -r '.privateKey' > openclaw-key.pem`,
         '   chmod 600 openclaw-key.pem',
         '',
-        '2. Connect via SSH:',
-        `   ssh -i openclaw-key.pem ubuntu@${eip.ref}`,
+        '2. Connect via SSH (if enabled):',
+        `   ssh -i openclaw-key.pem ubuntu@<instance-public-ip>`,
         '',
-        '3. Or connect via SSM:',
+        '3. Or connect via SSM (recommended):',
         `   aws ssm start-session --target ${instance.instanceId}`,
         '',
         '4. Check OpenClaw status:',

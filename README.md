@@ -5,10 +5,11 @@ Deploy OpenClaw AI agents on AWS with a simple, interactive CLI.
 ## Features
 
 - 🚀 **One-command deployment** - Interactive setup wizard
-- 🔒 **Secure by default** - SSM-only access, no SSH, no open ports
-- 💰 **Cost-effective** - ~$7.50/month (t3.micro free tier eligible)
+- 🔒 **Secure by default** - SSM-only access, SSH disabled, no open ports, encrypted secrets
+- 💰 **Cost-effective** - ~$7.55/month (t3.micro free tier eligible)
 - 🎯 **Easy management** - Simple commands for all operations
 - 📦 **Automated setup** - Node.js and OpenClaw CLI pre-installed
+- 🔐 **Enterprise security** - IMDSv2, encrypted EBS, Parameter Store for secrets
 
 ## Quick Start
 
@@ -90,19 +91,33 @@ npm link
 
 Interactive setup wizard to create your deployment configuration.
 
+During initialization, you'll be prompted for:
+- AWS region
+- EC2 instance type
+- VPC selection (default VPC recommended vs create new VPC)
+- SSH access (disabled by default, recommended to keep disabled)
+- SSH source IP/CIDR (only if SSH enabled)
+
 **Options:**
 - `--region <region>` - AWS region (default: prompts)
 - `--instance-type <type>` - EC2 instance type (default: prompts)
-- `--yes, -y` - Use defaults, no prompts
+- `--yes, -y` - Use secure defaults, no prompts (SSH disabled, default VPC)
 
 **Example:**
 ```bash
-# Interactive mode
+# Interactive mode (recommended for first time)
 openclaw-aws init
 
-# Non-interactive with defaults
+# Non-interactive with secure defaults
 openclaw-aws init --yes --region us-east-1
 ```
+
+**Security Defaults (--yes mode):**
+- Uses default VPC (simpler, no extra VPC costs)
+- SSH disabled (SSM-only access)
+- IMDSv2 enforced
+- EBS encryption enabled
+- API keys stored in Parameter Store
 
 ### `openclaw-aws deploy`
 
@@ -122,17 +137,32 @@ openclaw-aws deploy --auto-approve
 
 Connect to your EC2 instance via SSM.
 
+**Note:** This is the primary method for accessing your instance. SSH is disabled by default for security.
+
 **Example:**
 ```bash
 openclaw-aws connect
 ```
-#### commands to view logs:
+
+#### Commands to view logs:
 ```bash
+# User data execution log
 sudo cat /var/log/cloud-init-output.log
-Cloud-init general log:
+
+# Cloud-init general log
 sudo cat /var/log/cloud-init.log
-User data script log (if any errors):
+
+# User data script log (if any errors)
 sudo cat /var/log/user-data.log
+```
+
+#### Verify API key retrieval from Parameter Store:
+```bash
+# Check if API key was successfully retrieved
+echo $ANTHROPIC_API_KEY
+
+# View Parameter Store parameter (will show encrypted value)
+aws ssm get-parameter --name /openclaw/my-bot/api-key --region us-east-1
 ```
 
 
@@ -211,11 +241,20 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
   "instance": {
     "type": "t3.micro",
     "name": "openclaw-my-bot",
-    "nodeVersion": 22,
-    "amiType": "amazon-linux-2"
+    "nodeVersion": 22
+  },
+  "network": {
+    "useDefaultVpc": true
+  },
+  "security": {
+    "enableSsh": false,
+    "sshSourceIp": "0.0.0.0/0"
   },
   "features": {
     "cloudWatchLogs": true
+  },
+  "openclaw": {
+    "apiProvider": "anthropic"
   },
   "stack": {
     "name": "OpenclawStack-my-bot"
@@ -223,35 +262,128 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
 }
 ```
 
+### Configuration Fields
+
+**network:**
+- `useDefaultVpc` (boolean) - Use your AWS default VPC (recommended) vs creating a new VPC
+
+**security:**
+- `enableSsh` (boolean) - Enable SSH access to instance (default: false, recommended: keep disabled)
+- `sshSourceIp` (string) - CIDR block for SSH access (only used if SSH enabled, e.g., "1.2.3.4/32")
+
+**Note:** SSH is disabled by default. SSM Session Manager is the recommended access method.
+
 ## Architecture
 
 The deployment creates:
 
-- **EC2 Instance** - Amazon Linux 2, t3.micro (or your chosen type)
-- **Security Group** - No inbound rules (SSM only)
-- **IAM Role** - Least-privilege with SSM access
-- **VPC** - Uses default VPC, public subnet (for outbound only)
+- **EC2 Instance** - Ubuntu 24.04 LTS, t3.micro (or your chosen type)
+  - IMDSv2 enforced (SSRF protection)
+  - Encrypted EBS volume (data at rest encryption)
+  - Public IP assigned (required for outbound connectivity)
+- **Security Group** - No inbound rules by default (SSH optional, disabled by default)
+- **IAM Role** - Least-privilege with SSM and Parameter Store access
+- **VPC** - Uses default VPC by default (option to create new VPC)
+- **Parameter Store** - SecureString parameter for encrypted API key storage
 
 ## Security
 
-- ✅ **No SSH** - All access via AWS Systems Manager (SSM)
-- ✅ **No Open Ports** - Security group has zero inbound rules
-- ✅ **IAM Least Privilege** - Only SSM permissions
+OpenClaw-AWS implements multiple layers of security following AWS best practices:
+
+### Access Control
+- ✅ **SSH Disabled by Default** - All access via AWS Systems Manager (SSM)
+- ✅ **No Open Ports** - Security group has zero inbound rules by default
+- ✅ **Optional SSH** - Can be enabled with IP restrictions during `init` if needed
 - ✅ **Private Dashboard** - Access via SSM port forwarding only
-- ✅ **Audited Access** - All SSM sessions are logged
+- ✅ **Audited Access** - All SSM sessions are logged in CloudTrail
+
+### Secrets Management
+- ✅ **Encrypted API Keys** - Stored as SecureString in AWS Parameter Store (not in UserData)
+- ✅ **At-Rest Encryption** - API keys encrypted using AWS-managed KMS keys
+- ✅ **Runtime Retrieval** - Instance fetches API keys from Parameter Store at boot
+
+### Instance Hardening
+- ✅ **IMDSv2 Required** - Protection against SSRF attacks (Instance Metadata Service v2)
+- ✅ **Encrypted EBS** - All disk volumes encrypted at rest
+- ✅ **IAM Least Privilege** - Only SSM and Parameter Store permissions granted
+- ✅ **Public Subnet with No Inbound** - Instance can reach internet but nothing can reach it
+
+### Network Security
+- ✅ **VPC Isolation** - Uses default VPC or creates dedicated VPC
+- ✅ **No Elastic IP** - Uses standard public IP (changes on stop/start)
+- ✅ **Outbound Only** - Instance needs internet for package updates and API calls
+- ✅ **No Direct SSH** - Even if enabled, SSH is restricted to specific IP/CIDR
+
+### Why Public IP with No Open Ports is Safe
+The instance is placed in a public subnet with a public IP to enable:
+- Outbound API calls to LLM providers (Anthropic, OpenAI, etc.)
+- Outbound package updates (npm, system updates)
+- SSM connectivity to AWS services
+
+However, with **zero inbound security group rules**, the public IP cannot receive any incoming connections. This is more secure than traditional setups with SSH on port 22 open to the world.
+
+### Cost Impact
+Security features add minimal cost:
+- **Parameter Store**: ~$0.05/month for SecureString storage
+- **IMDSv2**: No additional cost
+- **EBS Encryption**: No additional cost
+- **SSM**: No additional cost
+
+**Total security overhead**: ~$0.05/month
 
 ## Cost Breakdown
 
 **Monthly AWS Costs:**
 - EC2 t3.micro: ~$7.50/month (free tier: 750 hours/month for 12 months)
+- Parameter Store (SecureString): ~$0.05/month
 - SSM: No additional cost
+- IMDSv2: No additional cost
+- EBS Encryption: No additional cost
 - Data Transfer: Minimal (mostly outbound API calls)
 
 **Variable Costs:**
 - Anthropic Claude API: Usage-based
 - Other LLM APIs: Usage-based
 
-**Total Infrastructure**: ~$7.50/month after free tier
+**Total Infrastructure**: ~$7.55/month after free tier
+
+## Migration Guide
+
+If you have an existing openclaw-aws deployment from before the security improvements:
+
+### What Changed
+1. **API Keys** - Now stored in Parameter Store (encrypted) instead of plaintext in UserData
+2. **SSH** - Now disabled by default (was open to 0.0.0.0/0 before)
+3. **VPC** - Can now use default VPC (simpler) or create new VPC
+4. **IMDSv2** - Now enforced on all instances (SSRF protection)
+5. **EBS** - Now encrypted at rest
+6. **Elastic IP** - Removed (instance gets standard public IP)
+
+### How to Migrate
+1. **Backup your data** (if any) from the existing instance
+2. **Run `openclaw-aws destroy`** to remove old infrastructure
+3. **Run `openclaw-aws init`** to create new configuration with security improvements
+4. **Run `openclaw-aws deploy`** to deploy with new security features
+5. **Run `openclaw-aws onboard`** to set up OpenClaw again
+
+### Configuration Updates
+Your old config needs these new fields:
+```json
+{
+  "network": {
+    "useDefaultVpc": true
+  },
+  "security": {
+    "enableSsh": false,
+    "sshSourceIp": "0.0.0.0/0"
+  },
+  "openclaw": {
+    "apiProvider": "anthropic"
+  }
+}
+```
+
+**Note:** The `init` command will create a properly formatted config automatically.
 
 ## Troubleshooting
 

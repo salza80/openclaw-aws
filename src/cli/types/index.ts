@@ -5,11 +5,17 @@ export interface OpenClawConfig {
     region: string;
     profile?: string;
   };
+  network: {
+    useDefaultVpc: boolean;
+  };
   instance: {
     type: string;
     name: string;
     nodeVersion: number;
-    amiType: 'amazon-linux-2023';
+  };
+  security?: {
+    enableSsh?: boolean;
+    sshSourceIp?: string;
   };
   features: {
     cloudWatchLogs: boolean;
@@ -32,8 +38,10 @@ export interface StackConfig {
     size: string;
   };
   nodeVersion: number;
-  amiType: 'amazon-linux-2023';
   enableCloudWatchLogs: boolean;
+  useDefaultVpc: boolean;
+  enableSsh?: boolean;
+  sshSourceIp?: string;
 }
 
 export interface DeploymentStatus {

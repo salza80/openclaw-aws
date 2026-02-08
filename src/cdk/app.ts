@@ -67,8 +67,10 @@ const stackConfig: StackConfig = {
   instanceName: config.instance.name,
   instanceType: parseInstanceType(config.instance.type),
   nodeVersion: config.instance.nodeVersion,
-  amiType: config.instance.amiType,
   enableCloudWatchLogs: config.features.cloudWatchLogs,
+  useDefaultVpc: config.network.useDefaultVpc,
+  enableSsh: config.security?.enableSsh,
+  sshSourceIp: config.security?.sshSourceIp,
 };
 
 // Get configuration from config file or environment
@@ -93,6 +95,9 @@ const stackProps: OpenClawStackProps = {
   gatewayPort,
   browserPort,
   customApiBaseUrl,
+  useDefaultVpc: config.network.useDefaultVpc,
+  enableSsh: config.security?.enableSsh,
+  sshSourceIp: config.security?.sshSourceIp,
   env: {
     region: config.aws.region,
     account: process.env.CDK_DEFAULT_ACCOUNT,
