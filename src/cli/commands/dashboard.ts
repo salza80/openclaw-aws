@@ -3,7 +3,7 @@ import { execa } from 'execa';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig } from '../utils/config.js';
+import { loadConfig, loadOutputs } from '../utils/config.js';
 import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
 import { handleError, AWSError, withRetry } from '../utils/errors.js';
 import { validateSSMPlugin } from '../utils/aws-validation.js';
@@ -101,10 +101,27 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
 
       spinner.succeed('Port forwarding established');
 
+      // Get gateway token from outputs
+      const outputs = loadOutputs();
+      const stackOutputs = outputs?.[config.stack.name] || {};
+      const gatewayToken = stackOutputs.GatewayToken;
+      const gatewayPort = stackOutputs.GatewayPort || '18789';
+      
+      const dashboardUrl = gatewayToken 
+        ? `http://localhost:${gatewayPort}/?token=${gatewayToken}`
+        : `http://localhost:${gatewayPort}`;
+
       console.log('\n' + '='.repeat(50));
       logger.success('Dashboard Available!');
       console.log('='.repeat(50));
-      console.log(`\n🌐 Dashboard URL: ${chalk.cyan('http://localhost:18789')}`);
+      console.log(`\n🌐 Dashboard URL: ${chalk.cyan(dashboardUrl)}`);
+      
+      if (gatewayToken) {
+        console.log(`\n🔑 Gateway Token: ${chalk.gray(gatewayToken)}`);
+      } else {
+        console.log(`\n${chalk.yellow('⚠️  Gateway token not found in outputs.')}`);
+        console.log(`   You may need to manually add ?token=<your-token> to the URL`);
+      }
       
       if (!argv.noOpen) {
         console.log('\n📖 Opening in your default browser...');
@@ -112,11 +129,11 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
           // Try to open browser (cross-platform)
           const { execa: execaSync } = await import('execa');
           if (process.platform === 'darwin') {
-            await execaSync('open', ['http://localhost:18789']);
+            await execaSync('open', [dashboardUrl]);
           } else if (process.platform === 'win32') {
-            await execaSync('cmd', ['/c', 'start', 'http://localhost:18789']);
+            await execaSync('cmd', ['/c', 'start', dashboardUrl]);
           } else {
-            await execaSync('xdg-open', ['http://localhost:18789']);
+            await execaSync('xdg-open', [dashboardUrl]);
           }
         } catch {
           // Silently fail if browser open doesn't work
