@@ -36,8 +36,6 @@ export interface StackConfig {
   };
   enableCloudWatchLogs: boolean;
   useDefaultVpc: boolean;
-  enableSsh?: boolean;
-  sshSourceIp?: string;
 }
 
 export interface DeploymentStatus {

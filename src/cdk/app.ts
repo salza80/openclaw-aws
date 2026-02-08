@@ -68,8 +68,6 @@ const stackConfig: StackConfig = {
   instanceType: parseInstanceType(config.instance.type),
   enableCloudWatchLogs: config.features.cloudWatchLogs,
   useDefaultVpc: config.network.useDefaultVpc,
-  enableSsh: config.security?.enableSsh,
-  sshSourceIp: config.security?.sshSourceIp,
 };
 
 // Get configuration from environment (no model/sandbox in config anymore)
@@ -89,8 +87,6 @@ const stackProps: OpenClawStackProps = {
   browserPort,
   customApiBaseUrl,
   useDefaultVpc: config.network.useDefaultVpc,
-  enableSsh: config.security?.enableSsh,
-  sshSourceIp: config.security?.sshSourceIp,
   env: {
     region: config.aws.region,
     account: process.env.CDK_DEFAULT_ACCOUNT,

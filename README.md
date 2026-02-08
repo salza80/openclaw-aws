@@ -5,7 +5,7 @@ Deploy OpenClaw AI agents on AWS with a simple, interactive CLI.
 ## Features
 
 - 🚀 **One-command deployment** - Interactive setup wizard
-- 🔒 **Secure by default** - SSM-only access, SSH disabled, no open ports, encrypted secrets
+- 🔒 **Secure by default** - SSM-only access, zero open ports, encrypted secrets
 - 💰 **Cost-effective** - ~$7.55/month (t3.micro free tier eligible)
 - 🎯 **Easy management** - Simple commands for all operations
 - 📦 **Automated setup** - Node.js and OpenClaw CLI pre-installed
@@ -31,7 +31,7 @@ openclaw-aws dashboard
 
 Before using openclaw-aws, ensure you have:
 
-1. **Node.js 18+** installed
+1. **Node.js 20+** installed (Node 18 support ends January 2026)
 2. **AWS CLI** configured with credentials (`aws configure`)
 3. **AWS SSM Plugin** installed:
    ```bash
@@ -95,13 +95,13 @@ During initialization, you'll be prompted for:
 - AWS region
 - EC2 instance type
 - VPC selection (default VPC recommended vs create new VPC)
-- SSH access (disabled by default, recommended to keep disabled)
-- SSH source IP/CIDR (only if SSH enabled)
+- CloudWatch Logs (enable/disable)
+- API provider selection
 
 **Options:**
 - `--region <region>` - AWS region (default: prompts)
 - `--instance-type <type>` - EC2 instance type (default: prompts)
-- `--yes, -y` - Use secure defaults, no prompts (SSH disabled, default VPC)
+- `--yes, -y` - Use secure defaults, no prompts
 
 **Example:**
 ```bash
@@ -114,7 +114,7 @@ openclaw-aws init --yes --region us-east-1
 
 **Security Defaults (--yes mode):**
 - Uses default VPC (simpler, no extra VPC costs)
-- SSH disabled (SSM-only access)
+- Zero open ports (SSM-only access, SSH permanently disabled)
 - IMDSv2 enforced
 - EBS encryption enabled
 - API keys stored in Parameter Store
@@ -245,10 +245,6 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
   "network": {
     "useDefaultVpc": true
   },
-  "security": {
-    "enableSsh": false,
-    "sshSourceIp": "0.0.0.0/0"
-  },
   "features": {
     "cloudWatchLogs": true
   },
@@ -270,10 +266,6 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
 **network:**
 - `useDefaultVpc` (boolean) - Use your AWS default VPC (recommended) vs creating a new VPC
 
-**security:**
-- `enableSsh` (boolean) - Enable SSH access to instance (default: false, recommended: keep disabled)
-- `sshSourceIp` (string) - CIDR block for SSH access (only used if SSH enabled, e.g., "1.2.3.4/32")
-
 **features:**
 - `cloudWatchLogs` (boolean) - Enable CloudWatch Logs integration (adds CloudWatchAgentServerPolicy to IAM role)
 
@@ -281,7 +273,7 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
 - `apiProvider` (string) - LLM API provider: "anthropic", "openrouter", "openai", or "custom"
 
 **Note:** 
-- SSH is disabled by default. SSM Session Manager is the recommended access method.
+- Access is via SSM Session Manager only (no SSH, no open ports)
 - Node.js 22 is hardcoded in the instance setup (not configurable)
 - Ubuntu 24.04 LTS is the AMI used (not configurable)
 
@@ -293,7 +285,7 @@ The deployment creates:
   - IMDSv2 enforced (SSRF protection)
   - Encrypted EBS volume (data at rest encryption)
   - Public IP assigned (required for outbound connectivity)
-- **Security Group** - No inbound rules by default (SSH optional, disabled by default)
+- **Security Group** - Zero inbound rules (SSM access only, no SSH)
 - **IAM Role** - Least-privilege with SSM and Parameter Store access
 - **VPC** - Uses default VPC by default (option to create new VPC)
 - **Parameter Store** - SecureString parameter for encrypted API key storage
@@ -302,10 +294,19 @@ The deployment creates:
 
 OpenClaw-AWS implements multiple layers of security following AWS best practices:
 
-### Access Control
-- ✅ **SSH Disabled by Default** - All access via AWS Systems Manager (SSM)
-- ✅ **No Open Ports** - Security group has zero inbound rules by default
-- ✅ **Optional SSH** - Can be enabled with IP restrictions during `init` if needed
+### Access Control - SSM Only (No SSH)
+
+**SSM (Systems Manager Session Manager) - The Only Access Method ✅**
+- **Zero open inbound ports** - All traffic is outbound from the instance
+- Connect with: `openclaw-aws connect`
+- No SSH keys to manage
+- All sessions logged in CloudTrail
+- Works even behind corporate firewalls
+- **SSH is completely disabled and not configurable**
+
+### Security Features
+- ✅ **No Open Ports** - Security group has zero inbound rules (SSH permanently disabled)
+- ✅ **SSM Access Only** - All instance access via AWS Systems Manager
 - ✅ **Private Dashboard** - Access via SSM port forwarding only
 - ✅ **Audited Access** - All SSM sessions are logged in CloudTrail
 
@@ -365,12 +366,12 @@ If you have an existing openclaw-aws deployment from before the security improve
 
 ### What Changed
 1. **API Keys** - Now stored in Parameter Store (encrypted) instead of plaintext in UserData
-2. **SSH** - Now disabled by default (was open to 0.0.0.0/0 before)
+2. **SSH** - Completely removed and permanently disabled (was open to 0.0.0.0/0 before, now not even an option)
 3. **VPC** - Can now use default VPC (simpler) or create new VPC
 4. **IMDSv2** - Now enforced on all instances (SSRF protection)
 5. **EBS** - Now encrypted at rest
 6. **Elastic IP** - Removed (instance gets standard public IP)
-7. **Config cleanup** - Removed unused fields: `nodeVersion` (hardcoded to 22), `model`, `enableSandbox` (OpenClaw handles these)
+7. **Config cleanup** - Removed unused fields: `nodeVersion` (hardcoded to 22), `model`, `enableSandbox` (OpenClaw handles these), `security` section (SSH disabled permanently)
 
 ### How to Migrate
 1. **Backup your data** (if any) from the existing instance
@@ -380,15 +381,11 @@ If you have an existing openclaw-aws deployment from before the security improve
 5. **Run `openclaw-aws onboard`** to set up OpenClaw again
 
 ### Configuration Updates
-Your old config needs these new fields:
+Your old config had a `security` section - this is now removed. The new simplified config:
 ```json
 {
   "network": {
     "useDefaultVpc": true
-  },
-  "security": {
-    "enableSsh": false,
-    "sshSourceIp": "0.0.0.0/0"
   },
   "openclaw": {
     "apiProvider": "anthropic"

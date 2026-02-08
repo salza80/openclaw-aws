@@ -61,7 +61,6 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       console.log(`    - EC2 Instance (${config.instance.type})`);
       console.log(`    - Security Group (no inbound rules)`);
       console.log(`    - IAM Role (SSM access only)`);
-      console.log(`    - UserData (Node.js ${config.instance.nodeVersion} + OpenClaw CLI)`);
 
       // Confirm deployment
       if (!argv.autoApprove) {

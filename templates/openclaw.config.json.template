@@ -8,15 +8,6 @@
   "network": {
     "useDefaultVpc": true
   },
-  "instance": {
-    "type": "t3.micro",
-    "name": "openclaw-my-bot",
-    "nodeVersion": 22
-  },
-  "security": {
-    "enableSsh": false,
-    "sshSourceIp": "0.0.0.0/0"
-  },
   "features": {
     "cloudWatchLogs": true
   },

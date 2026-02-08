@@ -94,10 +94,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: argv.instanceType || 't3.micro',
             name: 'openclaw-my-openclaw-bot',
           },
-          security: {
-            enableSsh: false,
-            sshSourceIp: '0.0.0.0/0',
-          },
           features: {
             cloudWatchLogs: true,
           },
@@ -166,22 +162,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           },
           {
             type: 'confirm',
-            name: 'enableSsh',
-            message: 'Enable SSH access? (SSM Session Manager is recommended)',
-            initial: false
-          },
-          {
-            type: (prev: boolean) => prev ? 'text' : null,
-            name: 'sshSourceIp',
-            message: 'SSH source IP/CIDR (0.0.0.0/0 for anywhere, or your IP/32):',
-            initial: '0.0.0.0/0',
-            validate: (value: string) => {
-              const cidrPattern = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
-              return cidrPattern.test(value) || 'Invalid CIDR notation (e.g., 203.0.113.0/24 or 1.2.3.4/32)';
-            }
-          },
-          {
-            type: 'confirm',
             name: 'cloudWatchLogs',
             message: 'Enable CloudWatch Logs?',
             initial: true
@@ -207,10 +187,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: argv.instanceType || answers.instanceType,
             name: answers.instanceName,
           },
-          security: {
-            enableSsh: answers.enableSsh,
-            sshSourceIp: answers.sshSourceIp || '0.0.0.0/0',
-          },
           features: {
             cloudWatchLogs: answers.cloudWatchLogs,
           },
@@ -225,12 +201,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         // Show warnings after config created
         if (!config.network.useDefaultVpc) {
           logger.info('ℹ️  Note: A new VPC will be created for this deployment');
-        }
-
-        if (config.security?.enableSsh) {
-          logger.warn('⚠️  Warning: SSH is enabled. Instance will accept connections from ' + 
-                      (config.security.sshSourceIp || '0.0.0.0/0'));
-          logger.info('💡 Tip: SSM Session Manager is more secure and requires no open ports');
         }
       }
 

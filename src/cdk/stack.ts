@@ -29,8 +29,6 @@ export interface OpenClawStackProps extends StackProps {
   browserPort?: number;
   customApiBaseUrl?: string;
   useDefaultVpc: boolean;
-  enableSsh?: boolean;
-  sshSourceIp?: string;
 }
 
 export class OpenClawStack extends Stack {
@@ -71,23 +69,12 @@ export class OpenClawStack extends Stack {
       });
     }
 
-    // Security group - SSM access only by default
+    // Security group - SSM access only (no inbound ports)
     const sg = new SecurityGroup(this, 'OpenClawEc2Sg', {
       vpc,
-      description: 'Security group for OpenClaw instance - SSM access' + 
-                   (props.enableSsh ? ' and SSH' : ''),
+      description: 'Security group for OpenClaw instance - SSM access only, no inbound ports',
       allowAllOutbound: true,
     });
-    
-    // Conditionally allow SSH if enabled
-    if (props.enableSsh) {
-      const sshSource = props.sshSourceIp || '0.0.0.0/0';
-      sg.addIngressRule(
-        Peer.ipv4(sshSource), 
-        Port.tcp(22), 
-        `SSH access from ${sshSource}`
-      );
-    }
 
     // IAM role for SSM and optionally CloudWatch
     const managedPolicies = [
