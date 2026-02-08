@@ -17,7 +17,6 @@ import {
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
-import { StringParameter, ParameterTier, ParameterType } from 'aws-cdk-lib/aws-ssm';
 import * as crypto from 'crypto';
 import type { StackConfig } from '../cli/types/index.js';
 
@@ -92,18 +91,6 @@ export class OpenClawStack extends Stack {
       assumedBy: new ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies,
     });
-
-    // Store API key in Parameter Store (SecureString for encryption)
-    const apiKeyParameter = new StringParameter(this, 'ApiKeyParameter', {
-      parameterName: `/openclaw/${Stack.of(this).stackName}/api-key`,
-      stringValue: apiKey,
-      description: `API key for OpenClaw instance (${apiProvider})`,
-      tier: ParameterTier.ADVANCED,
-      type: ParameterType.SECURE_STRING,
-    });
-
-    // Grant EC2 instance permission to read the parameter
-    apiKeyParameter.grantRead(role);
 
     // Generate SSH key pair
     const keyPair = new CfnKeyPair(this, 'OpenClawKeyPair', {
@@ -205,10 +192,9 @@ export class OpenClawStack extends Stack {
       '# Install build-essential for Homebrew (as root)',
       'apt-get install -y build-essential',
       '',
-      // Retrieve API key from Parameter Store
-      '# Retrieve API key from Parameter Store',
-      `API_KEY=$(aws ssm get-parameter --name "${apiKeyParameter.parameterName}" --with-decryption --query Parameter.Value --output text --region ${Stack.of(this).region})`,
-      `echo "export ${apiKeyEnvVar}=\\"$API_KEY\\"" >> /home/ubuntu/.bashrc`,
+      // Set API key environment variable
+      `# Set API key environment variable`,
+      `echo "export ${apiKeyEnvVar}='${apiKey}'" >> /home/ubuntu/.bashrc`,
       '',
       '# Enable systemd linger for ubuntu user (required for user services to run at boot)',
       'loginctl enable-linger ubuntu',
@@ -232,12 +218,11 @@ export class OpenClawStack extends Stack {
       'export NVM_DIR="$HOME/.nvm"',
       '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
       'export XDG_RUNTIME_DIR=/run/user/1000',
-      `API_KEY=$(aws ssm get-parameter --name "${apiKeyParameter.parameterName}" --with-decryption --query Parameter.Value --output text --region ${Stack.of(this).region})`,
-      `export ${apiKeyEnvVar}="$API_KEY"`,
+      `export ${apiKeyEnvVar}='${apiKey}'`,
       '',
       apiProvider === 'openrouter' 
-        ? `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --token-provider openrouter \\\n    --token "$API_KEY" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`
-        : `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --${apiProvider === 'custom' ? 'anthropic' : apiProvider}-api-key "$API_KEY" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`,
+        ? `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --token-provider openrouter \\\n    --token "$${apiKeyEnvVar}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`
+        : `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --${apiProvider === 'custom' ? 'anthropic' : apiProvider}-api-key "$${apiKeyEnvVar}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`,
       'ONBOARD_SCRIPT',
       '',
       '# Install daemon service',
@@ -249,7 +234,7 @@ export class OpenClawStack extends Stack {
       'export XDG_RUNTIME_DIR=/run/user/1000',
       '',
       '# Install but do not start the daemon yet',
-      'openclaw daemon install --no-start || echo "WARNING: Daemon install failed. Run openclaw daemon install manually."',
+      'openclaw daemon install || echo "WARNING: Daemon install failed. Run openclaw daemon install manually."',
       'DAEMON_SCRIPT',
       '',
       '# Configure gateway with authentication token',
@@ -275,6 +260,8 @@ export class OpenClawStack extends Stack {
       '',
       '# Ensure proper ownership of .openclaw directory',
       'chown -R ubuntu:ubuntu /home/ubuntu/.openclaw',
+      '',
+      'openclaw daemon restart || echo "WARNING: Could not restart daemon"',
       '',
       '# Create completion marker',
       'touch /tmp/openclaw-setup-complete',

@@ -32,8 +32,43 @@ openclaw-aws dashboard
 Before using openclaw-aws, ensure you have:
 
 1. **Node.js 20+** installed (Node 18 support ends January 2026)
-2. **AWS CLI** configured with credentials (`aws configure`)
-3. **AWS SSM Plugin** installed:
+   ```bash
+   # Check your version
+   node --version
+   
+   # Using NVM to install (recommended)
+   nvm install 22
+   nvm use 22
+   ```
+
+2. **AWS CLI** configured with credentials
+   ```bash
+   # Option A: AWS SSO (recommended for organizations)
+   aws configure sso
+   aws sso login --profile your-profile-name
+   
+   # Option B: IAM credentials
+   aws configure
+   
+   # Verify credentials
+   aws sts get-caller-identity
+   ```
+
+3. **CDK Bootstrap** - One-time setup per AWS account/region
+   ```bash
+   # Get your AWS account ID
+   aws sts get-caller-identity
+   
+   # Bootstrap CDK (replace with your account ID and region)
+   npx cdk bootstrap aws://YOUR-ACCOUNT-ID/YOUR-REGION
+   
+   # Example:
+   npx cdk bootstrap aws://360298971790/eu-central-1
+   ```
+   
+   **Note:** You don't need to install CDK globally - `npx cdk` will use the version bundled with openclaw-aws.
+
+4. **AWS SSM Plugin** installed:
    ```bash
    # macOS
    brew install --cask session-manager-plugin
@@ -43,8 +78,8 @@ Before using openclaw-aws, ensure you have:
    sudo dpkg -i session-manager-plugin.deb
    ```
 
-4. **Anthropic API Key** (for Claude) from https://console.anthropic.com/
-5. **(Optional) Brave Search API Key** for web search capabilities
+5. **Anthropic API Key** (for Claude) from https://console.anthropic.com/
+6. **(Optional) Brave Search API Key** for web search capabilities
 
 ## Installation
 
@@ -67,23 +102,53 @@ npm install -g git+ssh://git@github.com/YOUR_GITHUB_USERNAME/openclaw-aws.git
 ### Local Development
 
 ```bash
-# Clone the repo
-git clone https://github.com/YOUR_GITHUB_USERNAME/openclaw-aws.git
+# 1. Clone the repository
+git clone https://github.com/salza80/openclaw-aws.git
 cd openclaw-aws
 
-# Install dependencies
-pnpm install
+# 2. Make sure you're using Node 20+
+nvm use 22  # or nvm use 20
 
-# Build
-pnpm run build
+# 3. Install dependencies
+npm install
 
-# Link for local testing
-export PATH="/Users/smclean/.nvm/versions/node/v22.20.0/bin:$PATH"
-cd /Users/smclean/openclaw-aws
+# 4. Build the project
+npm run build
+
+# 5. Link for local testing
 npm link
 
-npm link
+# 6. Test the CLI
+openclaw-aws --help
+
+# 7. Watch mode for development (auto-rebuild on changes)
+npm run watch
 ```
+
+### First Time AWS Setup
+
+If this is your first time deploying with CDK in your AWS account/region:
+
+```bash
+# 1. Login with AWS SSO (if applicable)
+aws sso login --profile your-profile-name
+
+# 2. Get your AWS account ID
+aws sts get-caller-identity
+
+# 3. Bootstrap CDK (one-time per account/region)
+cdk bootstrap aws://YOUR-ACCOUNT-ID/YOUR-REGION
+
+# Example:
+cdk bootstrap aws://360298971790/eu-central-1
+```
+
+**Note:** Bootstrap creates a CloudFormation stack (`CDKToolkit`) that contains:
+- S3 bucket for CDK assets
+- IAM roles for deployment
+- ECR repository for Docker images (if needed)
+
+This is a **one-time operation** per AWS account and region.
 
 ## Commands
 
@@ -397,6 +462,60 @@ Your old config had a `security` section - this is now removed. The new simplifi
 
 ## Troubleshooting
 
+### CDK Bootstrap Version Mismatch
+
+**Error:** `Bootstrap toolkit stack version 30 or later is needed; current version: 25`
+
+**Solution:**
+```bash
+# Update your CDK bootstrap stack (uses bundled CDK)
+npx cdk bootstrap aws://YOUR-ACCOUNT-ID/YOUR-REGION
+
+# Example:
+npx cdk bootstrap aws://360298971790/eu-central-1
+```
+
+This is safe to run and will upgrade your CDK toolkit stack to the latest version.
+
+### AWS SSO Session Expired
+
+**Error:** `The SSO session associated with this profile has expired`
+
+**Solution:**
+```bash
+# Re-login with SSO
+aws sso login --profile your-profile-name
+
+# Then try deployment again
+openclaw-aws deploy
+```
+
+### Node.js Version Warning
+
+**Warning:** `NodeDeprecationWarning: The AWS SDK for JavaScript (v3) will no longer support Node.js v18`
+
+**Solution:**
+```bash
+# Switch to Node 20 or 22
+nvm use 22
+
+# Verify
+node --version  # Should show v20.x or v22.x
+
+# Reinstall openclaw-aws if needed
+npm install -g @salza80/openclaw-aws
+```
+
+### CDK Not Found After Switching Node Versions
+
+**Error:** `command not found: cdk`
+
+**Solution:**  
+You don't need CDK installed globally! Use `npx cdk` which uses the bundled version:
+```bash
+npx cdk bootstrap aws://YOUR-ACCOUNT-ID/YOUR-REGION
+```
+
 ### Instance not appearing in SSM
 
 Wait 2-3 minutes after deployment. Check status:
@@ -420,7 +539,7 @@ aws sts get-caller-identity
 
 Ensure CDK is bootstrapped:
 ```bash
-cdk bootstrap aws://ACCOUNT-ID/REGION
+npx cdk bootstrap aws://ACCOUNT-ID/REGION
 ```
 
 ### Port forwarding fails
@@ -446,23 +565,59 @@ openclaw-aws status
 
 ## Development
 
+For developers contributing to openclaw-aws:
+
+### Setup
+
 ```bash
-# Install dependencies
-pnpm install
+# 1. Clone the repository
+git clone https://github.com/salza80/openclaw-aws.git
+cd openclaw-aws
 
-# Build
-pnpm run build
+# 2. Use Node 20+
+nvm use 22  # or nvm use 20
 
-# Watch mode
-pnpm run watch
+# 3. Install dependencies
+npm install
 
-# Link for local testing
+# 4. Build the project
+npm run build
+
+# 5. Link for local testing
 npm link
 
-# Test commands
+# 6. Test the CLI
 openclaw-aws --help
 openclaw-aws init
+
+# 7. Watch mode for development (auto-rebuild on changes)
+npm run watch
 ```
+
+### Requirements for Development
+
+- **Node.js 20+** (required by AWS SDK v3)
+- **AWS CLI** with configured credentials
+- **AWS account** with CDK bootstrapped
+- All dependencies install automatically via `npm install`
+
+### Testing Changes
+
+```bash
+# After making changes, rebuild
+npm run build
+
+# Test locally
+openclaw-aws init
+openclaw-aws deploy
+
+# Or use watch mode for auto-rebuild
+npm run watch
+```
+
+### Publishing
+
+See [Publishing to GitHub Packages](#publishing-to-github-packages) section above.
 
 ## Learn More
 

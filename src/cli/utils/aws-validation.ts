@@ -2,6 +2,8 @@ import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
 import { EC2Client, DescribeRegionsCommand } from '@aws-sdk/client-ec2';
 import ora from 'ora';
+import prompts from 'prompts';
+import chalk from 'chalk';
 import { ValidationError, AWSError, withRetry } from './errors.js';
 import type { OpenClawConfig } from '../types/index.js';
 
@@ -66,17 +68,95 @@ export async function validateAWSRegion(region: string): Promise<boolean> {
   }
 }
 
-export async function checkCDKBootstrap(account: string, region: string): Promise<boolean> {
+/**
+ * Get the current CDK bootstrap version from CloudFormation.
+ * Returns the version number or null if not bootstrapped.
+ */
+export async function getCDKBootstrapVersion(region: string): Promise<number | null> {
   try {
     const client = new CloudFormationClient({ region });
     const command = new DescribeStacksCommand({
       StackName: 'CDKToolkit'
     });
     
-    await client.send(command);
-    return true;
+    const response = await client.send(command);
+    const stack = response.Stacks?.[0];
+    
+    if (!stack) return null;
+    
+    // Find BootstrapVersion output
+    const versionOutput = stack.Outputs?.find(
+      output => output.OutputKey === 'BootstrapVersion'
+    );
+    
+    if (!versionOutput?.OutputValue) return null;
+    
+    return parseInt(versionOutput.OutputValue, 10);
   } catch (error) {
-    return false;
+    return null; // Not bootstrapped
+  }
+}
+
+/**
+ * Check if CDK is bootstrapped and meets minimum version requirement.
+ * Returns an object with bootstrap status, version, and minimum version check.
+ */
+export async function checkCDKBootstrap(
+  account: string,
+  region: string,
+  minVersion: number = 30
+): Promise<{
+  bootstrapped: boolean;
+  version: number | null;
+  meetsMinimum: boolean;
+}> {
+  const version = await getCDKBootstrapVersion(region);
+  
+  return {
+    bootstrapped: version !== null,
+    version,
+    meetsMinimum: version !== null && version >= minVersion
+  };
+}
+
+/**
+ * Run CDK bootstrap for the specified account and region.
+ * Uses the bundled CDK version to ensure compatibility.
+ */
+export async function runCDKBootstrap(
+  account: string,
+  region: string,
+  profile?: string
+): Promise<void> {
+  const { execa } = await import('execa');
+  const { getCDKBinary } = await import('./cdk.js');
+  
+  const cdkBinary = getCDKBinary();
+  const envQualifier = `aws://${account}/${region}`;
+  
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    AWS_REGION: region,
+  };
+
+  if (profile) {
+    env.AWS_PROFILE = profile;
+  }
+  
+  try {
+    await execa(cdkBinary, [
+      'bootstrap',
+      envQualifier,
+    ], {
+      env,
+      stdio: 'inherit' // Show CDK output to user
+    });
+  } catch (error) {
+    throw new AWSError('Failed to bootstrap CDK', [
+      `Tried: ${cdkBinary} bootstrap ${envQualifier}`,
+      'Check AWS permissions (CloudFormation, S3, IAM required)',
+      'Learn more: https://docs.aws.amazon.com/cdk/latest/guide/bootstrapping.html'
+    ]);
   }
 }
 
@@ -96,18 +176,72 @@ export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
     
     // 3. Check CDK bootstrap
     spinner.start('Checking CDK bootstrap...');
-    const isBootstrapped = await checkCDKBootstrap(credentials.account, config.aws.region);
+    const bootstrapStatus = await checkCDKBootstrap(credentials.account, config.aws.region);
     
-    if (!isBootstrapped) {
-      spinner.warn('CDK not bootstrapped in this region');
-      throw new ValidationError('CDK bootstrap required', [
-        `Run: cdk bootstrap aws://${credentials.account}/${config.aws.region}`,
-        'This is a one-time setup per account/region',
-        'Learn more: https://docs.aws.amazon.com/cdk/latest/guide/bootstrapping.html'
-      ]);
+    if (!bootstrapStatus.meetsMinimum) {
+      spinner.warn(
+        bootstrapStatus.bootstrapped 
+          ? `CDK bootstrap version ${bootstrapStatus.version} is outdated (requires v30+)`
+          : 'CDK not bootstrapped in this region'
+      );
+      
+      console.log(''); // Empty line
+      
+      // Explain what bootstrap does (concise)
+      if (!bootstrapStatus.bootstrapped) {
+        console.log(chalk.dim('CDK bootstrap sets up required AWS resources (S3 bucket, IAM roles) for deployments.'));
+        console.log(chalk.dim('This is a one-time setup per account/region.'));
+      } else {
+        console.log(chalk.dim('Your CDK bootstrap version needs to be upgraded to support the latest CDK features.'));
+      }
+      
+      console.log(''); // Empty line
+      
+      // Prompt user to run bootstrap
+      const { runBootstrap } = await prompts({
+        type: 'confirm',
+        name: 'runBootstrap',
+        message: bootstrapStatus.bootstrapped 
+          ? 'Upgrade CDK bootstrap now? (Recommended)'
+          : 'Run CDK bootstrap now? (Recommended)',
+        initial: true
+      });
+      
+      if (!runBootstrap) {
+        throw new ValidationError('CDK bootstrap required', [
+          `Run manually: npx cdk bootstrap aws://${credentials.account}/${config.aws.region}`,
+          'Learn more: https://docs.aws.amazon.com/cdk/latest/guide/bootstrapping.html'
+        ]);
+      }
+      
+      // Run bootstrap
+      console.log(''); // Empty line
+      spinner.start('Bootstrapping CDK... (this may take 1-2 minutes)');
+      
+      try {
+        await runCDKBootstrap(credentials.account, config.aws.region, config.aws.profile);
+        spinner.succeed('CDK bootstrap completed successfully');
+        
+        // Verify the bootstrap worked and version is correct
+        spinner.start('Verifying bootstrap...');
+        const verifyStatus = await checkCDKBootstrap(credentials.account, config.aws.region);
+        
+        if (!verifyStatus.meetsMinimum) {
+          spinner.fail('Bootstrap verification failed');
+          throw new ValidationError('CDK bootstrap verification failed', [
+            `Expected version 30+, got ${verifyStatus.version}`,
+            'Try running manually: npx cdk bootstrap aws://${credentials.account}/${config.aws.region}',
+          ]);
+        }
+        
+        spinner.succeed(`CDK bootstrap verified (v${verifyStatus.version})`);
+      } catch (error) {
+        spinner.fail('CDK bootstrap failed');
+        throw error;
+      }
+    } else {
+      spinner.succeed(`CDK bootstrap verified (v${bootstrapStatus.version})`);
     }
-    
-    spinner.succeed('CDK bootstrap verified');
     
     // 4. Validate instance type format
     spinner.start('Validating configuration...');
