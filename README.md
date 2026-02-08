@@ -575,7 +575,7 @@ git clone https://github.com/salza80/openclaw-aws.git
 cd openclaw-aws
 
 # 2. Use Node 20+
-nvm use 22  # or nvm use 20
+nvm use
 
 # 3. Install dependencies
 npm install
