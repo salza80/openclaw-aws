@@ -3,7 +3,7 @@ import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
 import { loadConfig } from '../utils/config.js';
-import { getStackStatus } from '../utils/aws.js';
+import { getStackStatus, getSSMStatus, checkGatewayStatus } from '../utils/aws.js';
 import { handleError, withRetry } from '../utils/errors.js';
 
 interface StatusArgs {
@@ -75,19 +75,50 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
           }
 
           if (status.ssmStatus) {
-            const ssmDisplay = status.ssmStatus === 'ready' 
-              ? chalk.green('✓ Ready') 
-              : chalk.yellow('⚠ Not Ready');
+            // Get detailed SSM status
+            let ssmDisplay = '';
+            if (status.ssmStatus === 'ready') {
+              // Double-check with detailed status
+              const detailedSSM = await getSSMStatus(status.instanceId!, config.aws.region);
+              if (detailedSSM.status === 'Online') {
+                ssmDisplay = chalk.green('✓ Ready (Online)');
+              } else if (detailedSSM.status === 'ConnectionLost') {
+                ssmDisplay = chalk.red('✗ Connection Lost') + chalk.gray(` (last ping: ${detailedSSM.lastPing || 'unknown'})`);
+              } else {
+                ssmDisplay = chalk.yellow(`⚠ ${detailedSSM.status}`);
+              }
+            } else {
+              ssmDisplay = chalk.yellow('⚠ Not Ready');
+            }
             console.log(chalk.bold('SSM:'), ssmDisplay);
           }
 
           console.log(chalk.bold('Type:'), config.instance.type);
         }
 
-        // OpenClaw Gateway status (only if instance is running)
-        if (status.instanceStatus === 'running') {
+        // OpenClaw Gateway status (only if instance is running and SSM is ready)
+        if (status.instanceStatus === 'running' && status.instanceId) {
           console.log('\n' + chalk.bold('OpenClaw Gateway:'));
-          console.log(chalk.bold('Status:'), chalk.yellow('⚠ Unknown'), chalk.gray('(run openclaw-aws dashboard to check)'));
+          
+          // Check if SSM is online before checking gateway
+          const detailedSSM = await getSSMStatus(status.instanceId, config.aws.region);
+          if (detailedSSM.status === 'Online') {
+            try {
+              const gatewayStatus = await checkGatewayStatus(status.instanceId, config.aws.region);
+              if (gatewayStatus.running) {
+                console.log(chalk.bold('Status:'), chalk.green('✓ Running'));
+              } else {
+                console.log(chalk.bold('Status:'), chalk.red('✗ Not Running'));
+                if (gatewayStatus.error) {
+                  console.log(chalk.gray('  Error:'), chalk.gray(gatewayStatus.error));
+                }
+              }
+            } catch (error) {
+              console.log(chalk.bold('Status:'), chalk.yellow('⚠ Unknown'), chalk.gray('(check failed)'));
+            }
+          } else {
+            console.log(chalk.bold('Status:'), chalk.yellow('⚠ Unknown'), chalk.gray('(SSM not connected)'));
+          }
         }
 
         // Quick commands based on instance state

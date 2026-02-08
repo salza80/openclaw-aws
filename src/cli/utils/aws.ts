@@ -1,5 +1,5 @@
 import { CloudFormationClient, DescribeStacksCommand, DescribeStackResourcesCommand } from '@aws-sdk/client-cloudformation';
-import { SSMClient, DescribeInstanceInformationCommand } from '@aws-sdk/client-ssm';
+import { SSMClient, DescribeInstanceInformationCommand, SendCommandCommand, GetCommandInvocationCommand } from '@aws-sdk/client-ssm';
 import { EC2Client, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import type { DeploymentStatus } from '../types/index.js';
 
@@ -40,9 +40,88 @@ export async function checkSSMStatus(
   try {
     const response = await client.send(command);
     const instance = response.InstanceInformationList?.[0];
+    
+    // Only return true if explicitly Online
+    // ConnectionLost, Inactive, or missing instance all return false
     return instance?.PingStatus === 'Online';
   } catch {
     return false;
+  }
+}
+
+export async function getSSMStatus(
+  instanceId: string,
+  region: string
+): Promise<{ status: string; lastPing?: string }> {
+  const client = new SSMClient({ region });
+  const command = new DescribeInstanceInformationCommand({
+    Filters: [{ Key: 'InstanceIds', Values: [instanceId] }]
+  });
+  
+  try {
+    const response = await client.send(command);
+    const instance = response.InstanceInformationList?.[0];
+    
+    if (!instance) {
+      return { status: 'not-registered' };
+    }
+    
+    return {
+      status: instance.PingStatus || 'unknown',
+      lastPing: instance.LastPingDateTime?.toISOString()
+    };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
+export async function checkGatewayStatus(
+  instanceId: string,
+  region: string
+): Promise<{ running: boolean; error?: string }> {
+  const client = new SSMClient({ region });
+  
+  try {
+    // Send command to check if openclaw gateway service is running
+    const sendCommand = new SendCommandCommand({
+      InstanceIds: [instanceId],
+      DocumentName: 'AWS-RunShellScript',
+      Parameters: {
+        commands: [
+          'sudo -u ubuntu bash -c "export XDG_RUNTIME_DIR=/run/user/1000 && systemctl --user is-active openclaw-gateway.service"'
+        ]
+      },
+      TimeoutSeconds: 30
+    });
+    
+    const sendResponse = await client.send(sendCommand);
+    const commandId = sendResponse.Command?.CommandId;
+    
+    if (!commandId) {
+      return { running: false, error: 'Failed to send command' };
+    }
+    
+    // Wait a bit for command to execute
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Get command result
+    const getResult = new GetCommandInvocationCommand({
+      CommandId: commandId,
+      InstanceId: instanceId
+    });
+    
+    const resultResponse = await client.send(getResult);
+    const output = resultResponse.StandardOutputContent?.trim();
+    
+    return {
+      running: output === 'active',
+      error: output !== 'active' ? resultResponse.StandardErrorContent : undefined
+    };
+  } catch (error) {
+    return { 
+      running: false, 
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
   }
 }
 
