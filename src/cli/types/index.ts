@@ -11,7 +11,6 @@ export interface OpenClawConfig {
   instance: {
     type: string;
     name: string;
-    nodeVersion: number;
   };
   security?: {
     enableSsh?: boolean;
@@ -25,8 +24,6 @@ export interface OpenClawConfig {
   };
   openclaw?: {
     apiProvider: 'anthropic' | 'openrouter' | 'openai' | 'custom';
-    model?: string;
-    enableSandbox?: boolean;
   };
 }
 
@@ -37,7 +34,6 @@ export interface StackConfig {
     class: string;
     size: string;
   };
-  nodeVersion: number;
   enableCloudWatchLogs: boolean;
   useDefaultVpc: boolean;
   enableSsh?: boolean;

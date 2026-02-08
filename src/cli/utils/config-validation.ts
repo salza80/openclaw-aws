@@ -46,12 +46,6 @@ export function validateConfig(config: OpenClawConfig): void {
     } else if (config.instance.name.length > 63) {
       errors.push('instance.name must be 63 characters or less');
     }
-    
-    if (!config.instance.nodeVersion) {
-      errors.push('Missing instance.nodeVersion');
-    } else if (config.instance.nodeVersion < 18) {
-      errors.push('instance.nodeVersion must be 18 or higher');
-    }
   }
   
   // Validate features

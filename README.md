@@ -240,8 +240,7 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
   },
   "instance": {
     "type": "t3.micro",
-    "name": "openclaw-my-bot",
-    "nodeVersion": 22
+    "name": "openclaw-my-bot"
   },
   "network": {
     "useDefaultVpc": true
@@ -264,6 +263,10 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
 
 ### Configuration Fields
 
+**instance:**
+- `type` (string) - EC2 instance type (e.g., "t3.micro", "t3.small")
+- `name` (string) - Name tag for the EC2 instance
+
 **network:**
 - `useDefaultVpc` (boolean) - Use your AWS default VPC (recommended) vs creating a new VPC
 
@@ -271,7 +274,16 @@ Configuration is stored in `.openclaw-aws/config.json` in your project directory
 - `enableSsh` (boolean) - Enable SSH access to instance (default: false, recommended: keep disabled)
 - `sshSourceIp` (string) - CIDR block for SSH access (only used if SSH enabled, e.g., "1.2.3.4/32")
 
-**Note:** SSH is disabled by default. SSM Session Manager is the recommended access method.
+**features:**
+- `cloudWatchLogs` (boolean) - Enable CloudWatch Logs integration (adds CloudWatchAgentServerPolicy to IAM role)
+
+**openclaw:**
+- `apiProvider` (string) - LLM API provider: "anthropic", "openrouter", "openai", or "custom"
+
+**Note:** 
+- SSH is disabled by default. SSM Session Manager is the recommended access method.
+- Node.js 22 is hardcoded in the instance setup (not configurable)
+- Ubuntu 24.04 LTS is the AMI used (not configurable)
 
 ## Architecture
 
@@ -358,6 +370,7 @@ If you have an existing openclaw-aws deployment from before the security improve
 4. **IMDSv2** - Now enforced on all instances (SSRF protection)
 5. **EBS** - Now encrypted at rest
 6. **Elastic IP** - Removed (instance gets standard public IP)
+7. **Config cleanup** - Removed unused fields: `nodeVersion` (hardcoded to 22), `model`, `enableSandbox` (OpenClaw handles these)
 
 ### How to Migrate
 1. **Backup your data** (if any) from the existing instance

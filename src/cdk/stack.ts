@@ -25,8 +25,6 @@ export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
   apiProvider: 'anthropic' | 'openrouter' | 'openai' | 'custom';
   apiKey: string;
-  model?: string;
-  enableSandbox?: boolean;
   gatewayPort?: number;
   browserPort?: number;
   customApiBaseUrl?: string;
@@ -40,8 +38,6 @@ export class OpenClawStack extends Stack {
     super(scope, id, props);
 
     const { config, apiProvider, apiKey } = props;
-    const model = props.model ?? (apiProvider === 'anthropic' ? 'anthropic/claude-sonnet-4' : 'openrouter/anthropic/claude-sonnet-4');
-    const enableSandbox = props.enableSandbox ?? true;
     const gatewayPort = props.gatewayPort ?? 18789;
     const browserPort = props.browserPort ?? 18791;
 
@@ -93,13 +89,21 @@ export class OpenClawStack extends Stack {
       );
     }
 
-    // IAM role for SSM and CloudWatch
+    // IAM role for SSM and optionally CloudWatch
+    const managedPolicies = [
+      ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+    ];
+    
+    // Conditionally add CloudWatch policy if enabled
+    if (config.enableCloudWatchLogs) {
+      managedPolicies.push(
+        ManagedPolicy.fromAwsManagedPolicyName('CloudWatchAgentServerPolicy')
+      );
+    }
+    
     const role = new Role(this, 'OpenClawEc2Role', {
       assumedBy: new ServicePrincipal('ec2.amazonaws.com'),
-      managedPolicies: [
-        ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
-        ManagedPolicy.fromAwsManagedPolicyName('CloudWatchAgentServerPolicy'),
-      ],
+      managedPolicies,
     });
 
     // Store API key in Parameter Store (SecureString for encryption)

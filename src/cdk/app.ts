@@ -66,18 +66,13 @@ const stackConfig: StackConfig = {
   projectName: config.projectName,
   instanceName: config.instance.name,
   instanceType: parseInstanceType(config.instance.type),
-  nodeVersion: config.instance.nodeVersion,
   enableCloudWatchLogs: config.features.cloudWatchLogs,
   useDefaultVpc: config.network.useDefaultVpc,
   enableSsh: config.security?.enableSsh,
   sshSourceIp: config.security?.sshSourceIp,
 };
 
-// Get configuration from config file or environment
-const model = config.openclaw?.model 
-  || process.env.OPENCLAW_MODEL 
-  || (apiProvider === 'anthropic' ? 'anthropic/claude-sonnet-4' : 'openrouter/anthropic/claude-sonnet-4');
-const enableSandbox = config.openclaw?.enableSandbox ?? (process.env.OPENCLAW_ENABLE_SANDBOX !== 'false'); // default true
+// Get configuration from environment (no model/sandbox in config anymore)
 const gatewayPort = parseInt(process.env.OPENCLAW_GATEWAY_PORT ?? '18789', 10);
 const browserPort = parseInt(process.env.OPENCLAW_BROWSER_PORT ?? '18791', 10);
 const customApiBaseUrl = process.env.OPENCLAW_CUSTOM_API_BASE_URL;
@@ -90,8 +85,6 @@ const stackProps: OpenClawStackProps = {
   config: stackConfig,
   apiProvider,
   apiKey,
-  model,
-  enableSandbox,
   gatewayPort,
   browserPort,
   customApiBaseUrl,

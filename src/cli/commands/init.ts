@@ -12,7 +12,6 @@ interface InitArgs {
   instanceType?: string;
   yes?: boolean;
   apiProvider?: string;
-  model?: string;
 }
 
 // API Provider options
@@ -22,14 +21,6 @@ const API_PROVIDERS = [
   { title: 'OpenAI (GPT)', value: 'openai', description: 'Official OpenAI API' },
   { title: 'Custom', value: 'custom', description: 'Custom API endpoint' },
 ];
-
-// Default models for each provider
-const DEFAULT_MODELS: Record<string, string> = {
-  anthropic: 'anthropic/claude-sonnet-4',
-  openrouter: 'openrouter/anthropic/claude-sonnet-4',
-  openai: 'gpt-4',
-  custom: 'custom-model',
-};
 
 // Environment variable names for each provider
 const API_KEY_ENV_VARS: Record<string, string> = {
@@ -56,10 +47,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       .option('api-provider', {
         type: 'string',
         describe: 'API provider (anthropic, openrouter, openai, custom)',
-      })
-      .option('model', {
-        type: 'string',
-        describe: 'AI model to use',
       })
       .option('yes', {
         type: 'boolean',
@@ -93,7 +80,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       if (argv.yes) {
         // Use defaults
         const apiProvider = (argv.apiProvider as 'anthropic' | 'openrouter' | 'openai' | 'custom') || 'anthropic';
-        const model = argv.model || DEFAULT_MODELS[apiProvider];
         
         config = {
           version: '1.0',
@@ -107,7 +93,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           instance: {
             type: argv.instanceType || 't3.micro',
             name: 'openclaw-my-openclaw-bot',
-            nodeVersion: 22,
           },
           security: {
             enableSsh: false,
@@ -121,8 +106,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           },
           openclaw: {
             apiProvider,
-            model,
-            enableSandbox: true,
           },
         };
       } else {
@@ -182,13 +165,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             initial: 0
           },
           {
-            type: 'text',
-            name: 'model',
-            message: 'AI Model:',
-            initial: (prev: any, values: any) => DEFAULT_MODELS[values.apiProvider],
-            hint: 'Press Enter for default model'
-          },
-          {
             type: 'confirm',
             name: 'enableSsh',
             message: 'Enable SSH access? (SSM Session Manager is recommended)',
@@ -230,7 +206,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           instance: {
             type: argv.instanceType || answers.instanceType,
             name: answers.instanceName,
-            nodeVersion: 22,
           },
           security: {
             enableSsh: answers.enableSsh,
@@ -244,8 +219,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           },
           openclaw: {
             apiProvider: answers.apiProvider,
-            model: answers.model,
-            enableSandbox: true,
           },
         };
 
@@ -271,11 +244,10 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       console.log(`  ${chalk.bold('Region:')} ${chalk.cyan(config.aws.region)}`);
       console.log(`  ${chalk.bold('Instance:')} ${chalk.cyan(config.instance.type)}`);
       console.log(`  ${chalk.bold('Name:')} ${chalk.cyan(config.instance.name)}`);
-      console.log(`  ${chalk.bold('AMI:')} ${chalk.cyan('Amazon Linux 2023')}`);
-      console.log(`  ${chalk.bold('Node.js:')} ${chalk.cyan('v22')}`);
+      console.log(`  ${chalk.bold('AMI:')} ${chalk.cyan('Ubuntu 24.04 LTS')}`);
+      console.log(`  ${chalk.bold('Node.js:')} ${chalk.cyan('22 (hardcoded)')}`);
       console.log(`  ${chalk.bold('Stack:')} ${chalk.cyan(config.stack.name)}`);
       console.log(`  ${chalk.bold('API Provider:')} ${chalk.cyan(config.openclaw?.apiProvider || 'anthropic')}`);
-      console.log(`  ${chalk.bold('Model:')} ${chalk.cyan(config.openclaw?.model || 'default')}`);
 
       // Show required environment variable
       const apiProvider = config.openclaw?.apiProvider || 'anthropic';

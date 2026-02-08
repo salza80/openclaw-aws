@@ -24,8 +24,6 @@
     "name": "OpenclawStack-my-bot"
   },
   "openclaw": {
-    "apiProvider": "anthropic",
-    "model": "anthropic/claude-sonnet-4",
-    "enableSandbox": true
+    "apiProvider": "anthropic"
   }
 }
