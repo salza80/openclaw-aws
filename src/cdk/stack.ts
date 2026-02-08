@@ -234,7 +234,7 @@ export class OpenClawStack extends Stack {
       'export XDG_RUNTIME_DIR=/run/user/1000',
       '',
       '# Install but do not start the daemon yet',
-      'openclaw daemon install --no-start || echo "WARNING: Daemon install failed. Run openclaw daemon install manually."',
+      'openclaw daemon install || echo "WARNING: Daemon install failed. Run openclaw daemon install manually."',
       'DAEMON_SCRIPT',
       '',
       '# Configure gateway with authentication token',
@@ -261,14 +261,22 @@ export class OpenClawStack extends Stack {
       '# Ensure proper ownership of .openclaw directory',
       'chown -R ubuntu:ubuntu /home/ubuntu/.openclaw',
       '',
+      '# Restart daemon as ubuntu user to ensure it picks up all changes',
+      'sudo -H -u ubuntu bash << \'RESTART_SCRIPT\'',
+      'export HOME=/home/ubuntu',
+      'export NVM_DIR="$HOME/.nvm"',
+      '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
+      'export XDG_RUNTIME_DIR=/run/user/1000',
+      'openclaw daemon restart || echo "WARNING: Could not restart daemon"',
+      'RESTART_SCRIPT',
+      '',
       '# Create completion marker',
       'touch /tmp/openclaw-setup-complete',
       '',
       'echo "OpenClaw setup complete!"',
       `echo "Gateway Token: ${gatewayToken}"`,
-      `echo "Access via SSH: ssh -i <key> ubuntu@<public-ip>"`,
       `echo "Or use SSM: aws ssm start-session --target <instance-id>"`,
-      `echo "Dashboard: http://localhost:${gatewayPort}/?token=${gatewayToken} (via port forward)`
+      `echo "Dashboard: http://localhost:${gatewayPort}/?token=${gatewayToken} (via port forward)"`
     );
 
     // Parse instance type from config
