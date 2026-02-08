@@ -1,3 +1,6 @@
+import { API_PROVIDERS } from "../constants";
+
+export type Provider = typeof API_PROVIDERS[number]['value'];
 export interface OpenClawConfig {
   version: string;
   projectName: string;
@@ -23,7 +26,7 @@ export interface OpenClawConfig {
     name: string;
   };
   openclaw?: {
-    apiProvider: 'anthropic' | 'openrouter' | 'openai' | 'custom';
+    apiProvider: Provider;
   };
 }
 

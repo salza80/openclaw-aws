@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import { OpenClawStack, OpenClawStackProps } from './stack.js';
 import { loadConfig } from '../cli/utils/config.js';
 import type { StackConfig } from '../cli/types/index.js';
+import { Provider } from 'aws-cdk-lib/custom-resources/index.js';
 
 // Load configuration
 let config;
@@ -13,33 +14,15 @@ try {
   process.exit(1);
 }
 
-// Determine API provider from config or environment
-const apiProvider = config.openclaw?.apiProvider 
-  || (process.env.OPENCLAW_API_PROVIDER as 'anthropic' | 'openrouter' | 'openai' | 'custom') 
-  || 'anthropic';
+// Determine API provider from config
+const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key'; // Default to Anthropic if not set
 
 // Get API key based on provider
-let apiKey: string | undefined;
-if (apiProvider === 'anthropic') {
-  apiKey = process.env.ANTHROPIC_API_KEY;
-} else if (apiProvider === 'openrouter') {
-  apiKey = process.env.OPENROUTER_API_KEY;
-} else if (apiProvider === 'openai') {
-  apiKey = process.env.OPENAI_API_KEY;
-} else if (apiProvider === 'custom') {
-  apiKey = process.env.CUSTOM_API_KEY;
-}
+const envVarName = apiProvider.toUpperCase().replace(/-/g, '_');
+const apiKey = process.env[envVarName];
 
 // Validate required environment variables
 if (!apiKey) {
-  const envVarName = apiProvider === 'anthropic' 
-    ? 'ANTHROPIC_API_KEY'
-    : apiProvider === 'openrouter'
-    ? 'OPENROUTER_API_KEY'
-    : apiProvider === 'openai'
-    ? 'OPENAI_API_KEY'
-    : 'CUSTOM_API_KEY';
-  
   console.error(`Error: ${envVarName} environment variable is required`);
   console.error(`Set it with: export ${envVarName}=your-api-key`);
   console.error(`\nAPI Provider: ${apiProvider}`);

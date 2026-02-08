@@ -20,11 +20,12 @@ openclaw-aws init
 # Deploy to AWS
 openclaw-aws deploy
 
-# Connect and run onboarding
-openclaw-aws onboard
+# Connect to vps via SSM for terminal access
+openclaw-aws connect
 
-# Access dashboard
+# Access dashboard via SSM port forwarding
 openclaw-aws dashboard
+
 ```
 
 ## Prerequisites
@@ -53,51 +54,6 @@ Before using openclaw-aws, ensure you have:
    # Verify credentials
    aws sts get-caller-identity
    ```
-
-3. **CDK Bootstrap** - One-time setup per AWS account/region
-   ```bash
-   # Get your AWS account ID
-   aws sts get-caller-identity
-   
-   # Bootstrap CDK (replace with your account ID and region)
-   npx cdk bootstrap aws://YOUR-ACCOUNT-ID/YOUR-REGION
-   
-   # Example:
-   npx cdk bootstrap aws://360298971790/eu-central-1
-   ```
-   
-   **Note:** You don't need to install CDK globally - `npx cdk` will use the version bundled with openclaw-aws.
-
-4. **AWS SSM Plugin** installed:
-   ```bash
-   # macOS
-   brew install --cask session-manager-plugin
-   
-   # Ubuntu/Debian
-   curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o "session-manager-plugin.deb"
-   sudo dpkg -i session-manager-plugin.deb
-   ```
-
-5. **Anthropic API Key** (for Claude) from https://console.anthropic.com/
-6. **(Optional) Brave Search API Key** for web search capabilities
-
-## Installation
-
-### From GitHub Packages (Private)
-
-```bash
-# First, authenticate with GitHub Packages
-echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
-
-# Install globally
-npm install -g @YOUR_GITHUB_USERNAME/openclaw-aws
-```
-
-### From Git Repository
-
-```bash
-npm install -g git+ssh://git@github.com/YOUR_GITHUB_USERNAME/openclaw-aws.git
-```
 
 ### Local Development
 
@@ -176,13 +132,11 @@ openclaw-aws init
 # Non-interactive with secure defaults
 openclaw-aws init --yes --region us-east-1
 ```
-
-**Security Defaults (--yes mode):**
+**Security Defaults:**
 - Uses default VPC (simpler, no extra VPC costs)
 - Zero open ports (SSM-only access, SSH permanently disabled)
 - IMDSv2 enforced
 - EBS encryption enabled
-- API keys stored in Parameter Store
 
 ### `openclaw-aws deploy`
 
@@ -209,39 +163,17 @@ Connect to your EC2 instance via SSM.
 openclaw-aws connect
 ```
 
-#### Commands to view logs:
-```bash
-# User data execution log
-sudo cat /var/log/cloud-init-output.log
+  #### Commands to view logs:
+  ```bash
+  # User data execution log
+  sudo cat /var/log/cloud-init-output.log
 
-# Cloud-init general log
-sudo cat /var/log/cloud-init.log
+  # Cloud-init general log
+  sudo cat /var/log/cloud-init.log
 
-# User data script log (if any errors)
-sudo cat /var/log/user-data.log
-```
-
-#### Verify API key retrieval from Parameter Store:
-```bash
-# Check if API key was successfully retrieved
-echo $ANTHROPIC_API_KEY
-
-# View Parameter Store parameter (will show encrypted value)
-aws ssm get-parameter --name /openclaw/my-bot/api-key --region us-east-1
-```
-
-
-### `openclaw-aws onboard`
-
-Connect to instance with onboarding instructions and guidance.
-
-**Example:**
-```bash
-openclaw-aws onboard
-
-# Once connected, run:
-openclaw onboard --install-daemon
-```
+  # User data script log (if any errors)
+  sudo cat /var/log/user-data.log
+  ```
 
 ### `openclaw-aws dashboard`
 
@@ -253,7 +185,7 @@ Forward port 18789 to access the OpenClaw dashboard locally.
 **Example:**
 ```bash
 openclaw-aws dashboard
-# Opens http://localhost:18789 in your browser
+# Opens http://localhost:18789 in your browser - short delay before it works - refresh browser after 5 seconds
 ```
 
 ### `openclaw-aws status`
@@ -353,7 +285,6 @@ The deployment creates:
 - **Security Group** - Zero inbound rules (SSM access only, no SSH)
 - **IAM Role** - Least-privilege with SSM and Parameter Store access
 - **VPC** - Uses default VPC by default (option to create new VPC)
-- **Parameter Store** - SecureString parameter for encrypted API key storage
 
 ## Security
 
@@ -375,24 +306,16 @@ OpenClaw-AWS implements multiple layers of security following AWS best practices
 - ✅ **Private Dashboard** - Access via SSM port forwarding only
 - ✅ **Audited Access** - All SSM sessions are logged in CloudTrail
 
-### Secrets Management
-- ✅ **Encrypted API Keys** - Stored as SecureString in AWS Parameter Store (not in UserData)
-- ✅ **At-Rest Encryption** - API keys encrypted using AWS-managed KMS keys
-- ✅ **Runtime Retrieval** - Instance fetches API keys from Parameter Store at boot
-
 ### Instance Hardening
 - ✅ **IMDSv2 Required** - Protection against SSRF attacks (Instance Metadata Service v2)
 - ✅ **Encrypted EBS** - All disk volumes encrypted at rest
-- ✅ **IAM Least Privilege** - Only SSM and Parameter Store permissions granted
 - ✅ **Public Subnet with No Inbound** - Instance can reach internet but nothing can reach it
 
 ### Network Security
 - ✅ **VPC Isolation** - Uses default VPC or creates dedicated VPC
-- ✅ **No Elastic IP** - Uses standard public IP (changes on stop/start)
 - ✅ **Outbound Only** - Instance needs internet for package updates and API calls
 - ✅ **No Direct SSH** - Even if enabled, SSH is restricted to specific IP/CIDR
 
-### Why Public IP with No Open Ports is Safe
 The instance is placed in a public subnet with a public IP to enable:
 - Outbound API calls to LLM providers (Anthropic, OpenAI, etc.)
 - Outbound package updates (npm, system updates)
@@ -401,81 +324,10 @@ The instance is placed in a public subnet with a public IP to enable:
 However, with **zero inbound security group rules**, the public IP cannot receive any incoming connections. This is more secure than traditional setups with SSH on port 22 open to the world.
 
 ### Cost Impact
-Security features add minimal cost:
-- **Parameter Store**: ~$0.05/month for SecureString storage
+Security features add no extra aws cost:
 - **IMDSv2**: No additional cost
 - **EBS Encryption**: No additional cost
 - **SSM**: No additional cost
-
-**Total security overhead**: ~$0.05/month
-
-## Cost Breakdown
-
-**Monthly AWS Costs:**
-- EC2 t3.micro: ~$7.50/month (free tier: 750 hours/month for 12 months)
-- Parameter Store (SecureString): ~$0.05/month
-- SSM: No additional cost
-- IMDSv2: No additional cost
-- EBS Encryption: No additional cost
-- Data Transfer: Minimal (mostly outbound API calls)
-
-**Variable Costs:**
-- Anthropic Claude API: Usage-based
-- Other LLM APIs: Usage-based
-
-**Total Infrastructure**: ~$7.55/month after free tier
-
-## Migration Guide
-
-If you have an existing openclaw-aws deployment from before the security improvements:
-
-### What Changed
-1. **API Keys** - Now stored in Parameter Store (encrypted) instead of plaintext in UserData
-2. **SSH** - Completely removed and permanently disabled (was open to 0.0.0.0/0 before, now not even an option)
-3. **VPC** - Can now use default VPC (simpler) or create new VPC
-4. **IMDSv2** - Now enforced on all instances (SSRF protection)
-5. **EBS** - Now encrypted at rest
-6. **Elastic IP** - Removed (instance gets standard public IP)
-7. **Config cleanup** - Removed unused fields: `nodeVersion` (hardcoded to 22), `model`, `enableSandbox` (OpenClaw handles these), `security` section (SSH disabled permanently)
-
-### How to Migrate
-1. **Backup your data** (if any) from the existing instance
-2. **Run `openclaw-aws destroy`** to remove old infrastructure
-3. **Run `openclaw-aws init`** to create new configuration with security improvements
-4. **Run `openclaw-aws deploy`** to deploy with new security features
-5. **Run `openclaw-aws onboard`** to set up OpenClaw again
-
-### Configuration Updates
-Your old config had a `security` section - this is now removed. The new simplified config:
-```json
-{
-  "network": {
-    "useDefaultVpc": true
-  },
-  "openclaw": {
-    "apiProvider": "anthropic"
-  }
-}
-```
-
-**Note:** The `init` command will create a properly formatted config automatically.
-
-## Troubleshooting
-
-### CDK Bootstrap Version Mismatch
-
-**Error:** `Bootstrap toolkit stack version 30 or later is needed; current version: 25`
-
-**Solution:**
-```bash
-# Update your CDK bootstrap stack (uses bundled CDK)
-npx cdk bootstrap aws://YOUR-ACCOUNT-ID/YOUR-REGION
-
-# Example:
-npx cdk bootstrap aws://360298971790/eu-central-1
-```
-
-This is safe to run and will upgrade your CDK toolkit stack to the latest version.
 
 ### AWS SSO Session Expired
 
@@ -488,32 +340,6 @@ aws sso login --profile your-profile-name
 
 # Then try deployment again
 openclaw-aws deploy
-```
-
-### Node.js Version Warning
-
-**Warning:** `NodeDeprecationWarning: The AWS SDK for JavaScript (v3) will no longer support Node.js v18`
-
-**Solution:**
-```bash
-# Switch to Node 20 or 22
-nvm use 22
-
-# Verify
-node --version  # Should show v20.x or v22.x
-
-# Reinstall openclaw-aws if needed
-npm install -g @salza80/openclaw-aws
-```
-
-### CDK Not Found After Switching Node Versions
-
-**Error:** `command not found: cdk`
-
-**Solution:**  
-You don't need CDK installed globally! Use `npx cdk` which uses the bundled version:
-```bash
-npx cdk bootstrap aws://YOUR-ACCOUNT-ID/YOUR-REGION
 ```
 
 ### Instance not appearing in SSM
@@ -536,32 +362,12 @@ Check AWS credentials:
 ```bash
 aws sts get-caller-identity
 ```
-
-Ensure CDK is bootstrapped:
-```bash
-npx cdk bootstrap aws://ACCOUNT-ID/REGION
-```
-
 ### Port forwarding fails
 
 Ensure SSM plugin is installed and instance is ready:
 ```bash
 openclaw-aws status
 ```
-
-## Publishing to GitHub Packages
-
-1. **Update package.json** with your GitHub username
-2. **Create GitHub repo** and push code
-3. **Generate GitHub token** with `write:packages` permission
-4. **Authenticate:**
-   ```bash
-   npm login --registry=https://npm.pkg.github.com
-   ```
-5. **Publish:**
-   ```bash
-   npm publish
-   ```
 
 ## Development
 
@@ -607,24 +413,13 @@ npm run watch
 # After making changes, rebuild
 npm run build
 
-# Test locally
+# Test locally in another folder (ie openclaw-aws-test)
 openclaw-aws init
 openclaw-aws deploy
 
 # Or use watch mode for auto-rebuild
 npm run watch
 ```
-
-### Publishing
-
-See [Publishing to GitHub Packages](#publishing-to-github-packages) section above.
-
-## Learn More
-
-- **OpenClaw Documentation**: https://docs.openclaw.ai/
-- **OpenClaw GitHub**: https://github.com/openclaw/openclaw
-- **AWS CDK**: https://docs.aws.amazon.com/cdk/
-- **AWS Systems Manager**: https://docs.aws.amazon.com/systems-manager/
 
 ## License
 

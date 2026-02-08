@@ -19,10 +19,11 @@ import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import * as crypto from 'crypto';
 import type { StackConfig } from '../cli/types/index.js';
+import type { Provider } from '../cli/types/index.js';
 
 export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
-  apiProvider: 'anthropic' | 'openrouter' | 'openai' | 'custom';
+  apiProvider: Provider;
   apiKey: string;
   gatewayPort?: number;
   browserPort?: number;
@@ -108,13 +109,9 @@ export class OpenClawStack extends Stack {
     const userData = UserData.forLinux();
     
     // Set appropriate environment variable based on API provider
-    const apiKeyEnvVar = apiProvider === 'anthropic' 
-      ? 'ANTHROPIC_API_KEY' 
-      : apiProvider === 'openrouter'
-      ? 'OPENROUTER_API_KEY'
-      : apiProvider === 'openai'
-      ? 'OPENAI_API_KEY'
-      : 'CUSTOM_API_KEY';
+    const apiKeyEnvVar = apiProvider.toUpperCase().replace(/-/g, '_');
+    const authChoiceFlag = apiProvider === 'anthropic-api-key' ? 'apiKey' : apiProvider;
+
     
     userData.addCommands(
       '#!/bin/bash',
@@ -220,9 +217,7 @@ export class OpenClawStack extends Stack {
       'export XDG_RUNTIME_DIR=/run/user/1000',
       `export ${apiKeyEnvVar}='${apiKey}'`,
       '',
-      apiProvider === 'openrouter' 
-        ? `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --token-provider openrouter \\\n    --token "$${apiKeyEnvVar}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`
-        : `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice apiKey \\\n    --${apiProvider === 'custom' ? 'anthropic' : apiProvider}-api-key "$${apiKeyEnvVar}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`,
+      `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice ${authChoiceFlag} \\\n    --${apiProvider} "$${apiKeyEnvVar}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`,
       'ONBOARD_SCRIPT',
       '',
       '# Install daemon service',

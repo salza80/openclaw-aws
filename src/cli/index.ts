@@ -5,7 +5,6 @@ import initCommand from './commands/init.js';
 import deployCommand from './commands/deploy.js';
 import destroyCommand from './commands/destroy.js';
 import connectCommand from './commands/connect.js';
-import onboardCommand from './commands/onboard.js';
 import dashboardCommand from './commands/dashboard.js';
 import statusCommand from './commands/status.js';
 import outputsCommand from './commands/outputs.js';
@@ -22,7 +21,6 @@ yargs(hideBin(process.argv))
   .command(statusCommand)
   .command(readyCommand)
   .command(connectCommand)
-  .command(onboardCommand)
   .command(dashboardCommand)
   .command(outputsCommand)
   .command(stopCommand)
