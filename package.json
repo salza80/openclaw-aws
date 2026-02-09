@@ -41,8 +41,10 @@
     "watch": "tsc -w",
     "dev": "tsc -w",
     "prepublishOnly": "npm run build",
+    "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:coverage": "npm run build",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {

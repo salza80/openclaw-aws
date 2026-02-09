@@ -6,6 +6,8 @@ import {
   InstanceClass, 
   InstanceSize,
   MachineImage,
+  BlockDeviceVolume,
+  EbsDeviceVolumeType,
   SecurityGroup, 
   UserData, 
   SubnetType, 
@@ -283,14 +285,11 @@ export class OpenClawStack extends Stack {
       blockDevices: [
         {
           deviceName: '/dev/sda1',
-          volume: {
-            ebsDevice: {
-              volumeSize: 30,
-              volumeType: 'gp3' as any,
-              encrypted: true,
-              deleteOnTermination: true,
-            },
-          },
+          volume: BlockDeviceVolume.ebs(30, {
+            volumeType: EbsDeviceVolumeType.GP3,
+            encrypted: true,
+            deleteOnTermination: true,
+          }),
         },
       ],
     });
