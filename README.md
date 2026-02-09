@@ -226,15 +226,31 @@ openclaw-aws destroy --name my-bot
 openclaw-aws destroy --name my-bot --force
 ```
 
-### `openclaw-aws config`
+### `openclaw-aws list`
 
-Manage deployments (list/select current).
+List deployments.
 
-**Examples:**
+**Example:**
 ```bash
-openclaw-aws config list
-openclaw-aws config current
-openclaw-aws config use my-bot
+openclaw-aws list
+```
+
+### `openclaw-aws current`
+
+Show the current deployment.
+
+**Example:**
+```bash
+openclaw-aws current
+```
+
+### `openclaw-aws use`
+
+Select a deployment.
+
+**Example:**
+```bash
+openclaw-aws use my-bot
 ```
 
 ## Configuration
@@ -370,8 +386,8 @@ openclaw-aws status
 Run the init command first:
 ```bash
 openclaw-aws init --name my-bot
-openclaw-aws config list
-openclaw-aws config use my-bot
+openclaw-aws list
+openclaw-aws use my-bot
 ```
 
 ### Deployment fails

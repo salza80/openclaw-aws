@@ -75,8 +75,8 @@ export function resolveConfig(options: ConfigResolveOptions = {}): ResolvedConfi
 
   if (!name) {
     throw new ConfigError('No deployment selected', [
-      'List configs: openclaw-aws config list',
-      'Select one: openclaw-aws config use <name>',
+      'List deployments: openclaw-aws list',
+      'Select one: openclaw-aws use <name>',
       'Create one: openclaw-aws init --name <name>'
     ]);
   }
@@ -84,7 +84,7 @@ export function resolveConfig(options: ConfigResolveOptions = {}): ResolvedConfi
   if (!available.includes(name)) {
     throw new ConfigError(`Config not found: ${name}`, [
       `Create it first: openclaw-aws init --name ${name}`,
-      'List configs: openclaw-aws config list'
+      'List deployments: openclaw-aws list'
     ]);
   }
 

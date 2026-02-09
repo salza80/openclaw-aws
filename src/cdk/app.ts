@@ -50,7 +50,7 @@ function parseInstanceType(type: string): { class: string; size: string } {
 
 // Build stack config
 const stackConfig: StackConfig = {
-  projectName: config.projectName,
+  projectName: process.env.OPENCLAW_CONFIG_NAME ?? 'openclaw',
   instanceName: config.instance.name,
   instanceType: parseInstanceType(config.instance.type),
   enableCloudWatchLogs: config.features.cloudWatchLogs,

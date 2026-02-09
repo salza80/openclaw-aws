@@ -84,7 +84,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         
         config = {
           version: '1.0',
-          projectName: 'my-openclaw-bot',
+          // deployment name is the single source of truth; project name removed
           aws: {
             region: argv.region || 'us-east-1',
           },
@@ -93,13 +93,13 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           },
           instance: {
             type: argv.instanceType || 't3.micro',
-            name: 'openclaw-my-openclaw-bot',
+            name: `openclaw-${deploymentName}`,
           },
           features: {
             cloudWatchLogs: true,
           },
           stack: {
-            name: 'OpenclawStack-my-openclaw-bot',
+            name: `OpenclawStack-${deploymentName}`,
           },
           openclaw: {
             apiProvider,
@@ -113,13 +113,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             name: 'deploymentName',
             message: 'Deployment name (unique):',
             initial: deploymentName || 'my-openclaw-bot',
-            validate: (value) => validateProjectName(value) === true ? true : String(validateProjectName(value))
-          },
-          {
-            type: 'text',
-            name: 'projectName',
-            message: 'Project name:',
-            initial: 'my-openclaw-bot',
             validate: (value) => validateProjectName(value) === true ? true : String(validateProjectName(value))
           },
           {
@@ -158,7 +151,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: 'text',
             name: 'instanceName',
             message: 'Instance name:',
-            initial: (_prev: string, values: { projectName: string }) => `openclaw-${values.projectName}`,
+            initial: () => `openclaw-${deploymentName}`,
             validate: (value: string) => validateInstanceName(value) === true ? true : String(validateInstanceName(value))
           },
           {
@@ -177,7 +170,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         ]);
 
         // Check if user cancelled
-        if (!answers.projectName || !answers.deploymentName) {
+        if (!answers.deploymentName) {
           logger.warn('Setup cancelled');
           return;
         }
@@ -186,7 +179,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
 
         config = {
           version: '1.0',
-          projectName: answers.projectName,
           aws: {
             region: argv.region || answers.region,
           },
@@ -195,13 +187,13 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           },
           instance: {
             type: argv.instanceType || answers.instanceType,
-            name: answers.instanceName,
+            name: `openclaw-${deploymentName}`,
           },
           features: {
             cloudWatchLogs: answers.cloudWatchLogs,
           },
           stack: {
-            name: `OpenclawStack-${answers.projectName}`,
+            name: `OpenclawStack-${deploymentName}`,
           },
           openclaw: {
             apiProvider: answers.apiProvider,
@@ -234,7 +226,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       // Display summary
       console.log('\n' + chalk.bold('Configuration Summary:'));
       console.log(`  ${chalk.bold('Deployment:')} ${chalk.cyan(deploymentName)}`);
-      console.log(`  ${chalk.bold('Project:')} ${chalk.cyan(config.projectName)}`);
       console.log(`  ${chalk.bold('Region:')} ${chalk.cyan(config.aws.region)}`);
       console.log(`  ${chalk.bold('Instance:')} ${chalk.cyan(config.instance.type)}`);
       console.log(`  ${chalk.bold('Name:')} ${chalk.cyan(config.instance.name)}`);

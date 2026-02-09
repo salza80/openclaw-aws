@@ -27,7 +27,7 @@ export function stackNotFoundSuggestions(): string[] {
 export function configNotFoundSuggestions(): string[] {
   return [
     'Create a deployment: openclaw-aws init --name <name>',
-    'List deployments: openclaw-aws config list'
+    'List deployments: openclaw-aws list'
   ];
 }
 

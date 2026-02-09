@@ -9,15 +9,6 @@ export function validateConfig(config: OpenClawConfig): void {
     errors.push('Invalid or missing config version (expected: "1.0")');
   }
   
-  // Validate project name
-  if (!config.projectName) {
-    errors.push('Missing projectName');
-  } else if (!/^[a-z0-9-]+$/.test(config.projectName)) {
-    errors.push('projectName must contain only lowercase letters, numbers, and hyphens');
-  } else if (config.projectName.length > 50) {
-    errors.push('projectName must be 50 characters or less');
-  }
-  
   // Validate AWS config
   if (!config.aws) {
     errors.push('Missing aws configuration');
@@ -86,7 +77,6 @@ export function validateConfigStructure(obj: unknown): obj is OpenClawConfig {
     obj &&
     typeof obj === 'object' &&
     'version' in obj &&
-    'projectName' in obj &&
     'aws' in obj &&
     'instance' in obj &&
     'features' in obj &&

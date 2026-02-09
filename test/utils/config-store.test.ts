@@ -12,7 +12,6 @@ import {
 
 const validConfig = {
   version: '1.0',
-  projectName: 'my-openclaw-bot',
   aws: {
     region: 'us-east-1'
   },
