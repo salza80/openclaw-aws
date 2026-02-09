@@ -9,7 +9,7 @@ import { getInstanceState, stopInstance, waitForInstanceState } from '../utils/e
 import { handleError } from '../utils/errors.js';
 
 interface StopArgs {
-  config?: string;
+  name?: string;
   force?: boolean;
 }
 
@@ -19,9 +19,9 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       })
       .option('force', {
         type: 'boolean',
@@ -32,10 +32,11 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       logger.title('OpenClaw AWS - Stop Instance');
+      logger.info(`Stopping ${chalk.cyan(ctx.name)}`);
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();

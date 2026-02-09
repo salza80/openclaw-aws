@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
 import { OpenClawStack, OpenClawStackProps } from './stack.js';
-import { loadConfig } from '../cli/utils/config.js';
+import { loadConfigByName } from '../cli/utils/config.js';
 import type { StackConfig } from '../cli/types/index.js';
 import { Provider } from 'aws-cdk-lib/custom-resources/index.js';
 
 // Load configuration
 let config;
 try {
-  config = loadConfig();
+  const configName = process.env.OPENCLAW_CONFIG_NAME;
+  if (!configName) {
+    console.error('Error loading configuration: OPENCLAW_CONFIG_NAME is required');
+    process.exit(1);
+  }
+  config = loadConfigByName(configName);
 } catch (error) {
   console.error('Error loading configuration:', error instanceof Error ? error.message : String(error));
   process.exit(1);

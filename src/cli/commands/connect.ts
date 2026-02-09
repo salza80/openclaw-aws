@@ -9,7 +9,7 @@ import { handleError, AWSError, withRetry, isRetryableError } from '../utils/err
 import { validateSSMPlugin } from '../utils/aws-validation.js';
 
 interface ConnectArgs {
-  config?: string;
+  name?: string;
 }
 
 export const connectCommand: CommandModule<{}, ConnectArgs> = {
@@ -18,19 +18,21 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       });
   },
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       // Validate SSM plugin is installed
       await validateSSMPlugin();
+
+      logger.info(`Connecting ${chalk.cyan(ctx.name)}`);
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();

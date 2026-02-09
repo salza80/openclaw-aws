@@ -7,7 +7,7 @@ import { getStackOutputs } from '../utils/aws.js';
 import { handleError, withRetry } from '../utils/errors.js';
 
 interface OutputsArgs {
-  config?: string;
+  name?: string;
 }
 
 export const outputsCommand: CommandModule<{}, OutputsArgs> = {
@@ -16,16 +16,19 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       });
   },
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
+
+      logger.title('CloudFormation Outputs');
+      logger.info(`Showing outputs for ${chalk.cyan(ctx.name)}`);
       
       const spinner = ora('Fetching stack outputs...').start();
       
@@ -35,8 +38,6 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
           { maxAttempts: 2, operationName: 'get stack outputs' }
         );
         spinner.succeed('Outputs retrieved');
-
-        logger.title('CloudFormation Outputs');
 
         if (Object.keys(outputs).length === 0) {
           console.log(chalk.yellow('No outputs found'));

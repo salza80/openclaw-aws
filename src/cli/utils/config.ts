@@ -4,23 +4,37 @@ import type { OpenClawConfig } from '../types/index.js';
 import { ConfigError } from './errors.js';
 import { validateConfig, validateConfigStructure } from './config-validation.js';
 
-const CONFIG_DIR = '.openclaw-aws';
-const CONFIG_FILE = 'config.json';
+const CONFIG_ROOT = '.openclaw-aws';
+const CONFIGS_DIR = 'configs';
+const OUTPUTS_DIR = 'outputs';
+const CURRENT_FILE = 'current.json';
 
-export function getConfigPath(configPath?: string): string {
-  if (configPath) {
-    return path.resolve(configPath);
-  }
-  return path.join(process.cwd(), CONFIG_DIR, CONFIG_FILE);
+export function getConfigRoot(): string {
+  return path.join(process.cwd(), CONFIG_ROOT);
 }
 
-export function getConfigDir(configPath?: string): string {
-  const configFile = getConfigPath(configPath);
-  return path.dirname(configFile);
+export function getConfigsDir(): string {
+  return path.join(getConfigRoot(), CONFIGS_DIR);
 }
 
-export function loadConfig(configPath?: string): OpenClawConfig {
-  const configFile = getConfigPath(configPath);
+export function getConfigPathByName(name: string): string {
+  return path.join(getConfigsDir(), `${name}.json`);
+}
+
+export function getOutputsDir(): string {
+  return path.join(getConfigRoot(), OUTPUTS_DIR);
+}
+
+export function getOutputsPathByName(name: string): string {
+  return path.join(getOutputsDir(), `${name}.json`);
+}
+
+export function getCurrentPath(): string {
+  return path.join(getConfigRoot(), CURRENT_FILE);
+}
+
+export function loadConfigByName(name: string): OpenClawConfig {
+  const configFile = getConfigPathByName(name);
   
   if (!fs.existsSync(configFile)) {
     throw new ConfigError(
@@ -57,12 +71,12 @@ export function loadConfig(configPath?: string): OpenClawConfig {
   return config;
 }
 
-export function saveConfig(config: OpenClawConfig, configPath?: string): void {
+export function saveConfigByName(config: OpenClawConfig, name: string): void {
   // Validate before saving
   validateConfig(config);
 
-  const configDir = getConfigDir(configPath);
-  const configFile = getConfigPath(configPath);
+  const configDir = getConfigsDir();
+  const configFile = getConfigPathByName(name);
 
   // Create directory if it doesn't exist
   if (!fs.existsSync(configDir)) {
@@ -72,17 +86,12 @@ export function saveConfig(config: OpenClawConfig, configPath?: string): void {
   fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
 }
 
-export function configExists(configPath?: string): boolean {
-  const configFile = getConfigPath(configPath);
-  return fs.existsSync(configFile);
+export function configExistsByName(name: string): boolean {
+  return fs.existsSync(getConfigPathByName(name));
 }
 
-export function getOutputsPath(configPath?: string): string {
-  return path.join(getConfigDir(configPath), 'outputs.json');
-}
-
-export function loadOutputs(configPath?: string): Record<string, any> | null {
-  const outputsPath = getOutputsPath(configPath);
+export function loadOutputsByName(name: string): Record<string, any> | null {
+  const outputsPath = getOutputsPathByName(name);
   if (!fs.existsSync(outputsPath)) {
     return null;
   }

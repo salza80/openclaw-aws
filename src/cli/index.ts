@@ -2,6 +2,7 @@
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import initCommand from './commands/init.js';
+import configCommand from './commands/config.js';
 import deployCommand from './commands/deploy.js';
 import destroyCommand from './commands/destroy.js';
 import connectCommand from './commands/connect.js';
@@ -17,6 +18,7 @@ yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
   .usage('$0 <command> [options]')
   .command(initCommand)
+  .command(configCommand)
   .command(deployCommand)
   .command(statusCommand)
   .command(readyCommand)

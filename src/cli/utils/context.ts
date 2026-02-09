@@ -3,21 +3,21 @@ import { resolveConfig } from './config-store.js';
 import { applyAwsProfile, requireAwsCredentials } from './aws-validation.js';
 
 export interface CommandContext {
+  name: string;
   config: OpenClawConfig;
   configPath: string;
-  configDir: string;
   awsEnv: Record<string, string | undefined>;
 }
 
 export interface CommandContextOptions {
-  configPath?: string;
+  name?: string;
   requireCredentials?: boolean;
 }
 
 export async function buildCommandContext(
   options: CommandContextOptions = {}
 ): Promise<CommandContext> {
-  const { config, configPath, configDir } = resolveConfig({ configPath: options.configPath });
+  const { name, config, configPath } = resolveConfig({ name: options.name });
 
   if (options.requireCredentials !== false) {
     await requireAwsCredentials(config);
@@ -26,9 +26,9 @@ export async function buildCommandContext(
   }
 
   return {
+    name,
     config,
     configPath,
-    configDir,
     awsEnv: buildAwsEnv(config)
   };
 }

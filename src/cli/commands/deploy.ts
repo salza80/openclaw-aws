@@ -3,12 +3,12 @@ import { execa } from 'execa';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { getOutputsPath } from '../utils/config.js';
 import { handleError, AWSError, withRetry, isRetryableError } from '../utils/errors.js';
 import { validatePreDeploy, validateNodeVersion } from '../utils/aws-validation.js';
 import { getCDKBinary } from '../utils/cdk.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
+import { resolveOutputsPath } from '../utils/config-store.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
 
 interface DeployArgs {
   autoApprove?: boolean;
-  config?: string;
+  name?: string;
 }
 
 export const deployCommand: CommandModule<{}, DeployArgs> = {
@@ -33,9 +33,9 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         describe: 'Skip confirmation prompt',
         default: false,
       })
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       });
   },
   
@@ -45,10 +45,11 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       validateNodeVersion();
 
       // Load and validate configuration
-      const ctx = await buildCommandContext({ configPath: argv.config, requireCredentials: false });
+      const ctx = await buildCommandContext({ name: argv.name, requireCredentials: false });
       const config = ctx.config;
       
       logger.title('OpenClaw AWS - Deploy');
+      logger.info(`Deploying ${chalk.cyan(ctx.name)}`);
 
       // Run pre-deployment validation
       await validatePreDeploy(config);
@@ -118,13 +119,16 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       }
       
       // Set up environment
-      const env = ctx.awsEnv;
+      const env = {
+        ...ctx.awsEnv,
+        OPENCLAW_CONFIG_NAME: ctx.name
+      };
 
       // Deploy stack with retry logic
       spinner.start('Deploying stack... (this may take 3-5 minutes)');
       
       try {
-        const outputsFile = getOutputsPath(ctx.configPath);
+        const outputsFile = resolveOutputsPath(ctx.name);
         
         await withRetry(
           async () => {

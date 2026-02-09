@@ -5,9 +5,39 @@ import { logger } from '../utils/logger.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus, getSSMStatus, checkGatewayStatus } from '../utils/aws.js';
 import { handleError, withRetry } from '../utils/errors.js';
+import { listConfigNames } from '../utils/config-store.js';
+
+function formatStackStatus(status: string): string {
+  if (status.includes('COMPLETE')) return chalk.green('✓ ' + status);
+  if (status.includes('FAILED')) return chalk.red('✗ ' + status);
+  if (status.includes('PROGRESS')) return chalk.yellow('⚙ ' + status);
+  return chalk.yellow('⚙ ' + status);
+}
+
+function formatInstanceStatus(status: string): string {
+  if (status === 'running') return chalk.green('✓ Running');
+  if (status === 'stopped') return chalk.yellow('○ Stopped') + chalk.gray(' (not incurring compute costs)');
+  if (status === 'stopping') return chalk.yellow('⚙ Stopping...');
+  if (status === 'pending') return chalk.yellow('⚙ Starting...');
+  if (status === 'terminated') return chalk.red('✗ Terminated');
+  return chalk.yellow('⚙ ' + status);
+}
+
+function formatSSMStatus(status: string): string {
+  if (status === 'ready') return chalk.green('✓ Ready');
+  if (status === 'not-ready') return chalk.yellow('⚠ Not Ready');
+  return chalk.yellow('⚠ ' + status);
+}
+
+function formatGatewayStatus(running: boolean, error?: string): string {
+  if (running) return chalk.green('✓ Running');
+  if (error) return chalk.red('✗ Not Running') + chalk.gray(` (${error})`);
+  return chalk.red('✗ Not Running');
+}
 
 interface StatusArgs {
-  config?: string;
+  name?: string;
+  all?: boolean;
 }
 
 export const statusCommand: CommandModule<{}, StatusArgs> = {
@@ -16,15 +46,78 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('all', {
+        type: 'boolean',
+        describe: 'Show status for all deployments',
+        default: false,
+      })
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       });
   },
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      if (argv.all) {
+        const names = listConfigNames();
+        if (names.length === 0) {
+          logger.info('No deployments found');
+          console.log('\nRun: ' + chalk.cyan('openclaw-aws init --name <name>'));
+          return;
+        }
+
+        logger.title('OpenClaw AWS - All Deployment Status');
+        for (const name of names) {
+          const ctx = await buildCommandContext({ name });
+          const config = ctx.config;
+          const spinner = ora(`Checking ${name}...`).start();
+          try {
+            const status = await withRetry(
+              () => getStackStatus(config.stack.name, config.aws.region),
+              { maxAttempts: 2, operationName: 'get stack status' }
+            );
+            spinner.succeed(`${name}: ${status.stackStatus}`);
+            const stackDisplay = formatStackStatus(status.stackStatus);
+            const instanceDisplay = status.instanceStatus ? formatInstanceStatus(status.instanceStatus) : chalk.gray('unknown');
+            const ssmDisplay = status.ssmStatus ? formatSSMStatus(status.ssmStatus) : chalk.gray('unknown');
+
+            let gatewayDisplay = chalk.gray('unknown');
+            if (status.instanceStatus === 'running' && status.instanceId) {
+              const detailedSSM = await getSSMStatus(status.instanceId, config.aws.region);
+              if (detailedSSM.status === 'Online') {
+                try {
+                  const gatewayStatus = await checkGatewayStatus(status.instanceId, config.aws.region);
+                  gatewayDisplay = formatGatewayStatus(gatewayStatus.running, gatewayStatus.error);
+                } catch {
+                  gatewayDisplay = chalk.yellow('⚠ Unknown');
+                }
+              } else {
+                gatewayDisplay = chalk.yellow('⚠ Unknown');
+              }
+            }
+
+            console.log(
+              '  ' +
+              chalk.bold('Stack:') + ' ' + stackDisplay + '  ' +
+              chalk.bold('Instance:') + ' ' + instanceDisplay + '  ' +
+              chalk.bold('SSM:') + ' ' + ssmDisplay + '  ' +
+              chalk.bold('Gateway:') + ' ' + gatewayDisplay
+            );
+            console.log('  ' + chalk.bold('Region:') + ' ' + chalk.gray(config.aws.region) + '  ' +
+              chalk.bold('Type:') + ' ' + chalk.cyan(config.instance.type));
+            console.log('');
+          } catch (error) {
+            spinner.warn(`${name}: not deployed`);
+            console.log(chalk.bold('  Region:'), chalk.gray(config.aws.region));
+            console.log(chalk.bold('  Instance Type:'), chalk.cyan(config.instance.type));
+            console.log('');
+          }
+        }
+        return;
+      }
+
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       const spinner = ora('Checking status...').start();
@@ -38,18 +131,12 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
 
         // Display status
         logger.title('OpenClaw AWS - Deployment Status');
+        logger.info(`Status for ${chalk.cyan(ctx.name)}`);
 
         console.log(chalk.bold('Stack:'), config.stack.name);
         
         // Stack status with color
-        let stackStatusDisplay = status.stackStatus;
-        if (status.stackStatus.includes('COMPLETE')) {
-          stackStatusDisplay = chalk.green('✓ ' + status.stackStatus);
-        } else if (status.stackStatus.includes('FAILED')) {
-          stackStatusDisplay = chalk.red('✗ ' + status.stackStatus);
-        } else if (status.stackStatus.includes('PROGRESS')) {
-          stackStatusDisplay = chalk.yellow('⚙ ' + status.stackStatus);
-        }
+        const stackStatusDisplay = formatStackStatus(status.stackStatus);
         
         console.log(chalk.bold('Status:'), stackStatusDisplay, chalk.gray(`(${config.aws.region})`));
 
@@ -58,20 +145,7 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
           console.log('\n' + chalk.bold('Instance:'), config.instance.name, chalk.gray(`(${status.instanceId})`));
           
           if (status.instanceStatus) {
-            let instanceStatusDisplay = status.instanceStatus;
-            if (status.instanceStatus === 'running') {
-              instanceStatusDisplay = chalk.green('✓ Running');
-            } else if (status.instanceStatus === 'stopped') {
-              instanceStatusDisplay = chalk.yellow('○ Stopped') + chalk.gray(' (not incurring compute costs)');
-            } else if (status.instanceStatus === 'stopping') {
-              instanceStatusDisplay = chalk.yellow('⚙ Stopping...');
-            } else if (status.instanceStatus === 'pending') {
-              instanceStatusDisplay = chalk.yellow('⚙ Starting...');
-            } else if (status.instanceStatus === 'terminated') {
-              instanceStatusDisplay = chalk.red('✗ Terminated');
-            } else {
-              instanceStatusDisplay = chalk.yellow('⚙ ' + status.instanceStatus);
-            }
+            const instanceStatusDisplay = formatInstanceStatus(status.instanceStatus);
             console.log(chalk.bold('Status:'), instanceStatusDisplay);
           }
 
@@ -89,7 +163,7 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
                 ssmDisplay = chalk.yellow(`⚠ ${detailedSSM.status}`);
               }
             } else {
-              ssmDisplay = chalk.yellow('⚠ Not Ready');
+              ssmDisplay = formatSSMStatus(status.ssmStatus);
             }
             console.log(chalk.bold('SSM:'), ssmDisplay);
           }

@@ -3,14 +3,14 @@ import { execa } from 'execa';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadOutputs } from '../utils/config.js';
+import { loadOutputsByName } from '../utils/config.js';
 import { buildCommandContext } from '../utils/context.js';
 import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
 import { validateSSMPlugin } from '../utils/aws-validation.js';
 
 interface DashboardArgs {
-  config?: string;
+  name?: string;
   noOpen?: boolean;
 }
 
@@ -20,9 +20,9 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       })
       .option('no-open', {
         type: 'boolean',
@@ -33,11 +33,13 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       // Validate SSM plugin is installed
       await validateSSMPlugin();
+
+      logger.info(`Opening dashboard for ${chalk.cyan(ctx.name)}`);
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
@@ -91,7 +93,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       spinner.succeed('Port forwarding established');
 
       // Get gateway token from outputs
-      const outputs = loadOutputs(ctx.configPath);
+      const outputs = loadOutputsByName(ctx.name);
       const stackOutputs = outputs?.[config.stack.name] || {};
       const gatewayToken = stackOutputs.GatewayToken;
       const gatewayPort = stackOutputs.GatewayPort || '18789';

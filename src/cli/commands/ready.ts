@@ -8,7 +8,7 @@ import { getConsoleOutput } from '../utils/cloud-init.js';
 import { buildCommandContext } from '../utils/context.js';
 
 interface ReadyArgs {
-  config?: string;
+  name?: string;
   watch?: boolean;
 }
 
@@ -25,9 +25,9 @@ export const readyCommand: CommandModule<{}, ReadyArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       })
       .option('watch', {
         type: 'boolean',
@@ -39,10 +39,11 @@ export const readyCommand: CommandModule<{}, ReadyArgs> = {
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       logger.title('OpenClaw AWS - Installation Status');
+      logger.info(`Checking ${chalk.cyan(ctx.name)}`);
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();

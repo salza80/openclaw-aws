@@ -8,7 +8,7 @@ import { getInstanceState, startInstance, waitForInstanceState } from '../utils/
 import { handleError } from '../utils/errors.js';
 
 interface StartArgs {
-  config?: string;
+  name?: string;
 }
 
 export const startCommand: CommandModule<{}, StartArgs> = {
@@ -17,18 +17,19 @@ export const startCommand: CommandModule<{}, StartArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       });
   },
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       logger.title('OpenClaw AWS - Start Instance');
+      logger.info(`Starting ${chalk.cyan(ctx.name)}`);
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();

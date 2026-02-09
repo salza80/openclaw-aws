@@ -2,13 +2,15 @@ import type { CommandModule } from 'yargs';
 import prompts from 'prompts';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { saveConfig, configExists } from '../utils/config.js';
+import { saveConfigByName, configExistsByName } from '../utils/config.js';
+import { setCurrentName } from '../utils/config-store.js';
 import { validateProjectName, validateInstanceName, AWS_REGIONS, INSTANCE_TYPES } from '../utils/validation.js';
 import { handleError } from '../utils/errors.js';
 import type { OpenClawConfig, Provider } from '../types/index.js';
 import { API_PROVIDERS } from '../constants.js';
 
 interface InitArgs {
+  name?: string;
   region?: string;
   instanceType?: string;
   yes?: boolean;
@@ -24,6 +26,10 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       .option('region', {
         type: 'string',
         describe: 'AWS region',
+      })
+      .option('name', {
+        type: 'string',
+        describe: 'Deployment name (unique)',
       })
       .option('instance-type', {
         type: 'string',
@@ -45,12 +51,12 @@ export const initCommand: CommandModule<{}, InitArgs> = {
     try {
       logger.title('OpenClaw AWS - Deployment Setup Wizard');
 
-      // Check if config already exists
-      if (configExists()) {
+      // Check if config already exists (by name)
+      if (argv.name && configExistsByName(argv.name)) {
         const { overwrite } = await prompts({
           type: 'confirm',
           name: 'overwrite',
-          message: 'Configuration file already exists. Overwrite?',
+          message: `Deployment "${argv.name}" already exists. Overwrite?`,
           initial: false
         });
 
@@ -61,10 +67,12 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       }
 
       let config: OpenClawConfig;
+      let deploymentName = argv.name;
 
       if (argv.yes) {
         // Use defaults
         const apiProvider = (argv.apiProvider as Provider) || 'anthropic-api-key';
+        deploymentName = deploymentName || 'my-openclaw-bot';
         
         config = {
           version: '1.0',
@@ -92,6 +100,13 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       } else {
         // Interactive prompts
         const answers = await prompts([
+          {
+            type: 'text',
+            name: 'deploymentName',
+            message: 'Deployment name (unique):',
+            initial: deploymentName || 'my-openclaw-bot',
+            validate: (value) => validateProjectName(value) === true ? true : String(validateProjectName(value))
+          },
           {
             type: 'text',
             name: 'projectName',
@@ -154,10 +169,12 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         ]);
 
         // Check if user cancelled
-        if (!answers.projectName) {
+        if (!answers.projectName || !answers.deploymentName) {
           logger.warn('Setup cancelled');
           return;
         }
+
+        deploymentName = answers.deploymentName;
 
         config = {
           version: '1.0',
@@ -189,12 +206,26 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         }
       }
 
+      if (!deploymentName) {
+        throw new Error('Deployment name is required');
+      }
+
+      if (configExistsByName(deploymentName) && !argv.name) {
+        logger.warn(`Deployment "${deploymentName}" already exists`);
+        console.log('Choose a different name or rerun with --name to overwrite.');
+        return;
+      }
+
+      logger.info(`Creating deployment ${chalk.cyan(deploymentName)}`);
+
       // Save configuration
-      saveConfig(config);
-      logger.success('Configuration saved to .openclaw-aws/config.json');
+      saveConfigByName(config, deploymentName);
+      logger.success(`Configuration saved for "${deploymentName}"`);
+      setCurrentName(deploymentName);
 
       // Display summary
       console.log('\n' + chalk.bold('Configuration Summary:'));
+      console.log(`  ${chalk.bold('Deployment:')} ${chalk.cyan(deploymentName)}`);
       console.log(`  ${chalk.bold('Project:')} ${chalk.cyan(config.projectName)}`);
       console.log(`  ${chalk.bold('Region:')} ${chalk.cyan(config.aws.region)}`);
       console.log(`  ${chalk.bold('Instance:')} ${chalk.cyan(config.instance.type)}`);

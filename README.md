@@ -18,13 +18,13 @@ Deploy OpenClaw AI agents on AWS with a simple, interactive CLI.
 openclaw-aws init
 
 # Deploy to AWS
-openclaw-aws deploy
+openclaw-aws deploy --name my-bot
 
 # Connect to vps via SSM for terminal access
-openclaw-aws connect
+openclaw-aws connect --name my-bot
 
 # Access dashboard via SSM port forwarding
-openclaw-aws dashboard
+openclaw-aws dashboard --name my-bot
 
 ```
 
@@ -120,6 +120,7 @@ During initialization, you'll be prompted for:
 - API provider selection
 
 **Options:**
+- `--name <name>` - Deployment name (recommended for non-interactive mode)
 - `--region <region>` - AWS region (default: prompts)
 - `--instance-type <type>` - EC2 instance type (default: prompts)
 - `--yes, -y` - Use secure defaults, no prompts
@@ -130,7 +131,7 @@ During initialization, you'll be prompted for:
 openclaw-aws init
 
 # Non-interactive with secure defaults
-openclaw-aws init --yes --region us-east-1
+openclaw-aws init --name my-bot --yes --region us-east-1
 ```
 **Security Defaults:**
 - Uses default VPC (simpler, no extra VPC costs)
@@ -143,13 +144,13 @@ openclaw-aws init --yes --region us-east-1
 Deploy infrastructure to AWS.
 
 **Options:**
+- `--name <name>` - Deployment name
 - `--auto-approve` - Skip confirmation prompt
-- `--config <path>` - Use specific config file
 
 **Example:**
 ```bash
-openclaw-aws deploy
-openclaw-aws deploy --auto-approve
+openclaw-aws deploy --name my-bot
+openclaw-aws deploy --name my-bot --auto-approve
 ```
 
 ### `openclaw-aws connect`
@@ -160,7 +161,7 @@ Connect to your EC2 instance via SSM.
 
 **Example:**
 ```bash
-openclaw-aws connect
+openclaw-aws connect --name my-bot
 ```
 
   #### Commands to view logs:
@@ -180,11 +181,12 @@ openclaw-aws connect
 Forward port 18789 to access the OpenClaw dashboard locally.
 
 **Options:**
+- `--name <name>` - Deployment name
 - `--no-open` - Don't open browser automatically
 
 **Example:**
 ```bash
-openclaw-aws dashboard
+openclaw-aws dashboard --name my-bot
 # Opens http://localhost:18789 in your browser - short delay before it works - refresh browser after 5 seconds
 ```
 
@@ -194,7 +196,8 @@ Check deployment and instance status.
 
 **Example:**
 ```bash
-openclaw-aws status
+openclaw-aws status --name my-bot
+openclaw-aws status --all
 ```
 
 ### `openclaw-aws outputs`
@@ -203,7 +206,7 @@ Show CloudFormation stack outputs.
 
 **Example:**
 ```bash
-openclaw-aws outputs
+openclaw-aws outputs --name my-bot
 ```
 
 ### `openclaw-aws destroy`
@@ -211,20 +214,33 @@ openclaw-aws outputs
 Delete all AWS resources.
 
 **Options:**
+- `--name <name>` - Deployment name
 - `--force` - Skip confirmation
 - `--keep-config` - Keep configuration file
 
 **Example:**
 ```bash
-openclaw-aws destroy
+openclaw-aws destroy --name my-bot
 
 # Force delete without confirmation
-openclaw-aws destroy --force
+openclaw-aws destroy --name my-bot --force
+```
+
+### `openclaw-aws config`
+
+Manage deployments (list/select current).
+
+**Examples:**
+```bash
+openclaw-aws config list
+openclaw-aws config current
+openclaw-aws config use my-bot
 ```
 
 ## Configuration
 
-Configuration is stored in `.openclaw-aws/config.json` in your project directory.
+Configuration is stored per deployment in `.openclaw-aws/configs/<name>.json`.
+The current selection is stored in `.openclaw-aws/current.json`.
 
 **Example configuration:**
 ```json
@@ -353,7 +369,9 @@ openclaw-aws status
 
 Run the init command first:
 ```bash
-openclaw-aws init
+openclaw-aws init --name my-bot
+openclaw-aws config list
+openclaw-aws config use my-bot
 ```
 
 ### Deployment fails

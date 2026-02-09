@@ -4,7 +4,7 @@ import ora from 'ora';
 import prompts from 'prompts';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { getConfigPath } from '../utils/config.js';
+import { getConfigPathByName } from '../utils/config.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError, withRetry } from '../utils/errors.js';
@@ -19,7 +19,7 @@ const __dirname = path.dirname(__filename);
 interface DestroyArgs {
   force?: boolean;
   keepConfig?: boolean;
-  config?: string;
+  name?: string;
 }
 
 export const destroyCommand: CommandModule<{}, DestroyArgs> = {
@@ -38,19 +38,20 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         describe: 'Keep configuration file after destroying',
         default: false,
       })
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       });
   },
   
   handler: async (argv) => {
     try {
       // Load configuration
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       logger.title('OpenClaw AWS - Destroy');
+      logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
 
       // Try to get stack status
       let stackExists = true;
@@ -134,23 +135,23 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           });
 
           if (deleteConfig) {
-            const configPath = getConfigPath(argv.config);
+            const configPath = getConfigPathByName(ctx.name);
             if (fs.existsSync(configPath)) {
               fs.unlinkSync(configPath);
               logger.success('Configuration file deleted');
             }
           } else {
-            logger.info(`Configuration kept at ${getConfigPath(argv.config)}`);
+            logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
           }
         } else if (!argv.keepConfig && argv.force) {
           // Auto-delete in force mode
-          const configPath = getConfigPath(argv.config);
+          const configPath = getConfigPathByName(ctx.name);
           if (fs.existsSync(configPath)) {
             fs.unlinkSync(configPath);
             logger.success('Configuration file deleted');
           }
         } else {
-          logger.info(`Configuration kept at ${getConfigPath(argv.config)}`);
+          logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
         }
 
       } catch (error) {

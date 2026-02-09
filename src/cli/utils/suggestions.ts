@@ -26,8 +26,8 @@ export function stackNotFoundSuggestions(): string[] {
 
 export function configNotFoundSuggestions(): string[] {
   return [
-    'Run: openclaw-aws init (to create configuration)',
-    'Or pass an explicit path: --config /path/to/config.json'
+    'Create a deployment: openclaw-aws init --name <name>',
+    'List deployments: openclaw-aws config list'
   ];
 }
 

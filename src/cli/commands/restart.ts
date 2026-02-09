@@ -9,7 +9,7 @@ import { rebootInstance, waitForInstanceState } from '../utils/ec2.js';
 import { handleError } from '../utils/errors.js';
 
 interface RestartArgs {
-  config?: string;
+  name?: string;
   force?: boolean;
 }
 
@@ -19,9 +19,9 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
   
   builder: (yargs) => {
     return yargs
-      .option('config', {
+      .option('name', {
         type: 'string',
-        describe: 'Path to config file',
+        describe: 'Deployment name',
       })
       .option('force', {
         type: 'boolean',
@@ -32,10 +32,11 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
   
   handler: async (argv) => {
     try {
-      const ctx = await buildCommandContext({ configPath: argv.config });
+      const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       
       logger.title('OpenClaw AWS - Restart Instance');
+      logger.info(`Restarting ${chalk.cyan(ctx.name)}`);
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
