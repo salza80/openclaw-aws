@@ -70,6 +70,17 @@ describe('config-store', () => {
     expect(getCurrentName()).toBe('solo');
   });
 
+  it('throws when multiple configs exist and no current is set', () => {
+    saveConfigByName(validConfig, 'alpha');
+    saveConfigByName(validConfig, 'beta');
+    expect(() => resolveConfig()).toThrow('No deployment selected');
+  });
+
+  it('throws when current points to missing config', () => {
+    setCurrentName('ghost');
+    expect(() => resolveConfig()).toThrow('Config not found');
+  });
+
   it('throws for missing config name', () => {
     expect(() => resolveConfig({ name: 'missing' })).toThrow('Config not found');
   });

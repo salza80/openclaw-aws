@@ -7,14 +7,14 @@ import { getStackStatus, getSSMStatus, checkGatewayStatus } from '../utils/aws.j
 import { handleError, withRetry } from '../utils/errors.js';
 import { listConfigNames } from '../utils/config-store.js';
 
-function formatStackStatus(status: string): string {
+export function formatStackStatus(status: string): string {
   if (status.includes('COMPLETE')) return chalk.green('✓ ' + status);
   if (status.includes('FAILED')) return chalk.red('✗ ' + status);
   if (status.includes('PROGRESS')) return chalk.yellow('⚙ ' + status);
   return chalk.yellow('⚙ ' + status);
 }
 
-function formatInstanceStatus(status: string): string {
+export function formatInstanceStatus(status: string): string {
   if (status === 'running') return chalk.green('✓ Running');
   if (status === 'stopped') return chalk.yellow('○ Stopped') + chalk.gray(' (not incurring compute costs)');
   if (status === 'stopping') return chalk.yellow('⚙ Stopping...');
@@ -23,13 +23,13 @@ function formatInstanceStatus(status: string): string {
   return chalk.yellow('⚙ ' + status);
 }
 
-function formatSSMStatus(status: string): string {
+export function formatSSMStatus(status: string): string {
   if (status === 'ready') return chalk.green('✓ Ready');
   if (status === 'not-ready') return chalk.yellow('⚠ Not Ready');
   return chalk.yellow('⚠ ' + status);
 }
 
-function formatGatewayStatus(running: boolean, error?: string): string {
+export function formatGatewayStatus(running: boolean, error?: string): string {
   if (running) return chalk.green('✓ Running');
   if (error) return chalk.red('✗ Not Running') + chalk.gray(` (${error})`);
   return chalk.red('✗ Not Running');
