@@ -9,6 +9,7 @@ import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError, withRetry } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
+import { listConfigNames } from '../utils/config-store.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -18,8 +19,9 @@ const __dirname = path.dirname(__filename);
 
 interface DestroyArgs {
   force?: boolean;
-  keepConfig?: boolean;
+  deleteConfig?: boolean;
   name?: string;
+  all?: boolean;
 }
 
 export const destroyCommand: CommandModule<{}, DestroyArgs> = {
@@ -33,19 +35,134 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         describe: 'Skip confirmation prompt',
         default: false,
       })
-      .option('keep-config', {
+      .option('delete-config', {
         type: 'boolean',
-        describe: 'Keep configuration file after destroying',
+        describe: 'Delete configuration file after destroying',
         default: false,
       })
       .option('name', {
         type: 'string',
         describe: 'Deployment name',
+      })
+      .option('all', {
+        type: 'boolean',
+        describe: 'Destroy all deployments',
+        default: false,
       });
   },
   
   handler: async (argv) => {
     try {
+      if (argv.all) {
+        const names = listConfigNames();
+        if (names.length === 0) {
+          logger.info('No deployments found');
+          console.log('\nRun: ' + chalk.cyan('openclaw-aws init --name <name>'));
+          return;
+        }
+
+        const { confirmText } = await prompts({
+          type: 'text',
+          name: 'confirmText',
+          message: 'Type "DESTROY ALL" to confirm:',
+          validate: (value) => value === 'DESTROY ALL' || 'You must type DESTROY ALL to confirm'
+        });
+
+        if (confirmText !== 'DESTROY ALL') {
+          logger.warn('Destruction cancelled');
+          return;
+        }
+
+        const cdkBinary = getCDKBinary();
+        const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
+
+        for (const name of names) {
+          const ctx = await buildCommandContext({ name });
+          const config = ctx.config;
+
+          logger.title('OpenClaw AWS - Destroy');
+          logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
+
+          let stackExists = true;
+          const spinner = ora('Checking stack status...').start();
+          try {
+            await getStackStatus(config.stack.name, config.aws.region);
+            spinner.succeed(`Stack found: ${config.stack.name}`);
+          } catch (error) {
+            spinner.warn('Stack not found (may already be deleted)');
+            stackExists = false;
+          }
+
+          if (!stackExists) {
+            logger.info('No resources to delete');
+            console.log('');
+            continue;
+          }
+
+          const env = {
+            ...ctx.awsEnv,
+            OPENCLAW_CONFIG_NAME: ctx.name
+          };
+          const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
+
+          try {
+            await execa(cdkBinary, [
+              'destroy',
+              '--app', `node ${cdkAppPath}`,
+              '--force',
+            ], { 
+              env,
+              cwd: process.cwd(),
+            });
+
+            destroySpinner.succeed('Stack destroyed successfully');
+            logger.success('All resources removed');
+            console.log('\nTotal cost: $0/month');
+
+          } catch (error) {
+            destroySpinner.fail('Destruction failed');
+            throw new AWSError('Stack destruction failed', [
+              'Check AWS Console CloudFormation page for details',
+              'Some resources may need manual cleanup',
+              'Try running destroy again after a few minutes'
+            ]);
+          }
+
+          console.log('');
+        }
+
+        if (argv.deleteConfig) {
+          for (const name of names) {
+            const configPath = getConfigPathByName(name);
+            if (fs.existsSync(configPath)) {
+              fs.unlinkSync(configPath);
+              logger.success(`Configuration deleted: ${name}`);
+            }
+          }
+        } else {
+          const { deleteConfigs } = await prompts({
+            type: 'confirm',
+            name: 'deleteConfigs',
+            message: 'Delete configuration files for all deployments?',
+            initial: false
+          });
+
+          if (deleteConfigs) {
+            for (const name of names) {
+              const configPath = getConfigPathByName(name);
+              if (fs.existsSync(configPath)) {
+                fs.unlinkSync(configPath);
+                logger.success(`Configuration deleted: ${name}`);
+              }
+            }
+          } else {
+            logger.info('Configurations kept');
+          }
+        }
+
+        return;
+      }
+
       // Load configuration
       const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
@@ -106,7 +223,10 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
       
       // Set up environment
-      const env = ctx.awsEnv;
+      const env = {
+        ...ctx.awsEnv,
+        OPENCLAW_CONFIG_NAME: ctx.name
+      };
 
       // Destroy stack
       const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
@@ -126,7 +246,13 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         console.log('\nTotal cost: $0/month');
 
         // Ask about config file
-        if (!argv.keepConfig && !argv.force) {
+        if (argv.deleteConfig) {
+          const configPath = getConfigPathByName(ctx.name);
+          if (fs.existsSync(configPath)) {
+            fs.unlinkSync(configPath);
+            logger.success('Configuration file deleted');
+          }
+        } else {
           const { deleteConfig } = await prompts({
             type: 'confirm',
             name: 'deleteConfig',
@@ -143,15 +269,6 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           } else {
             logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
           }
-        } else if (!argv.keepConfig && argv.force) {
-          // Auto-delete in force mode
-          const configPath = getConfigPathByName(ctx.name);
-          if (fs.existsSync(configPath)) {
-            fs.unlinkSync(configPath);
-            logger.success('Configuration file deleted');
-          }
-        } else {
-          logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
         }
 
       } catch (error) {

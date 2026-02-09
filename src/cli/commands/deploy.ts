@@ -9,6 +9,7 @@ import { getCDKBinary } from '../utils/cdk.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { resolveOutputsPath } from '../utils/config-store.js';
+import { listConfigNames } from '../utils/config-store.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -20,6 +21,7 @@ const __dirname = path.dirname(__filename);
 interface DeployArgs {
   autoApprove?: boolean;
   name?: string;
+  all?: boolean;
 }
 
 export const deployCommand: CommandModule<{}, DeployArgs> = {
@@ -36,6 +38,11 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       .option('name', {
         type: 'string',
         describe: 'Deployment name',
+      })
+      .option('all', {
+        type: 'boolean',
+        describe: 'Deploy all configurations',
+        default: false,
       });
   },
   
@@ -43,6 +50,117 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
     try {
       // Validate Node version
       validateNodeVersion();
+
+      if (argv.all) {
+        const names = listConfigNames();
+        if (names.length === 0) {
+          logger.info('No deployments found');
+          console.log('\nRun: ' + chalk.cyan('openclaw-aws init --name <name>'));
+          return;
+        }
+
+        const { confirmText } = await prompts({
+          type: 'text',
+          name: 'confirmText',
+          message: 'Type "DEPLOY ALL" to confirm:',
+          validate: (value) => value === 'DEPLOY ALL' || 'You must type DEPLOY ALL to confirm'
+        });
+
+        if (confirmText !== 'DEPLOY ALL') {
+          logger.warn('Deploy cancelled');
+          return;
+        }
+
+        for (const name of names) {
+          const ctx = await buildCommandContext({ name, requireCredentials: false });
+          const config = ctx.config;
+
+          logger.title('OpenClaw AWS - Deploy');
+          logger.info(`Deploying ${chalk.cyan(ctx.name)}`);
+
+          await validatePreDeploy(config);
+          console.log('');
+
+          const statusSpinner = ora('Checking existing deployment...').start();
+          try {
+            const status = await getStackStatus(config.stack.name, config.aws.region);
+            statusSpinner.succeed('Existing deployment found');
+            logger.info(`Stack ${chalk.cyan(config.stack.name)} already exists (${status.stackStatus})`);
+            console.log('');
+            continue;
+          } catch (error) {
+            statusSpinner.stop();
+            if (!(error instanceof Error && error.message.includes('not found'))) {
+              throw error;
+            }
+          }
+
+          // Show deployment plan
+          logger.info('Deployment Plan:');
+          console.log(`  Stack: ${chalk.cyan(config.stack.name)}`);
+          console.log(`  Region: ${chalk.cyan(config.aws.region)}`);
+          console.log(`  Instance: ${chalk.cyan(config.instance.type)} (${chalk.cyan(config.instance.name)})`);
+          console.log(`  Resources:`);
+          console.log(`    - EC2 Instance (${config.instance.type})`);
+          console.log(`    - Security Group (no inbound rules)`);
+          console.log(`    - IAM Role (SSM access only)`);
+
+          // Get CDK binary (local from node_modules or global fallback)
+          const cdkBinary = getCDKBinary();
+          const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
+
+          const spinner = ora('Verifying CDK CLI...').start();
+          try {
+            await execa(cdkBinary, ['--version'], { reject: true });
+            spinner.succeed('CDK CLI ready');
+          } catch (error) {
+            spinner.fail('CDK CLI not available');
+            throw new AWSError('AWS CDK CLI not available', [
+              'Reinstall this package: npm install -g @salza80/openclaw-aws',
+              'Or install CDK globally: npm install -g aws-cdk'
+            ]);
+          }
+
+          const env = {
+            ...ctx.awsEnv,
+            OPENCLAW_CONFIG_NAME: ctx.name
+          };
+
+          spinner.start('Deploying stack... (this may take 3-5 minutes)');
+          try {
+            const outputsFile = resolveOutputsPath(ctx.name);
+            await withRetry(
+              async () => {
+                await execa(cdkBinary, [
+                  'deploy',
+                  '--app', `node ${cdkAppPath}`,
+                  '--require-approval', 'never',
+                  '--outputs-file', outputsFile,
+                  '--progress', 'events',
+                ], { 
+                  env,
+                  cwd: process.cwd(),
+                });
+              },
+              {
+                maxAttempts: 2,
+                delayMs: 5000,
+                shouldRetry: (error) => {
+                  return isRetryableError(error);
+                },
+                operationName: 'CDK deploy'
+              }
+            );
+
+            spinner.succeed('Stack deployed successfully!');
+          } catch (error) {
+            spinner.fail('Deployment failed');
+            throw error;
+          }
+        }
+
+        return;
+      }
 
       // Load and validate configuration
       const ctx = await buildCommandContext({ name: argv.name, requireCredentials: false });
