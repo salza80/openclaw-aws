@@ -5,7 +5,7 @@ import { logger } from '../utils/logger.js';
 import { saveConfigByName, configExistsByName } from '../utils/config.js';
 import { setCurrentName } from '../utils/config-store.js';
 import { validateProjectName, validateInstanceName, AWS_REGIONS, INSTANCE_TYPES } from '../utils/validation.js';
-import { handleError } from '../utils/errors.js';
+import { handleError, ValidationError } from '../utils/errors.js';
 import type { OpenClawConfig, Provider } from '../types/index.js';
 import { API_PROVIDERS } from '../constants.js';
 
@@ -37,7 +37,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       })
       .option('api-provider', {
         type: 'string',
-        describe: 'API provider (anthropic, openrouter, openai, custom)',
+        describe: 'API provider',
+        choices: API_PROVIDERS.map(p => p.value),
       })
       .option('yes', {
         type: 'boolean',
@@ -50,6 +51,13 @@ export const initCommand: CommandModule<{}, InitArgs> = {
   handler: async (argv) => {
     try {
       logger.title('OpenClaw AWS - Deployment Setup Wizard');
+      const apiProviderValues = API_PROVIDERS.map(p => p.value);
+
+      if (argv.apiProvider && !apiProviderValues.includes(argv.apiProvider)) {
+        throw new ValidationError(`Invalid API provider: ${argv.apiProvider}`, [
+          `Valid providers: ${apiProviderValues.join(', ')}`
+        ]);
+      }
 
       // Check if config already exists (by name)
       if (argv.name && configExistsByName(argv.name)) {

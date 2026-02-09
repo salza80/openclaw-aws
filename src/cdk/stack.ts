@@ -13,10 +13,8 @@ import {
   IVpc,
   Peer,
   Port,
-  CfnKeyPair,
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
-import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import * as crypto from 'crypto';
 import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
@@ -91,12 +89,6 @@ export class OpenClawStack extends Stack {
     const role = new Role(this, 'OpenClawEc2Role', {
       assumedBy: new ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies,
-    });
-
-    // Generate SSH key pair
-    const keyPair = new CfnKeyPair(this, 'OpenClawKeyPair', {
-      keyName: `${Stack.of(this).stackName}-key`,
-      keyType: 'ed25519',
     });
 
     // Determine AMI - Ubuntu 24.04 LTS
@@ -287,7 +279,6 @@ export class OpenClawStack extends Stack {
       role,
       userData,
       vpcSubnets: { subnetType: SubnetType.PUBLIC },
-      keyName: keyPair.keyName as string,
       requireImdsv2: true,
       blockDevices: [
         {
@@ -311,20 +302,6 @@ export class OpenClawStack extends Stack {
       { Key: 'ManagedBy', Value: 'openclaw-aws' },
     ]);
 
-    // Store SSH private key in Secrets Manager
-    const sshSecret = new Secret(this, 'OpenClawSSHKey', {
-      secretName: `${Stack.of(this).stackName}-ssh-key`,
-      description: 'SSH private key for OpenClaw EC2 instance',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({
-          keyName: keyPair.keyName,
-          publicKey: keyPair.attrKeyFingerprint,
-        }),
-        generateStringKey: 'privateKey',
-        excludePunctuation: true,
-      },
-    });
-
     // Outputs
     new CfnOutput(this, 'InstanceId', {
       value: instance.instanceId,
@@ -337,11 +314,6 @@ export class OpenClawStack extends Stack {
       description: 'EC2 Instance Name',
     });
 
-    new CfnOutput(this, 'SSHKeyName', {
-      value: keyPair.keyName,
-      description: 'SSH Key Pair Name',
-    });
-
     new CfnOutput(this, 'GatewayToken', {
       value: gatewayToken,
       description: 'OpenClaw Gateway Authentication Token',
@@ -350,11 +322,6 @@ export class OpenClawStack extends Stack {
     new CfnOutput(this, 'GatewayPort', {
       value: gatewayPort.toString(),
       description: 'OpenClaw Gateway Port',
-    });
-
-    new CfnOutput(this, 'SSHConnectCommand', {
-      value: `ssh -i <path-to-key> ubuntu@<instance-public-ip>`,
-      description: 'SSH connection command (get IP from EC2 console)',
     });
 
     new CfnOutput(this, 'SSMConnectCommand', {
@@ -370,23 +337,16 @@ export class OpenClawStack extends Stack {
     new CfnOutput(this, 'SetupInstructions', {
       value: [
         'Setup Instructions:',
-        '1. Get SSH key from AWS Secrets Manager:',
-        `   aws secretsmanager get-secret-value --secret-id ${sshSecret.secretName} --query SecretString --output text | jq -r '.privateKey' > openclaw-key.pem`,
-        '   chmod 600 openclaw-key.pem',
-        '',
-        '2. Connect via SSH (if enabled):',
-        `   ssh -i openclaw-key.pem ubuntu@<instance-public-ip>`,
-        '',
-        '3. Or connect via SSM (recommended):',
+        '1. Connect via SSM (recommended):',
         `   aws ssm start-session --target ${instance.instanceId}`,
         '',
-        '4. Check OpenClaw status:',
+        '2. Check OpenClaw status:',
         '   openclaw status',
         '',
-        '5. Start gateway manually (if needed):',
+        '3. Start gateway manually (if needed):',
         `   openclaw gateway --port ${gatewayPort}`,
         '',
-        '6. Access dashboard via SSM port forward:',
+        '4. Access dashboard via SSM port forward:',
         `   aws ssm start-session --target ${instance.instanceId} --document-name AWS-StartPortForwardingSession --parameters "portNumber=${gatewayPort},localPortNumber=${gatewayPort}"`,
         `   Then open: http://localhost:${gatewayPort}/?token=${gatewayToken}`,
       ].join('\n'),
