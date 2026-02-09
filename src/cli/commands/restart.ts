@@ -7,6 +7,7 @@ import { loadConfig } from '../utils/config.js';
 import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
 import { rebootInstance, waitForInstanceState } from '../utils/ec2.js';
 import { handleError } from '../utils/errors.js';
+import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface RestartArgs {
   config?: string;
@@ -33,6 +34,8 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
   handler: async (argv) => {
     try {
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       logger.title('OpenClaw AWS - Restart Instance');
 

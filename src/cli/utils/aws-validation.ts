@@ -13,6 +13,17 @@ export interface AWSCredentials {
   arn: string;
 }
 
+export function applyAwsProfile(profile?: string): void {
+  if (!profile) return;
+  process.env.AWS_PROFILE = profile;
+  process.env.AWS_SDK_LOAD_CONFIG = '1';
+}
+
+export async function requireAwsCredentials(config: OpenClawConfig): Promise<AWSCredentials> {
+  applyAwsProfile(config.aws.profile);
+  return validateAWSCredentials(config.aws.region);
+}
+
 export async function validateAWSCredentials(region: string): Promise<AWSCredentials> {
   try {
     const client = new STSClient({ region });
@@ -44,9 +55,11 @@ export async function validateAWSCredentials(region: string): Promise<AWSCredent
     }
     
     throw new AWSError('Failed to validate AWS credentials', [
-      'Run: aws configure',
-      'Check your AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY',
-      'Verify your AWS credentials file: ~/.aws/credentials'
+      'Session expired? Re-authenticate: aws sso login',
+      'First-time setup (IAM Identity Center/SSO): aws configure sso',
+      'Using access keys? Configure the AWS CLI: aws configure',
+      'Check env vars: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY',
+      'Check credentials file: ~/.aws/credentials'
     ]);
   }
 }
@@ -166,7 +179,7 @@ export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
   try {
     // 1. Validate AWS credentials
     spinner.text = 'Validating AWS credentials...';
-    const credentials = await validateAWSCredentials(config.aws.region);
+    const credentials = await requireAwsCredentials(config);
     spinner.succeed(`AWS credentials validated (Account: ${credentials.account})`);
     
     // 2. Validate AWS region

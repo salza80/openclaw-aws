@@ -6,6 +6,7 @@ import { loadConfig } from '../utils/config.js';
 import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
 import { startInstance, waitForInstanceState } from '../utils/ec2.js';
 import { handleError } from '../utils/errors.js';
+import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface StartArgs {
   config?: string;
@@ -26,6 +27,8 @@ export const startCommand: CommandModule<{}, StartArgs> = {
   handler: async (argv) => {
     try {
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       logger.title('OpenClaw AWS - Start Instance');
 

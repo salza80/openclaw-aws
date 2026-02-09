@@ -8,6 +8,7 @@ import { loadConfig, configExists, getConfigPath } from '../utils/config.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError, withRetry } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
+import { requireAwsCredentials } from '../utils/aws-validation.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -47,6 +48,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
     try {
       // Load configuration
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       logger.title('OpenClaw AWS - Destroy');
 

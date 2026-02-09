@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { loadConfig } from '../utils/config.js';
 import { getStackOutputs } from '../utils/aws.js';
 import { handleError, withRetry } from '../utils/errors.js';
+import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface OutputsArgs {
   config?: string;
@@ -25,6 +26,8 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
   handler: async (argv) => {
     try {
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       const spinner = ora('Fetching stack outputs...').start();
       

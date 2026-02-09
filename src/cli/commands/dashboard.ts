@@ -6,7 +6,7 @@ import { logger } from '../utils/logger.js';
 import { loadConfig, loadOutputs } from '../utils/config.js';
 import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
 import { handleError, AWSError, withRetry } from '../utils/errors.js';
-import { validateSSMPlugin } from '../utils/aws-validation.js';
+import { requireAwsCredentials, validateSSMPlugin } from '../utils/aws-validation.js';
 
 interface DashboardArgs {
   config?: string;
@@ -33,6 +33,8 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
   handler: async (argv) => {
     try {
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       // Validate SSM plugin is installed
       await validateSSMPlugin();

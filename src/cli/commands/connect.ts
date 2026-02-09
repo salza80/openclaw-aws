@@ -6,7 +6,7 @@ import { logger } from '../utils/logger.js';
 import { loadConfig } from '../utils/config.js';
 import { getInstanceIdFromStack, checkSSMStatus, waitForSSM } from '../utils/aws.js';
 import { handleError, AWSError, withRetry, isRetryableError } from '../utils/errors.js';
-import { validateSSMPlugin } from '../utils/aws-validation.js';
+import { requireAwsCredentials, validateSSMPlugin } from '../utils/aws-validation.js';
 
 interface ConnectArgs {
   config?: string;
@@ -27,6 +27,8 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
   handler: async (argv) => {
     try {
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       // Validate SSM plugin is installed
       await validateSSMPlugin();

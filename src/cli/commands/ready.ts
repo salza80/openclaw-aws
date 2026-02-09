@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { loadConfig } from '../utils/config.js';
 import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
 import { handleError } from '../utils/errors.js';
+import { requireAwsCredentials } from '../utils/aws-validation.js';
 import { EC2Client, GetConsoleOutputCommand } from '@aws-sdk/client-ec2';
 
 interface ReadyArgs {
@@ -65,6 +66,8 @@ export const readyCommand: CommandModule<{}, ReadyArgs> = {
   handler: async (argv) => {
     try {
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       logger.title('OpenClaw AWS - Installation Status');
 

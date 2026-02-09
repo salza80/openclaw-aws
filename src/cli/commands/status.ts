@@ -5,6 +5,7 @@ import { logger } from '../utils/logger.js';
 import { loadConfig } from '../utils/config.js';
 import { getStackStatus, getSSMStatus, checkGatewayStatus } from '../utils/aws.js';
 import { handleError, withRetry } from '../utils/errors.js';
+import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface StatusArgs {
   config?: string;
@@ -25,6 +26,8 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
   handler: async (argv) => {
     try {
       const config = loadConfig(argv.config);
+
+      await requireAwsCredentials(config);
       
       const spinner = ora('Checking status...').start();
       
