@@ -9,7 +9,7 @@ import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
-import { listConfigNames } from '../utils/config-store.js';
+import { listConfigNames, clearCurrentName, getCurrentName, setCurrentName } from '../utils/config-store.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -139,6 +139,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
               logger.success(`Configuration deleted: ${name}`);
             }
           }
+          clearCurrentName();
         } else {
           const { deleteConfigs } = await prompts({
             type: 'confirm',
@@ -155,6 +156,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
                 logger.success(`Configuration deleted: ${name}`);
               }
             }
+            clearCurrentName();
           } else {
             logger.info('Configurations kept');
           }
@@ -189,6 +191,36 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         console.log('\n' + chalk.bold('Next steps:'));
         console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
         console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
+        if (argv.deleteConfig) {
+          const configPath = getConfigPathByName(ctx.name);
+          if (fs.existsSync(configPath)) {
+            fs.unlinkSync(configPath);
+            logger.success('Configuration file deleted');
+          }
+          if (getCurrentName() === ctx.name) {
+            clearCurrentName();
+          }
+        } else {
+          const { deleteConfig } = await prompts({
+            type: 'confirm',
+            name: 'deleteConfig',
+            message: 'Delete configuration file?',
+            initial: false
+          });
+
+          if (deleteConfig) {
+            const configPath = getConfigPathByName(ctx.name);
+            if (fs.existsSync(configPath)) {
+              fs.unlinkSync(configPath);
+              logger.success('Configuration file deleted');
+            }
+            if (getCurrentName() === ctx.name) {
+              clearCurrentName();
+            }
+          } else {
+            logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
+          }
+        }
         return;
       }
 

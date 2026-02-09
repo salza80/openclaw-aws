@@ -112,8 +112,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: 'text',
             name: 'deploymentName',
             message: 'Deployment name (unique):',
-            initial: deploymentName || 'my-openclaw-bot',
-            validate: (value) => validateProjectName(value) === true ? true : String(validateProjectName(value))
+            initial: deploymentName,
+            validate: (value) => validateProjectName(value) === true ? true : `Name your bot. ${String(validateProjectName(value))}`
           },
           {
             type: 'select',
@@ -151,7 +151,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: 'text',
             name: 'instanceName',
             message: 'Instance name:',
-            initial: () => `openclaw-${deploymentName}`,
+            initial: (_prev: string, values: { deploymentName: string }) => `openclaw-${values.deploymentName}`,
             validate: (value: string) => validateInstanceName(value) === true ? true : String(validateInstanceName(value))
           },
           {
@@ -259,9 +259,14 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         });
 
         if (deployNow) {
-          console.log('\n' + chalk.yellow('→') + ' To deploy, run: ' + chalk.cyan('openclaw-aws deploy'));
+          console.log('');
+          await import('./deploy.js').then(({ default: deployCommand }) =>
+            deployCommand.handler?.({ name: deploymentName, autoApprove: false, _: [], $0: 'openclaw-aws' } as any)
+          );
         } else {
-          console.log('\n' + chalk.gray('When ready, run: ' + chalk.cyan('openclaw-aws deploy')));
+          console.log(`\n${chalk.bold('Next steps:')}`);
+          console.log(`  Set your API key: ${chalk.cyan(`export ${envVarName}=your-api-key`)}`);
+          console.log(`  When you're ready, run: ${chalk.cyan('openclaw-aws deploy')}`);
         }
       }
 

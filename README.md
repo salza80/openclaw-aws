@@ -14,6 +14,10 @@ Deploy OpenClaw AI agents on AWS with a simple, interactive CLI.
 ## Quick Start
 
 ```bash
+# Create a dedicated folder (recommended)
+mkdir my-openclaw
+cd my-openclaw
+
 # Initialize configuration (interactive wizard)
 openclaw-aws init
 
@@ -228,7 +232,7 @@ openclaw-aws destroy --name my-bot --force
 
 ### `openclaw-aws list`
 
-List deployments.
+List configs.
 
 **Example:**
 ```bash

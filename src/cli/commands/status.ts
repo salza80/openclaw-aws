@@ -48,7 +48,7 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
     return yargs
       .option('all', {
         type: 'boolean',
-        describe: 'Show status for all deployments',
+        describe: 'Show status for all configs',
         default: false,
       })
       .option('name', {
@@ -62,12 +62,12 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
       if (argv.all) {
         const names = listConfigNames();
         if (names.length === 0) {
-          logger.info('No deployments found');
+          logger.info('No configs found');
           console.log('\nRun: ' + chalk.cyan('openclaw-aws init --name <name>'));
           return;
         }
 
-        logger.title('OpenClaw AWS - All Deployment Status');
+        logger.title('OpenClaw AWS - All Config Status');
         for (const name of names) {
           const ctx = await buildCommandContext({ name });
           const config = ctx.config;

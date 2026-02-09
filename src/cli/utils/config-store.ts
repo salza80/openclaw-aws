@@ -53,6 +53,13 @@ export function getCurrentName(): string | null {
   }
 }
 
+export function clearCurrentName(): void {
+  const currentPath = getCurrentPath();
+  if (fs.existsSync(currentPath)) {
+    fs.unlinkSync(currentPath);
+  }
+}
+
 export function setCurrentName(name: string): void {
   ensureDirs();
   fs.writeFileSync(getCurrentPath(), JSON.stringify({ name }, null, 2));
@@ -75,7 +82,7 @@ export function resolveConfig(options: ConfigResolveOptions = {}): ResolvedConfi
 
   if (!name) {
     throw new ConfigError('No deployment selected', [
-      'List deployments: openclaw-aws list',
+      'List configs: openclaw-aws list',
       'Select one: openclaw-aws use <name>',
       'Create one: openclaw-aws init --name <name>'
     ]);
@@ -83,8 +90,8 @@ export function resolveConfig(options: ConfigResolveOptions = {}): ResolvedConfi
 
   if (!available.includes(name)) {
     throw new ConfigError(`Config not found: ${name}`, [
-      `Create it first: openclaw-aws init --name ${name}`,
-      'List deployments: openclaw-aws list'
+      'Create a deployment: openclaw-aws init --name <name>',
+      'List configs: openclaw-aws list'
     ]);
   }
 

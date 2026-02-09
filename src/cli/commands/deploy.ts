@@ -54,10 +54,14 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       if (argv.all) {
         const names = listConfigNames();
         if (names.length === 0) {
-          logger.info('No deployments found');
+          logger.info('No configs found');
           console.log('\nRun: ' + chalk.cyan('openclaw-aws init --name <name>'));
           return;
         }
+
+        logger.title('OpenClaw AWS - Deploy All');
+        console.log(chalk.bold('Configs to deploy:') + ` (${names.length})`);
+        names.forEach((name) => console.log('  - ' + chalk.cyan(name)));
 
         const { confirmText } = await prompts({
           type: 'text',
