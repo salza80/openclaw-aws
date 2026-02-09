@@ -2,10 +2,9 @@ import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig } from '../utils/config.js';
+import { buildCommandContext } from '../utils/context.js';
 import { getStackOutputs } from '../utils/aws.js';
 import { handleError, withRetry } from '../utils/errors.js';
-import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface OutputsArgs {
   config?: string;
@@ -25,9 +24,8 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
   
   handler: async (argv) => {
     try {
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       const spinner = ora('Fetching stack outputs...').start();
       

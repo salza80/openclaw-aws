@@ -3,10 +3,11 @@ import { execa } from 'execa';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig, loadOutputs } from '../utils/config.js';
-import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
-import { handleError, AWSError, withRetry } from '../utils/errors.js';
-import { requireAwsCredentials, validateSSMPlugin } from '../utils/aws-validation.js';
+import { loadOutputs } from '../utils/config.js';
+import { buildCommandContext } from '../utils/context.js';
+import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
+import { handleError, AWSError } from '../utils/errors.js';
+import { validateSSMPlugin } from '../utils/aws-validation.js';
 
 interface DashboardArgs {
   config?: string;
@@ -32,9 +33,8 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
   
   handler: async (argv) => {
     try {
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       // Validate SSM plugin is installed
       await validateSSMPlugin();
@@ -44,17 +44,11 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       
       let instanceId: string;
       try {
-        instanceId = await withRetry(
-          () => getInstanceIdFromStack(config.stack.name, config.aws.region),
-          { maxAttempts: 2, operationName: 'get instance ID' }
-        );
+        instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
         spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
       } catch (error) {
         spinner.fail('Instance not found');
-        throw new AWSError('Could not find instance', [
-          'Run: openclaw-aws deploy (to create instance)',
-          'Run: openclaw-aws status (to check deployment)'
-        ]);
+        throw error;
       }
 
       // Check SSM connectivity
@@ -72,14 +66,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       spinner.succeed('Instance ready');
 
       // Set up environment
-      const env: Record<string, string | undefined> = {
-        ...process.env,
-        AWS_REGION: config.aws.region,
-      };
-
-      if (config.aws.profile) {
-        env.AWS_PROFILE = config.aws.profile;
-      }
+      const env = ctx.awsEnv;
 
       spinner.start('Setting up port forwarding...');
 
@@ -104,7 +91,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       spinner.succeed('Port forwarding established');
 
       // Get gateway token from outputs
-      const outputs = loadOutputs();
+      const outputs = loadOutputs(ctx.configPath);
       const stackOutputs = outputs?.[config.stack.name] || {};
       const gatewayToken = stackOutputs.GatewayToken;
       const gatewayPort = stackOutputs.GatewayPort || '18789';

@@ -3,10 +3,12 @@ import { execa } from 'execa';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig, getConfigDir, getOutputsPath } from '../utils/config.js';
+import { getOutputsPath } from '../utils/config.js';
 import { handleError, AWSError, withRetry, isRetryableError } from '../utils/errors.js';
 import { validatePreDeploy, validateNodeVersion } from '../utils/aws-validation.js';
 import { getCDKBinary } from '../utils/cdk.js';
+import { buildCommandContext } from '../utils/context.js';
+import { getStackStatus } from '../utils/aws.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -43,12 +45,31 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       validateNodeVersion();
 
       // Load and validate configuration
-      const config = loadConfig(argv.config);
+      const ctx = await buildCommandContext({ configPath: argv.config, requireCredentials: false });
+      const config = ctx.config;
       
       logger.title('OpenClaw AWS - Deploy');
 
       // Run pre-deployment validation
       await validatePreDeploy(config);
+
+      // Check if stack already exists
+      const statusSpinner = ora('Checking existing deployment...').start();
+      try {
+        const status = await getStackStatus(config.stack.name, config.aws.region);
+        statusSpinner.succeed('Existing deployment found');
+        logger.info(`Stack ${chalk.cyan(config.stack.name)} already exists (${status.stackStatus})`);
+        console.log('\n' + chalk.bold('Next steps:'));
+        console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
+        console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
+        console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
+        return;
+      } catch (error) {
+        statusSpinner.stop();
+        if (!(error instanceof Error && error.message.includes('not found'))) {
+          throw error;
+        }
+      }
 
       console.log(''); // Empty line after validation
 
@@ -97,20 +118,13 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       }
       
       // Set up environment
-      const env: Record<string, string | undefined> = {
-        ...process.env,
-        AWS_REGION: config.aws.region,
-      };
-
-      if (config.aws.profile) {
-        env.AWS_PROFILE = config.aws.profile;
-      }
+      const env = ctx.awsEnv;
 
       // Deploy stack with retry logic
       spinner.start('Deploying stack... (this may take 3-5 minutes)');
       
       try {
-        const outputsFile = getOutputsPath();
+        const outputsFile = getOutputsPath(ctx.configPath);
         
         await withRetry(
           async () => {
@@ -157,8 +171,9 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           console.log('\n' + chalk.bold('Next steps:'));
           console.log('  ' + chalk.cyan('1.') + ' Wait 10-15 minutes for OpenClaw installation');
           console.log('  ' + chalk.cyan('2.') + ' Check if ready: ' + chalk.yellow('openclaw-aws ready'));
-          console.log('  ' + chalk.cyan('3.') + ' When ready, run: ' + chalk.yellow('openclaw-aws onboard'));
-          console.log('  ' + chalk.cyan('4.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
+          console.log('  ' + chalk.cyan('3.') + ' Check instance status: ' + chalk.yellow('openclaw-aws status'));
+          console.log('  ' + chalk.cyan('4.') + ' When ready, run: ' + chalk.yellow('openclaw-aws onboard'));
+          console.log('  ' + chalk.cyan('5.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
           
           console.log('\n' + chalk.gray('💡 Tip: Use ') + chalk.cyan('openclaw-aws ready --watch') + chalk.gray(' to monitor installation progress'));
         }

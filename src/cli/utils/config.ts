@@ -14,8 +14,9 @@ export function getConfigPath(configPath?: string): string {
   return path.join(process.cwd(), CONFIG_DIR, CONFIG_FILE);
 }
 
-export function getConfigDir(): string {
-  return path.join(process.cwd(), CONFIG_DIR);
+export function getConfigDir(configPath?: string): string {
+  const configFile = getConfigPath(configPath);
+  return path.dirname(configFile);
 }
 
 export function loadConfig(configPath?: string): OpenClawConfig {
@@ -60,7 +61,7 @@ export function saveConfig(config: OpenClawConfig, configPath?: string): void {
   // Validate before saving
   validateConfig(config);
 
-  const configDir = getConfigDir();
+  const configDir = getConfigDir(configPath);
   const configFile = getConfigPath(configPath);
 
   // Create directory if it doesn't exist
@@ -76,12 +77,12 @@ export function configExists(configPath?: string): boolean {
   return fs.existsSync(configFile);
 }
 
-export function getOutputsPath(): string {
-  return path.join(getConfigDir(), 'outputs.json');
+export function getOutputsPath(configPath?: string): string {
+  return path.join(getConfigDir(configPath), 'outputs.json');
 }
 
-export function loadOutputs(): Record<string, any> | null {
-  const outputsPath = getOutputsPath();
+export function loadOutputs(configPath?: string): Record<string, any> | null {
+  const outputsPath = getOutputsPath(configPath);
   if (!fs.existsSync(outputsPath)) {
     return null;
   }

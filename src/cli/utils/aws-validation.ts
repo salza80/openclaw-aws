@@ -5,6 +5,7 @@ import ora from 'ora';
 import prompts from 'prompts';
 import chalk from 'chalk';
 import { ValidationError, AWSError, withRetry } from './errors.js';
+import { awsCredentialSuggestions } from './suggestions.js';
 import type { OpenClawConfig } from '../types/index.js';
 
 export interface AWSCredentials {
@@ -55,11 +56,7 @@ export async function validateAWSCredentials(region: string): Promise<AWSCredent
     }
     
     throw new AWSError('Failed to validate AWS credentials', [
-      'Session expired? Re-authenticate: aws sso login',
-      'First-time setup (IAM Identity Center/SSO): aws configure sso',
-      'Using access keys? Configure the AWS CLI: aws configure',
-      'Check env vars: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY',
-      'Check credentials file: ~/.aws/credentials'
+      ...awsCredentialSuggestions()
     ]);
   }
 }

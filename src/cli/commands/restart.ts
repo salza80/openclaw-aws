@@ -3,11 +3,10 @@ import ora from 'ora';
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { logger } from '../utils/logger.js';
-import { loadConfig } from '../utils/config.js';
-import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
+import { buildCommandContext } from '../utils/context.js';
+import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
 import { rebootInstance, waitForInstanceState } from '../utils/ec2.js';
 import { handleError } from '../utils/errors.js';
-import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface RestartArgs {
   config?: string;
@@ -33,15 +32,14 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
   
   handler: async (argv) => {
     try {
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       logger.title('OpenClaw AWS - Restart Instance');
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      const instanceId = await getInstanceIdFromStack(config.stack.name, config.aws.region);
+      const instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
       spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
 
       console.log('\n' + chalk.bold('Note:'));

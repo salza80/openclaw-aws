@@ -1,5 +1,6 @@
-import { EC2Client, GetConsoleOutputCommand } from '@aws-sdk/client-ec2';
+import { GetConsoleOutputCommand } from '@aws-sdk/client-ec2';
 import { withRetry } from './errors.js';
+import { createEc2Client } from './aws-clients.js';
 
 export interface CloudInitStatus {
   isComplete: boolean;
@@ -13,7 +14,7 @@ export async function checkCloudInitStatus(
   instanceId: string,
   region: string
 ): Promise<CloudInitStatus> {
-  const client = new EC2Client({ region });
+  const client = createEc2Client(region);
   const command = new GetConsoleOutputCommand({
     InstanceId: instanceId,
     Latest: true
@@ -75,6 +76,27 @@ export async function checkCloudInitStatus(
       hasError: false,
       isOpenClawInstalled: false
     };
+  }
+}
+
+export async function getConsoleOutput(
+  instanceId: string,
+  region: string
+): Promise<string> {
+  const client = createEc2Client(region);
+  const command = new GetConsoleOutputCommand({
+    InstanceId: instanceId,
+    Latest: true
+  });
+
+  try {
+    const response = await withRetry(
+      () => client.send(command),
+      { maxAttempts: 2, operationName: 'get console output' }
+    );
+    return response.Output || '';
+  } catch {
+    return '';
   }
 }
 

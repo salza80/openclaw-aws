@@ -2,11 +2,10 @@ import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig } from '../utils/config.js';
-import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
-import { startInstance, waitForInstanceState } from '../utils/ec2.js';
+import { buildCommandContext } from '../utils/context.js';
+import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
+import { getInstanceState, startInstance, waitForInstanceState } from '../utils/ec2.js';
 import { handleError } from '../utils/errors.js';
-import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface StartArgs {
   config?: string;
@@ -26,16 +25,26 @@ export const startCommand: CommandModule<{}, StartArgs> = {
   
   handler: async (argv) => {
     try {
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       logger.title('OpenClaw AWS - Start Instance');
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      const instanceId = await getInstanceIdFromStack(config.stack.name, config.aws.region);
+      const instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
       spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
+
+      const currentState = await getInstanceState(instanceId, config.aws.region);
+      if (currentState === 'running') {
+        logger.info('Instance is already running');
+        console.log('\n' + chalk.bold('Next steps:'));
+        console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
+        console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
+        console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
+        console.log('  ' + chalk.cyan('openclaw-aws stop') + '       - Stop to save costs');
+        return;
+      }
 
       // Start instance
       spinner.start('Starting instance...');
@@ -69,6 +78,7 @@ export const startCommand: CommandModule<{}, StartArgs> = {
         console.log('\n' + chalk.bold('Next steps:'));
         console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
         console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
+        console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
         console.log('  ' + chalk.cyan('openclaw-aws stop') + '       - Stop to save costs');
         
       } else {

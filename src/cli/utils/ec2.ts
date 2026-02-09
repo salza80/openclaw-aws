@@ -1,8 +1,9 @@
-import { EC2Client, StopInstancesCommand, StartInstancesCommand, RebootInstancesCommand, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
+import { StopInstancesCommand, StartInstancesCommand, RebootInstancesCommand, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import { withRetry, AWSError } from './errors.js';
+import { createEc2Client } from './aws-clients.js';
 
 export async function stopInstance(instanceId: string, region: string): Promise<void> {
-  const client = new EC2Client({ region });
+  const client = createEc2Client(region);
   const command = new StopInstancesCommand({
     InstanceIds: [instanceId]
   });
@@ -21,7 +22,7 @@ export async function stopInstance(instanceId: string, region: string): Promise<
 }
 
 export async function startInstance(instanceId: string, region: string): Promise<void> {
-  const client = new EC2Client({ region });
+  const client = createEc2Client(region);
   const command = new StartInstancesCommand({
     InstanceIds: [instanceId]
   });
@@ -40,7 +41,7 @@ export async function startInstance(instanceId: string, region: string): Promise
 }
 
 export async function rebootInstance(instanceId: string, region: string): Promise<void> {
-  const client = new EC2Client({ region });
+  const client = createEc2Client(region);
   const command = new RebootInstancesCommand({
     InstanceIds: [instanceId]
   });
@@ -58,13 +59,30 @@ export async function rebootInstance(instanceId: string, region: string): Promis
   }
 }
 
+export async function getInstanceState(
+  instanceId: string,
+  region: string
+): Promise<string | undefined> {
+  const client = createEc2Client(region);
+
+  try {
+    const response = await client.send(
+      new DescribeInstancesCommand({ InstanceIds: [instanceId] })
+    );
+
+    return response.Reservations?.[0]?.Instances?.[0]?.State?.Name;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function waitForInstanceState(
   instanceId: string,
   region: string,
   desiredState: 'running' | 'stopped',
   maxWaitTime: number = 180000 // 3 minutes
 ): Promise<boolean> {
-  const client = new EC2Client({ region });
+  const client = createEc2Client(region);
   const startTime = Date.now();
   
   while (Date.now() - startTime < maxWaitTime) {

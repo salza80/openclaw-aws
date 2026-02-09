@@ -2,47 +2,21 @@ import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig } from '../utils/config.js';
-import { getInstanceIdFromStack, checkSSMStatus } from '../utils/aws.js';
+import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
 import { handleError } from '../utils/errors.js';
-import { requireAwsCredentials } from '../utils/aws-validation.js';
-import { EC2Client, GetConsoleOutputCommand } from '@aws-sdk/client-ec2';
+import { getConsoleOutput } from '../utils/cloud-init.js';
+import { buildCommandContext } from '../utils/context.js';
 
 interface ReadyArgs {
   config?: string;
   watch?: boolean;
 }
 
-async function checkMarkerInLogs(
-  instanceId: string, 
-  region: string
-): Promise<{ ready: boolean; logs: string }> {
-  const client = new EC2Client({ region });
-  
-  try {
-    const response = await client.send(
-      new GetConsoleOutputCommand({ InstanceId: instanceId, Latest: true })
-    );
-    
-    const output = response.Output || '';
-    
-    // Check for marker file creation in logs
-    const hasMarker = output.includes('openclaw-ready') || 
-                      output.includes('OpenClaw CLI installed successfully');
-    
-    // Check for completion
-    const isComplete = output.includes('Cloud-init v.') && output.includes('finished at');
-    
-    return {
-      ready: hasMarker && isComplete,
-      logs: output
-    };
-  } catch (error) {
-    return {
-      ready: false,
-      logs: `Error checking logs: ${error instanceof Error ? error.message : String(error)}`
-    };
-  }
+function getReadyStatusFromLogs(output: string): { ready: boolean } {
+  const hasMarker = output.includes('openclaw-ready') ||
+                    output.includes('OpenClaw CLI installed successfully');
+  const isComplete = output.includes('Cloud-init v.') && output.includes('finished at');
+  return { ready: hasMarker && isComplete };
 }
 
 export const readyCommand: CommandModule<{}, ReadyArgs> = {
@@ -65,15 +39,14 @@ export const readyCommand: CommandModule<{}, ReadyArgs> = {
   
   handler: async (argv) => {
     try {
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       logger.title('OpenClaw AWS - Installation Status');
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      const instanceId = await getInstanceIdFromStack(config.stack.name, config.aws.region);
+      const instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
       spinner.succeed(`Checking instance: ${chalk.cyan(instanceId)}`);
 
       let attempts = 0;
@@ -97,15 +70,16 @@ export const readyCommand: CommandModule<{}, ReadyArgs> = {
         }
         
         // Check for marker in console logs
-        const markerCheck = await checkMarkerInLogs(instanceId, config.aws.region);
+        const logs = await getConsoleOutput(instanceId, config.aws.region);
+        const markerCheck = getReadyStatusFromLogs(logs);
         
         spinner.stop();
 
         // Show recent logs
-        if (markerCheck.logs) {
+        if (logs) {
           console.log('\n' + chalk.bold('Installation Logs:'));
           console.log(chalk.gray('─'.repeat(60)));
-          const relevantLines = markerCheck.logs
+          const relevantLines = logs
             .split('\n')
             .filter((line: string) => 
               line.includes('node') || 

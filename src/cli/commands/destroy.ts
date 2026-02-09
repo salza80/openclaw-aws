@@ -4,11 +4,11 @@ import ora from 'ora';
 import prompts from 'prompts';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig, configExists, getConfigPath } from '../utils/config.js';
+import { getConfigPath } from '../utils/config.js';
+import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError, withRetry } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
-import { requireAwsCredentials } from '../utils/aws-validation.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -47,9 +47,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
   handler: async (argv) => {
     try {
       // Load configuration
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       logger.title('OpenClaw AWS - Destroy');
 
@@ -69,6 +68,9 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
       if (!stackExists) {
         logger.info('No resources to delete');
+        console.log('\n' + chalk.bold('Next steps:'));
+        console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
+        console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
         return;
       }
 
@@ -103,14 +105,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
       
       // Set up environment
-      const env: Record<string, string | undefined> = {
-        ...process.env,
-        AWS_REGION: config.aws.region,
-      };
-
-      if (config.aws.profile) {
-        env.AWS_PROFILE = config.aws.profile;
-      }
+      const env = ctx.awsEnv;
 
       // Destroy stack
       const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();

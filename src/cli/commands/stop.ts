@@ -3,11 +3,10 @@ import ora from 'ora';
 import chalk from 'chalk';
 import prompts from 'prompts';
 import { logger } from '../utils/logger.js';
-import { loadConfig } from '../utils/config.js';
-import { getInstanceIdFromStack } from '../utils/aws.js';
-import { stopInstance, waitForInstanceState } from '../utils/ec2.js';
+import { buildCommandContext } from '../utils/context.js';
+import { resolveInstanceId } from '../utils/aws.js';
+import { getInstanceState, stopInstance, waitForInstanceState } from '../utils/ec2.js';
 import { handleError } from '../utils/errors.js';
-import { requireAwsCredentials } from '../utils/aws-validation.js';
 
 interface StopArgs {
   config?: string;
@@ -33,16 +32,23 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
   
   handler: async (argv) => {
     try {
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       logger.title('OpenClaw AWS - Stop Instance');
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      const instanceId = await getInstanceIdFromStack(config.stack.name, config.aws.region);
+      const instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
       spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
+
+      const currentState = await getInstanceState(instanceId, config.aws.region);
+      if (currentState === 'stopped') {
+        logger.info('Instance is already stopped');
+        console.log('\n' + chalk.bold('To restart:'));
+        console.log('  ' + chalk.cyan('openclaw-aws start'));
+        return;
+      }
 
       // Show cost savings
       console.log('\n' + chalk.bold('Cost Savings:'));

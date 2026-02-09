@@ -3,10 +3,10 @@ import { execa } from 'execa';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { loadConfig } from '../utils/config.js';
-import { getInstanceIdFromStack, checkSSMStatus, waitForSSM } from '../utils/aws.js';
+import { buildCommandContext } from '../utils/context.js';
+import { resolveInstanceId, checkSSMStatus, waitForSSM } from '../utils/aws.js';
 import { handleError, AWSError, withRetry, isRetryableError } from '../utils/errors.js';
-import { requireAwsCredentials, validateSSMPlugin } from '../utils/aws-validation.js';
+import { validateSSMPlugin } from '../utils/aws-validation.js';
 
 interface ConnectArgs {
   config?: string;
@@ -26,9 +26,8 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
   
   handler: async (argv) => {
     try {
-      const config = loadConfig(argv.config);
-
-      await requireAwsCredentials(config);
+      const ctx = await buildCommandContext({ configPath: argv.config });
+      const config = ctx.config;
       
       // Validate SSM plugin is installed
       await validateSSMPlugin();
@@ -38,17 +37,11 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
       
       let instanceId: string;
       try {
-        instanceId = await withRetry(
-          () => getInstanceIdFromStack(config.stack.name, config.aws.region),
-          { maxAttempts: 2, operationName: 'get instance ID' }
-        );
+        instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
         spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
       } catch (error) {
         spinner.fail('Instance not found');
-        throw new AWSError('Could not find instance', [
-          'Run: openclaw-aws deploy (to create instance)',
-          'Run: openclaw-aws status (to check deployment)'
-        ]);
+        throw error;
       }
 
       // Check SSM connectivity
@@ -73,14 +66,7 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
       }
 
       // Set up environment
-      const env: Record<string, string | undefined> = {
-        ...process.env,
-        AWS_REGION: config.aws.region,
-      };
-
-      if (config.aws.profile) {
-        env.AWS_PROFILE = config.aws.profile;
-      }
+      const env = ctx.awsEnv;
 
       console.log('');
       logger.info(`Connecting to ${chalk.cyan(config.instance.name)} (${chalk.gray(instanceId)})...`);

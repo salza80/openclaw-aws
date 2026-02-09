@@ -1,13 +1,15 @@
-import { CloudFormationClient, DescribeStacksCommand, DescribeStackResourcesCommand } from '@aws-sdk/client-cloudformation';
-import { SSMClient, DescribeInstanceInformationCommand, SendCommandCommand, GetCommandInvocationCommand } from '@aws-sdk/client-ssm';
-import { EC2Client, DescribeInstancesCommand } from '@aws-sdk/client-ec2';
+import { DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
+import { DescribeInstanceInformationCommand, SendCommandCommand, GetCommandInvocationCommand } from '@aws-sdk/client-ssm';
+import { DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import type { DeploymentStatus } from '../types/index.js';
+import { createCloudFormationClient, createEc2Client, createSsmClient } from './aws-clients.js';
+import { AWSError, withRetry } from './errors.js';
 
 export async function getInstanceIdFromStack(
   stackName: string,
   region: string
 ): Promise<string> {
-  const client = new CloudFormationClient({ region });
+  const client = createCloudFormationClient(region);
   const command = new DescribeStacksCommand({ StackName: stackName });
   
   try {
@@ -28,11 +30,28 @@ export async function getInstanceIdFromStack(
   }
 }
 
+export async function resolveInstanceId(
+  stackName: string,
+  region: string
+): Promise<string> {
+  try {
+    return await withRetry(
+      () => getInstanceIdFromStack(stackName, region),
+      { maxAttempts: 2, operationName: 'get instance ID' }
+    );
+  } catch {
+    throw new AWSError('Could not find instance', [
+      'Run: openclaw-aws deploy (to create instance)',
+      'Run: openclaw-aws status (to check deployment)'
+    ]);
+  }
+}
+
 export async function checkSSMStatus(
   instanceId: string,
   region: string
 ): Promise<boolean> {
-  const client = new SSMClient({ region });
+  const client = createSsmClient(region);
   const command = new DescribeInstanceInformationCommand({
     Filters: [{ Key: 'InstanceIds', Values: [instanceId] }]
   });
@@ -53,7 +72,7 @@ export async function getSSMStatus(
   instanceId: string,
   region: string
 ): Promise<{ status: string; lastPing?: string }> {
-  const client = new SSMClient({ region });
+  const client = createSsmClient(region);
   const command = new DescribeInstanceInformationCommand({
     Filters: [{ Key: 'InstanceIds', Values: [instanceId] }]
   });
@@ -79,7 +98,7 @@ export async function checkGatewayStatus(
   instanceId: string,
   region: string
 ): Promise<{ running: boolean; error?: string }> {
-  const client = new SSMClient({ region });
+  const client = createSsmClient(region);
   
   try {
     // Send command to check if openclaw gateway service is running
@@ -148,7 +167,7 @@ export async function getStackStatus(
   stackName: string,
   region: string
 ): Promise<DeploymentStatus> {
-  const client = new CloudFormationClient({ region });
+  const client = createCloudFormationClient(region);
   const command = new DescribeStacksCommand({ StackName: stackName });
   
   try {
@@ -170,7 +189,7 @@ export async function getStackStatus(
       status.instanceId = instanceId;
 
       // Get instance status
-      const ec2Client = new EC2Client({ region });
+      const ec2Client = createEc2Client(region);
       const instanceResponse = await ec2Client.send(
         new DescribeInstancesCommand({
           InstanceIds: [instanceId]
@@ -202,7 +221,7 @@ export async function getStackOutputs(
   stackName: string,
   region: string
 ): Promise<Record<string, string>> {
-  const client = new CloudFormationClient({ region });
+  const client = createCloudFormationClient(region);
   const command = new DescribeStacksCommand({ StackName: stackName });
   
   try {

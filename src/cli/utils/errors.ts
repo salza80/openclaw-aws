@@ -1,5 +1,13 @@
 import chalk from 'chalk';
 import { logger } from './logger.js';
+import {
+  awsCredentialSuggestions,
+  cdkBootstrapSuggestions,
+  configNotFoundSuggestions,
+  networkSuggestions,
+  stackNotFoundSuggestions,
+  ssmSuggestions
+} from './suggestions.js';
 
 export class CLIError extends Error {
   constructor(
@@ -51,45 +59,32 @@ function getErrorSuggestions(error: Error): string[] {
   
   // AWS Credentials
   if (message.includes('credentials') || message.includes('access denied')) {
-    suggestions.push('Session expired? Re-authenticate: aws sso login');
-    suggestions.push('First-time setup (IAM Identity Center/SSO): aws configure sso');
-    suggestions.push('Using access keys? Configure the AWS CLI: aws configure');
-    suggestions.push('Check env vars: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY');
-    suggestions.push('Check credentials file: ~/.aws/credentials');
-    suggestions.push('Verify IAM permissions for CloudFormation, EC2, and SSM');
+    suggestions.push(...awsCredentialSuggestions());
   }
   
   // CDK Bootstrap
   if (message.includes('bootstrap') || message.includes('cdk toolkit')) {
-    suggestions.push('Bootstrap your account/region: cdk bootstrap aws://ACCOUNT-ID/REGION');
-    suggestions.push('Docs: https://docs.aws.amazon.com/cdk/latest/guide/bootstrapping.html');
+    suggestions.push(...cdkBootstrapSuggestions());
   }
   
   // Stack not found
   if (message.includes('stack') && message.includes('not found')) {
-    suggestions.push('Run: openclaw-aws deploy (to create the stack)');
-    suggestions.push('Check: openclaw-aws status (to see current state)');
-    suggestions.push('Confirm region/profile in your config');
+    suggestions.push(...stackNotFoundSuggestions());
   }
   
   // Config file
   if (message.includes('config') && message.includes('not found')) {
-    suggestions.push('Run: openclaw-aws init (to create configuration)');
-    suggestions.push('Or pass an explicit path: --config /path/to/config.json');
+    suggestions.push(...configNotFoundSuggestions());
   }
   
   // SSM Session Manager
   if (message.includes('ssm') || message.includes('session')) {
-    suggestions.push('Install Session Manager plugin: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html');
-    suggestions.push('Wait a few minutes after start/restart for SSM to be ready');
-    suggestions.push('Check: openclaw-aws status');
+    suggestions.push(...ssmSuggestions());
   }
   
   // Network/timeout
   if (message.includes('timeout') || message.includes('network')) {
-    suggestions.push('Check your internet connection');
-    suggestions.push('Verify the AWS region is reachable from your network');
-    suggestions.push('Try again in a few moments');
+    suggestions.push(...networkSuggestions());
   }
   
   return suggestions;
