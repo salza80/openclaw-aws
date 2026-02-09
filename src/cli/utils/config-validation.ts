@@ -75,7 +75,7 @@ export function validateConfig(config: OpenClawConfig): void {
       'Configuration validation failed:\n  ' + errors.join('\n  '),
       [
         'Run: openclaw-aws init (to recreate configuration)',
-        'Or manually fix the .openclaw-aws/config.json file'
+        'Or manually fix the active config in .openclaw-aws/configs/<name>.json (see .openclaw-aws/current.json)'
       ]
     );
   }
