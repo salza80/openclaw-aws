@@ -70,7 +70,7 @@ export async function validateAWSRegion(region: string): Promise<boolean> {
     
     await client.send(command);
     return true;
-  } catch (error) {
+  } catch {
     throw new ValidationError(`Invalid AWS region: ${region}`, [
       'Check available regions: aws ec2 describe-regions',
       'Common regions: us-east-1, us-west-2, eu-west-1'
@@ -102,7 +102,7 @@ export async function getCDKBootstrapVersion(region: string): Promise<number | n
     if (!versionOutput?.OutputValue) return null;
     
     return parseInt(versionOutput.OutputValue, 10);
-  } catch (error) {
+  } catch {
     return null; // Not bootstrapped
   }
 }
@@ -161,7 +161,7 @@ export async function runCDKBootstrap(
       env,
       stdio: 'inherit' // Show CDK output to user
     });
-  } catch (error) {
+  } catch {
     throw new AWSError('Failed to bootstrap CDK', [
       `Tried: ${cdkBinary} bootstrap ${envQualifier}`,
       'Check AWS permissions (CloudFormation, S3, IAM required)',
@@ -282,7 +282,7 @@ export async function validateStackExists(stackName: string, region: string): Pr
     
     await client.send(command);
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -307,7 +307,7 @@ export async function validateSSMPlugin(): Promise<void> {
   
   try {
     await execa('session-manager-plugin', ['--version']);
-  } catch (error) {
+  } catch {
     throw new ValidationError('AWS Session Manager plugin not found', [
       'Install from: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html',
       'macOS: brew install --cask session-manager-plugin',

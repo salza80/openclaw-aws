@@ -105,6 +105,8 @@ export async function withRetry<T>(
     shouldRetry = () => true,
     operationName = 'operation'
   } = options;
+
+  void operationName; // reserved for future logging
   
   let lastError: unknown;
   

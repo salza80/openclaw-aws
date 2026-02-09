@@ -13,7 +13,7 @@ export async function stopInstance(instanceId: string, region: string): Promise<
       () => client.send(command),
       { maxAttempts: 2, operationName: 'stop instance' }
     );
-  } catch (error) {
+  } catch {
     throw new AWSError(`Failed to stop instance ${instanceId}`, [
       'Check instance exists and is in a stoppable state',
       'Verify IAM permissions for ec2:StopInstances'
@@ -32,7 +32,7 @@ export async function startInstance(instanceId: string, region: string): Promise
       () => client.send(command),
       { maxAttempts: 2, operationName: 'start instance' }
     );
-  } catch (error) {
+  } catch {
     throw new AWSError(`Failed to start instance ${instanceId}`, [
       'Check instance exists and is in a stopped state',
       'Verify IAM permissions for ec2:StartInstances'
@@ -51,7 +51,7 @@ export async function rebootInstance(instanceId: string, region: string): Promis
       () => client.send(command),
       { maxAttempts: 2, operationName: 'reboot instance' }
     );
-  } catch (error) {
+  } catch {
     throw new AWSError(`Failed to reboot instance ${instanceId}`, [
       'Check instance exists and is running',
       'Verify IAM permissions for ec2:RebootInstances'

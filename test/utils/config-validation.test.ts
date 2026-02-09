@@ -33,6 +33,6 @@ describe('config-validation', () => {
 
   it('throws on invalid config values', () => {
     const badConfig = { ...validConfig, aws: { region: 'bad-region' } };
-    expect(() => validateConfig(badConfig as any)).toThrow('Configuration validation failed');
+    expect(() => validateConfig(badConfig as unknown as typeof validConfig)).toThrow('Configuration validation failed');
   });
 });

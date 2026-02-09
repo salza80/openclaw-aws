@@ -1,4 +1,4 @@
-import { Stack, StackProps, CfnOutput, Token } from 'aws-cdk-lib';
+import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import { 
   Instance, 
@@ -13,8 +13,6 @@ import {
   SubnetType, 
   Vpc,
   IVpc,
-  Peer,
-  Port,
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
 import * as crypto from 'crypto';
@@ -25,9 +23,6 @@ export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
   apiProvider: Provider;
   apiKey: string;
-  gatewayPort?: number;
-  browserPort?: number;
-  customApiBaseUrl?: string;
   useDefaultVpc: boolean;
 }
 
@@ -36,8 +31,7 @@ export class OpenClawStack extends Stack {
     super(scope, id, props);
 
     const { config, apiProvider, apiKey } = props;
-    const gatewayPort = props.gatewayPort ?? 18789;
-    const browserPort = props.browserPort ?? 18791;
+    const gatewayPort = 18789;
 
     // Generate gateway token (deterministic from stack ID for reproducibility)
     const gatewayToken = crypto

@@ -43,11 +43,11 @@ export function loadConfigByName(name: string): OpenClawConfig {
     );
   }
 
-  let config: any;
+  let config: unknown;
   try {
     const content = fs.readFileSync(configFile, 'utf-8');
     config = JSON.parse(content);
-  } catch (error) {
+  } catch {
     throw new ConfigError(
       `Failed to parse config file: ${configFile}`,
       [
@@ -90,7 +90,7 @@ export function configExistsByName(name: string): boolean {
   return fs.existsSync(getConfigPathByName(name));
 }
 
-export function loadOutputsByName(name: string): Record<string, any> | null {
+export function loadOutputsByName(name: string): Record<string, unknown> | null {
   const outputsPath = getOutputsPathByName(name);
   if (!fs.existsSync(outputsPath)) {
     return null;

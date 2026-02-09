@@ -3,7 +3,6 @@ import * as cdk from 'aws-cdk-lib';
 import { OpenClawStack, OpenClawStackProps } from './stack.js';
 import { loadConfigByName } from '../cli/utils/config.js';
 import type { StackConfig } from '../cli/types/index.js';
-import { Provider } from 'aws-cdk-lib/custom-resources/index.js';
 
 // Load configuration
 let config;
@@ -59,9 +58,7 @@ const stackConfig: StackConfig = {
 };
 
 // Get configuration from environment (no model/sandbox in config anymore)
-const gatewayPort = parseInt(process.env.OPENCLAW_GATEWAY_PORT ?? '18789', 10);
-const browserPort = parseInt(process.env.OPENCLAW_BROWSER_PORT ?? '18791', 10);
-const customApiBaseUrl = process.env.OPENCLAW_CUSTOM_API_BASE_URL;
+// Gateway port is fixed in the stack (18789)
 
 // Create CDK app
 const app = new cdk.App();
@@ -71,9 +68,6 @@ const stackProps: OpenClawStackProps = {
   config: stackConfig,
   apiProvider,
   apiKey,
-  gatewayPort,
-  browserPort,
-  customApiBaseUrl,
   useDefaultVpc: config.network.useDefaultVpc,
   env: {
     region: config.aws.region,

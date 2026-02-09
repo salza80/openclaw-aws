@@ -81,8 +81,8 @@ export function validateConfig(config: OpenClawConfig): void {
   }
 }
 
-export function validateConfigStructure(obj: any): obj is OpenClawConfig {
-  return (
+export function validateConfigStructure(obj: unknown): obj is OpenClawConfig {
+  return !!(
     obj &&
     typeof obj === 'object' &&
     'version' in obj &&

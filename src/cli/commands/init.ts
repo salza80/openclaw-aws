@@ -158,8 +158,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             type: 'text',
             name: 'instanceName',
             message: 'Instance name:',
-            initial: (prev: any, values: any) => `openclaw-${values.projectName}`,
-            validate: (value) => validateInstanceName(value) === true ? true : String(validateInstanceName(value))
+            initial: (_prev: string, values: { projectName: string }) => `openclaw-${values.projectName}`,
+            validate: (value: string) => validateInstanceName(value) === true ? true : String(validateInstanceName(value))
           },
           {
             type: 'select',

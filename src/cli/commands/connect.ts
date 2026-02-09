@@ -95,7 +95,7 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
             operationName: 'start SSM session'
           }
         );
-      } catch (error) {
+      } catch {
         throw new AWSError('Failed to start SSM session', [
           'Check your internet connection',
           'Verify AWS credentials are valid',

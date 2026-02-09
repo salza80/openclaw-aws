@@ -25,7 +25,7 @@ describe('init command', () => {
       yes: true,
       region: 'us-east-1',
       instanceType: 't3.micro'
-    } as any);
+    } as unknown as { yes: boolean; region: string; instanceType: string });
 
     const configPath = getConfigPathByName('my-openclaw-bot');
     expect(fs.existsSync(configPath)).toBe(true);

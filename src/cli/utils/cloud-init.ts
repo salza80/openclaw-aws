@@ -69,7 +69,7 @@ export async function checkCloudInitStatus(
       elapsedMinutes
     };
 
-  } catch (error) {
+  } catch {
     // If we can't get console output, assume not ready
     return {
       isComplete: false,

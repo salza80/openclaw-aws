@@ -7,7 +7,7 @@ import { logger } from '../utils/logger.js';
 import { getConfigPathByName } from '../utils/config.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
-import { handleError, AWSError, withRetry } from '../utils/errors.js';
+import { handleError, AWSError } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
 import { listConfigNames } from '../utils/config-store.js';
 import path from 'path';
@@ -88,7 +88,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           try {
             await getStackStatus(config.stack.name, config.aws.region);
             spinner.succeed(`Stack found: ${config.stack.name}`);
-          } catch (error) {
+          } catch {
             spinner.warn('Stack not found (may already be deleted)');
             stackExists = false;
           }
@@ -119,7 +119,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             logger.success('All resources removed');
             console.log('\nTotal cost: $0/month');
 
-          } catch (error) {
+          } catch {
             destroySpinner.fail('Destruction failed');
             throw new AWSError('Stack destruction failed', [
               'Check AWS Console CloudFormation page for details',
@@ -179,7 +179,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         const status = await getStackStatus(config.stack.name, config.aws.region);
         instanceId = status.instanceId;
         spinner.succeed(`Stack found: ${config.stack.name}`);
-      } catch (error) {
+      } catch {
         spinner.warn('Stack not found (may already be deleted)');
         stackExists = false;
       }
@@ -271,7 +271,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           }
         }
 
-      } catch (error) {
+      } catch {
         destroySpinner.fail('Destruction failed');
         throw new AWSError('Stack destruction failed', [
           'Check AWS Console CloudFormation page for details',

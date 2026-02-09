@@ -107,7 +107,7 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
             console.log('  ' + chalk.bold('Region:') + ' ' + chalk.gray(config.aws.region) + '  ' +
               chalk.bold('Type:') + ' ' + chalk.cyan(config.instance.type));
             console.log('');
-          } catch (error) {
+          } catch {
             spinner.warn(`${name}: not deployed`);
             console.log(chalk.bold('  Region:'), chalk.gray(config.aws.region));
             console.log(chalk.bold('  Instance Type:'), chalk.cyan(config.instance.type));
@@ -188,7 +188,7 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
                   console.log(chalk.gray('  Error:'), chalk.gray(gatewayStatus.error));
                 }
               }
-            } catch (error) {
+            } catch {
               console.log(chalk.bold('Status:'), chalk.yellow('⚠ Unknown'), chalk.gray('(check failed)'));
             }
           } else {

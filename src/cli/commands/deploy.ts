@@ -113,7 +113,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           try {
             await execa(cdkBinary, ['--version'], { reject: true });
             spinner.succeed('CDK CLI ready');
-          } catch (error) {
+          } catch {
             spinner.fail('CDK CLI not available');
             throw new AWSError('AWS CDK CLI not available', [
               'Reinstall this package: npm install -g @salza80/openclaw-aws',
@@ -228,7 +228,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       try {
         await execa(cdkBinary, ['--version'], { reject: true });
         spinner.succeed('CDK CLI ready');
-      } catch (error) {
+      } catch {
         spinner.fail('CDK CLI not available');
         throw new AWSError('AWS CDK CLI not available', [
           'Reinstall this package: npm install -g @salza80/openclaw-aws',

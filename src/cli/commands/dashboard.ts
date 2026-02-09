@@ -94,7 +94,10 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
 
       // Get gateway token from outputs
       const outputs = loadOutputsByName(ctx.name);
-      const stackOutputs = outputs?.[config.stack.name] || {};
+      const stackOutputs = (outputs?.[config.stack.name] ?? {}) as {
+        GatewayToken?: string;
+        GatewayPort?: string;
+      };
       const gatewayToken = stackOutputs.GatewayToken;
       const gatewayPort = stackOutputs.GatewayPort || '18789';
       
