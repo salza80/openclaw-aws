@@ -21,7 +21,7 @@ describe('cli config workflow', () => {
     const configPath = path.join(workspace.cwd, '.openclaw-aws', 'configs', 'alpha.json');
     expect(fs.existsSync(configPath)).toBe(true);
 
-    const list = await runCli(['config', 'list'], workspace.cwd);
+    const list = await runCli(['list'], workspace.cwd);
     expect(list.stdout).toContain('alpha');
   });
 
@@ -29,7 +29,7 @@ describe('cli config workflow', () => {
     await runCli(['init', '--name', 'alpha', '--yes'], workspace.cwd);
     await runCli(['init', '--name', 'beta', '--yes'], workspace.cwd);
 
-    await runCli(['config', 'use', 'beta'], workspace.cwd);
+    await runCli(['use', 'beta'], workspace.cwd);
 
     const currentPath = path.join(workspace.cwd, '.openclaw-aws', 'current.json');
     const current = JSON.parse(fs.readFileSync(currentPath, 'utf-8'));

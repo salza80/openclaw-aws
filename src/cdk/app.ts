@@ -21,21 +21,11 @@ try {
 // Determine API provider from config
 const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key'; // Default to Anthropic if not set
 
-// Get API key based on provider
-const envVarName = apiProvider.toUpperCase().replace(/-/g, '_');
-const apiKey = process.env[envVarName];
-
-// Validate required environment variables
-if (!apiKey) {
-  console.error(`Error: ${envVarName} environment variable is required`);
-  console.error(`Set it with: export ${envVarName}=your-api-key`);
-  console.error(`\nAPI Provider: ${apiProvider}`);
-  if (!config.openclaw?.apiProvider) {
-    console.error('To change provider, set OPENCLAW_API_PROVIDER environment variable');
-  } else {
-    console.error('To change provider, run: openclaw-aws init');
-  }
-  console.error('Supported providers: anthropic, openrouter, openai, custom');
+// Get API key parameter name (written by CLI before deploy)
+const apiKeyParamName = process.env.OPENCLAW_API_KEY_PARAM;
+if (!apiKeyParamName) {
+  console.error('Error: OPENCLAW_API_KEY_PARAM environment variable is required');
+  console.error('Run deployment via the CLI so it can store your API key in Parameter Store.');
   process.exit(1);
 }
 
@@ -67,7 +57,7 @@ const app = new cdk.App();
 const stackProps: OpenClawStackProps = {
   config: stackConfig,
   apiProvider,
-  apiKey,
+  apiKeyParamName,
   useDefaultVpc: config.network.useDefaultVpc,
   env: {
     region: config.aws.region,

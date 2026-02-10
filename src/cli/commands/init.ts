@@ -239,6 +239,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       const envVarName = apiProvider.toUpperCase().replace(/-/g, '_');
       console.log(`\n${chalk.yellow('⚠ Required before deployment:')}`);
       console.log(`  Set your API key: export ${envVarName}=your-api-key`);
+      console.log(`  Or add it to .env: ${envVarName}=your-api-key`);
       
       if (apiProvider === 'openrouter-api-key') {
         console.log(`  Get your key: https://openrouter.ai/keys`);
@@ -266,6 +267,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         } else {
           console.log(`\n${chalk.bold('Next steps:')}`);
           console.log(`  Set your API key: ${chalk.cyan(`export ${envVarName}=your-api-key`)}`);
+          console.log(`  Or add it to .env: ${chalk.cyan(`${envVarName}=your-api-key`)}`);
           console.log(`  When you're ready, run: ${chalk.cyan('openclaw-aws deploy')}`);
         }
       }

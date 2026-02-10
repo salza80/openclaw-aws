@@ -15,6 +15,7 @@ import {
   IVpc,
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
+import { StringParameter } from 'aws-cdk-lib/aws-ssm';
 import * as crypto from 'crypto';
 import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
@@ -22,7 +23,7 @@ import type { Provider } from '../cli/types/index.js';
 export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
   apiProvider: Provider;
-  apiKey: string;
+  apiKeyParamName: string;
   useDefaultVpc: boolean;
 }
 
@@ -30,7 +31,7 @@ export class OpenClawStack extends Stack {
   constructor(scope: Construct, id: string, props: OpenClawStackProps) {
     super(scope, id, props);
 
-    const { config, apiProvider, apiKey } = props;
+    const { config, apiProvider, apiKeyParamName } = props;
     const gatewayPort = 18789;
 
     // Generate gateway token (deterministic from stack ID for reproducibility)
@@ -87,6 +88,13 @@ export class OpenClawStack extends Stack {
       managedPolicies,
     });
 
+    const apiKeyParam = StringParameter.fromStringParameterName(
+      this,
+      'OpenClawApiKeyParam',
+      apiKeyParamName
+    );
+    apiKeyParam.grantRead(role);
+
     // Determine AMI - Ubuntu 24.04 LTS
     const ami = MachineImage.lookup({
       name: 'ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*',
@@ -123,7 +131,16 @@ export class OpenClawStack extends Stack {
       'fi',
       '',
       '# Install required packages',
-      'apt-get install -y curl git python3 python3-pip jq wget snapd',
+      'apt-get install -y curl git python3 python3-pip jq wget snapd awscli',
+      '',
+      '# Load API key from SSM Parameter Store',
+      `export AWS_REGION="${Stack.of(this).region}"`,
+      `export AWS_DEFAULT_REGION="${Stack.of(this).region}"`,
+      `API_KEY_PARAM_NAME="${apiKeyParamName}"`,
+      'API_KEY="$(aws ssm get-parameter --with-decryption --name "$API_KEY_PARAM_NAME" --query Parameter.Value --output text || true)"',
+      'if [ -z "$API_KEY" ]; then',
+      '  echo "WARNING: API key not found in SSM Parameter Store"',
+      'fi',
       '',
       '# Install Docker',
       'curl -fsSL https://get.docker.com | sh',
@@ -177,10 +194,6 @@ export class OpenClawStack extends Stack {
       '# Install build-essential for Homebrew (as root)',
       'apt-get install -y build-essential',
       '',
-      // Set API key environment variable
-      `# Set API key environment variable`,
-      `echo "export ${apiKeyEnvVar}='${apiKey}'" >> /home/ubuntu/.bashrc`,
-      '',
       '# Enable systemd linger for ubuntu user (required for user services to run at boot)',
       'loginctl enable-linger ubuntu',
       '',
@@ -198,12 +211,12 @@ export class OpenClawStack extends Stack {
       // Run OpenClaw onboarding with appropriate API key
       '# Run OpenClaw onboarding as ubuntu user',
       'echo "Running OpenClaw onboarding..."',
-      `sudo -H -u ubuntu bash << 'ONBOARD_SCRIPT'`,
+      `sudo -H -u ubuntu API_KEY="$API_KEY" bash << 'ONBOARD_SCRIPT'`,
       'export HOME=/home/ubuntu',
       'export NVM_DIR="$HOME/.nvm"',
       '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
       'export XDG_RUNTIME_DIR=/run/user/1000',
-      `export ${apiKeyEnvVar}='${apiKey}'`,
+      `export ${apiKeyEnvVar}="$API_KEY"`,
       '',
       `openclaw onboard --non-interactive --accept-risk \\\n    --mode local \\\n    --auth-choice ${authChoiceFlag} \\\n    --${apiProvider} "$${apiKeyEnvVar}" \\\n    --gateway-port ${gatewayPort} \\\n    --gateway-bind loopback \\\n    --skip-daemon \\\n    --skip-skills || echo "WARNING: OpenClaw onboarding failed. Run openclaw onboard manually."`,
       'ONBOARD_SCRIPT',

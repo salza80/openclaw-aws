@@ -14,14 +14,52 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import prompts from 'prompts';
+import { config as loadEnv } from 'dotenv';
+import { PutParameterCommand } from '@aws-sdk/client-ssm';
+import { createSsmClient } from '../utils/aws-clients.js';
+import type { Provider } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+loadEnv({ path: path.join(process.cwd(), '.env') });
 
 interface DeployArgs {
   autoApprove?: boolean;
   name?: string;
   all?: boolean;
+}
+
+function getApiKeyEnvVar(provider: Provider): string {
+  return provider.toUpperCase().replace(/-/g, '_');
+}
+
+function getApiKeyParamName(configName: string): string {
+  return `/openclaw/${configName}/api-key`;
+}
+
+function resolveApiKey(provider: Provider): string | undefined {
+  const envVarName = getApiKeyEnvVar(provider);
+  return process.env[envVarName];
+}
+
+async function storeApiKey(
+  configName: string,
+  apiKey: string,
+  region: string
+): Promise<string> {
+  const client = createSsmClient(region);
+  const paramName = getApiKeyParamName(configName);
+
+  await client.send(new PutParameterCommand({
+    Name: paramName,
+    Value: apiKey,
+    Type: 'SecureString',
+    Overwrite: true,
+    Description: `OpenClaw API key for ${configName}`
+  }));
+
+  return paramName;
 }
 
 export const deployCommand: CommandModule<{}, DeployArgs> = {
@@ -59,14 +97,68 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           return;
         }
 
+        const toDeploy: Array<{
+          name: string;
+          config: Awaited<ReturnType<typeof buildCommandContext>>['config'];
+          apiProvider: Provider;
+          apiKey: string;
+        }> = [];
+        const alreadyDeployed: Array<{ name: string; status: string }> = [];
+        const missingKeys: Array<{ name: string; envVar: string }> = [];
+
+        for (const name of names) {
+          const ctx = await buildCommandContext({ name, requireCredentials: false });
+          const config = ctx.config;
+
+          try {
+            const status = await getStackStatus(config.stack.name, config.aws.region);
+            alreadyDeployed.push({ name, status: status.stackStatus });
+            continue;
+          } catch (error) {
+            if (!(error instanceof Error && error.message.includes('not found'))) {
+              throw error;
+            }
+          }
+
+          const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
+          const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
+          const apiKey = resolveApiKey(apiProvider);
+          if (!apiKey) {
+            missingKeys.push({ name, envVar: apiKeyEnvVar });
+            continue;
+          }
+
+          toDeploy.push({ name, config, apiProvider, apiKey });
+        }
+
+        if (missingKeys.length > 0) {
+          throw new AWSError(
+            `Missing API keys for ${missingKeys.length} config(s): ${missingKeys
+              .map(item => item.name)
+              .join(', ')}`,
+            [
+              'Set them in your shell or .env before deploying:',
+              ...missingKeys.map(item => `  ${item.name}: ${item.envVar}=your-api-key`)
+            ]
+          );
+        }
+
+        if (toDeploy.length === 0) {
+          logger.info('All configs are already deployed');
+          return;
+        }
+
         logger.title('OpenClaw AWS - Deploy All');
-        console.log(chalk.bold('Configs to deploy:') + ` (${names.length})`);
-        names.forEach((name) => console.log('  - ' + chalk.cyan(name)));
+        if (alreadyDeployed.length > 0) {
+          console.log(chalk.gray(`Skipping ${alreadyDeployed.length} already deployed config(s).`));
+        }
+        console.log(chalk.bold('Configs to deploy:') + ` (${toDeploy.length})`);
+        toDeploy.forEach((item) => console.log('  - ' + chalk.cyan(item.name)));
 
         const { confirmText } = await prompts({
           type: 'text',
           name: 'confirmText',
-          message: 'Type "DEPLOY ALL" to confirm:',
+          message: `This will deploy ${toDeploy.length} instance(s). Type "DEPLOY ALL" to confirm:`,
           validate: (value) => value === 'DEPLOY ALL' || 'You must type DEPLOY ALL to confirm'
         });
 
@@ -75,8 +167,8 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           return;
         }
 
-        for (const name of names) {
-          const ctx = await buildCommandContext({ name, requireCredentials: false });
+        for (const target of toDeploy) {
+          const ctx = await buildCommandContext({ name: target.name, requireCredentials: false });
           const config = ctx.config;
 
           logger.title('OpenClaw AWS - Deploy');
@@ -84,20 +176,6 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
 
           await validatePreDeploy(config);
           console.log('');
-
-          const statusSpinner = ora('Checking existing deployment...').start();
-          try {
-            const status = await getStackStatus(config.stack.name, config.aws.region);
-            statusSpinner.succeed('Existing deployment found');
-            logger.info(`Stack ${chalk.cyan(config.stack.name)} already exists (${status.stackStatus})`);
-            console.log('');
-            continue;
-          } catch (error) {
-            statusSpinner.stop();
-            if (!(error instanceof Error && error.message.includes('not found'))) {
-              throw error;
-            }
-          }
 
           // Show deployment plan
           logger.info('Deployment Plan:');
@@ -125,9 +203,11 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
             ]);
           }
 
+          const apiKeyParamName = await storeApiKey(ctx.name, target.apiKey, config.aws.region);
           const env = {
             ...ctx.awsEnv,
-            OPENCLAW_CONFIG_NAME: ctx.name
+            OPENCLAW_CONFIG_NAME: ctx.name,
+            OPENCLAW_API_KEY_PARAM: apiKeyParamName
           };
 
           spinner.start('Deploying stack... (this may take 3-5 minutes)');
@@ -175,6 +255,19 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
 
       // Run pre-deployment validation
       await validatePreDeploy(config);
+
+      const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
+      const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
+      const apiKey = resolveApiKey(apiProvider);
+      if (!apiKey) {
+        throw new AWSError(`Missing API key: ${apiKeyEnvVar}`, [
+          `Set it in your shell: export ${apiKeyEnvVar}=your-api-key`,
+          `Or add it to .env in your current directory: ${apiKeyEnvVar}=your-api-key`,
+          'Then rerun: openclaw-aws deploy'
+        ]);
+      }
+
+      const apiKeyParamName = await storeApiKey(ctx.name, apiKey, config.aws.region);
 
       // Check if stack already exists
       const statusSpinner = ora('Checking existing deployment...').start();
@@ -243,7 +336,8 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       // Set up environment
       const env = {
         ...ctx.awsEnv,
-        OPENCLAW_CONFIG_NAME: ctx.name
+        OPENCLAW_CONFIG_NAME: ctx.name,
+        OPENCLAW_API_KEY_PARAM: apiKeyParamName
       };
 
       // Deploy stack with retry logic

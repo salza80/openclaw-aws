@@ -72,7 +72,7 @@ describe('config-store', () => {
   it('throws when multiple configs exist and no current is set', () => {
     saveConfigByName(validConfig, 'alpha');
     saveConfigByName(validConfig, 'beta');
-    expect(() => resolveConfig()).toThrow('No deployment selected');
+    expect(() => resolveConfig()).toThrow('No config selected');
   });
 
   it('throws when current points to missing config', () => {
