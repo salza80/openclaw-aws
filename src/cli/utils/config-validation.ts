@@ -38,6 +38,13 @@ export function validateConfig(config: OpenClawConfig): void {
       errors.push('instance.name must be 63 characters or less');
     }
   }
+
+  // Validate network config
+  if (!config.network) {
+    errors.push('Missing network configuration');
+  } else if (typeof config.network.useDefaultVpc !== 'boolean') {
+    errors.push('network.useDefaultVpc must be a boolean');
+  }
   
   // Validate features
   if (!config.features) {
@@ -79,6 +86,7 @@ export function validateConfigStructure(obj: unknown): obj is OpenClawConfig {
     'version' in obj &&
     'aws' in obj &&
     'instance' in obj &&
+    'network' in obj &&
     'features' in obj &&
     'stack' in obj
   );
