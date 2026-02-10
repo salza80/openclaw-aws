@@ -9,10 +9,14 @@ import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
-import { listConfigNames, clearCurrentName, getCurrentName, setCurrentName } from '../utils/config-store.js';
+import { listConfigNames, clearCurrentName, getCurrentName } from '../utils/config-store.js';
+import { DeleteParameterCommand } from '@aws-sdk/client-ssm';
+import { createSsmClient } from '../utils/aws-clients.js';
+import { getApiKeyParamName } from '../utils/api-keys.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import type { Provider } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -22,6 +26,24 @@ interface DestroyArgs {
   deleteConfig?: boolean;
   name?: string;
   all?: boolean;
+}
+
+async function deleteApiKeyParam(
+  configName: string,
+  provider: Provider,
+  region: string
+): Promise<void> {
+  const client = createSsmClient(region);
+  const paramName = getApiKeyParamName(configName, provider);
+  try {
+    await client.send(new DeleteParameterCommand({ Name: paramName }));
+    logger.info(`Deleted SSM parameter: ${paramName}`);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'ParameterNotFound') {
+      return;
+    }
+    logger.warn(`Failed to delete SSM parameter: ${paramName}`);
+  }
 }
 
 export const destroyCommand: CommandModule<{}, DestroyArgs> = {
@@ -79,6 +101,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         for (const name of names) {
           const ctx = await buildCommandContext({ name });
           const config = ctx.config;
+          const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
 
           logger.title('OpenClaw AWS - Destroy');
           logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
@@ -95,6 +118,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
           if (!stackExists) {
             logger.info('No resources to delete');
+            await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
             console.log('');
             continue;
           }
@@ -118,6 +142,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             destroySpinner.succeed('Stack destroyed successfully');
             logger.success('All resources removed');
             console.log('\nTotal cost: $0/month');
+            await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
 
           } catch {
             destroySpinner.fail('Destruction failed');
@@ -168,6 +193,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       // Load configuration
       const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
+      const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
       
       logger.title('OpenClaw AWS - Destroy');
       logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
@@ -191,6 +217,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         console.log('\n' + chalk.bold('Next steps:'));
         console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
         console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
+        await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
         if (argv.deleteConfig) {
           const configPath = getConfigPathByName(ctx.name);
           if (fs.existsSync(configPath)) {
@@ -276,6 +303,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         destroySpinner.succeed('Stack destroyed successfully');
         logger.success('All resources removed');
         console.log('\nTotal cost: $0/month');
+        await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
 
         // Ask about config file
         if (argv.deleteConfig) {

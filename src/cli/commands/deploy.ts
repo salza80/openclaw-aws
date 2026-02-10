@@ -18,6 +18,7 @@ import { config as loadEnv } from 'dotenv';
 import { PutParameterCommand } from '@aws-sdk/client-ssm';
 import { createSsmClient } from '../utils/aws-clients.js';
 import type { Provider } from '../types/index.js';
+import { getApiKeyEnvVar, getApiKeyParamName, resolveApiKey } from '../utils/api-keys.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,33 +31,21 @@ interface DeployArgs {
   all?: boolean;
 }
 
-function getApiKeyEnvVar(provider: Provider): string {
-  return provider.toUpperCase().replace(/-/g, '_');
-}
-
-function getApiKeyParamName(configName: string): string {
-  return `/openclaw/${configName}/api-key`;
-}
-
-function resolveApiKey(provider: Provider): string | undefined {
-  const envVarName = getApiKeyEnvVar(provider);
-  return process.env[envVarName];
-}
-
 async function storeApiKey(
   configName: string,
+  provider: Provider,
   apiKey: string,
   region: string
 ): Promise<string> {
   const client = createSsmClient(region);
-  const paramName = getApiKeyParamName(configName);
+  const paramName = getApiKeyParamName(configName, provider);
 
   await client.send(new PutParameterCommand({
     Name: paramName,
     Value: apiKey,
     Type: 'SecureString',
     Overwrite: true,
-    Description: `OpenClaw API key for ${configName}`
+    Description: `OpenClaw API key for ${configName} (${provider})`
   }));
 
   return paramName;
@@ -203,7 +192,12 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
             ]);
           }
 
-          const apiKeyParamName = await storeApiKey(ctx.name, target.apiKey, config.aws.region);
+          const apiKeyParamName = await storeApiKey(
+            ctx.name,
+            target.apiProvider,
+            target.apiKey,
+            config.aws.region
+          );
           const env = {
             ...ctx.awsEnv,
             OPENCLAW_CONFIG_NAME: ctx.name,
@@ -267,7 +261,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         ]);
       }
 
-      const apiKeyParamName = await storeApiKey(ctx.name, apiKey, config.aws.region);
+      const apiKeyParamName = await storeApiKey(ctx.name, apiProvider, apiKey, config.aws.region);
 
       // Check if stack already exists
       const statusSpinner = ora('Checking existing deployment...').start();

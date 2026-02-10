@@ -14,8 +14,7 @@ import {
   Vpc,
   IVpc,
 } from 'aws-cdk-lib/aws-ec2';
-import { Role, ServicePrincipal, ManagedPolicy } from 'aws-cdk-lib/aws-iam';
-import { StringParameter } from 'aws-cdk-lib/aws-ssm';
+import { Role, ServicePrincipal, ManagedPolicy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import * as crypto from 'crypto';
 import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
@@ -88,12 +87,15 @@ export class OpenClawStack extends Stack {
       managedPolicies,
     });
 
-    const apiKeyParam = StringParameter.fromStringParameterName(
-      this,
-      'OpenClawApiKeyParam',
-      apiKeyParamName
-    );
-    apiKeyParam.grantRead(role);
+    const apiKeyParamArn = Stack.of(this).formatArn({
+      service: 'ssm',
+      resource: 'parameter',
+      resourceName: apiKeyParamName.replace(/^\/+/, ''),
+    });
+    role.addToPolicy(new PolicyStatement({
+      actions: ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParameterHistory'],
+      resources: [apiKeyParamArn],
+    }));
 
     // Determine AMI - Ubuntu 24.04 LTS
     const ami = MachineImage.lookup({
@@ -131,7 +133,20 @@ export class OpenClawStack extends Stack {
       'fi',
       '',
       '# Install required packages',
-      'apt-get install -y curl git python3 python3-pip jq wget snapd awscli',
+      'apt-get install -y curl git python3 python3-pip jq wget snapd unzip',
+      '',
+      '# Install AWS CLI v2 (apt package is not available on Ubuntu 24.04)',
+      'if ! command -v aws >/dev/null 2>&1; then',
+      '  ARCH="$(uname -m)"',
+      '  if [ "$ARCH" = "aarch64" ]; then',
+      '    AWSCLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"',
+      '  else',
+      '    AWSCLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"',
+      '  fi',
+      '  curl -fsSL "$AWSCLI_URL" -o /tmp/awscliv2.zip',
+      '  unzip -q /tmp/awscliv2.zip -d /tmp',
+      '  /tmp/aws/install || /tmp/aws/install --update',
+      'fi',
       '',
       '# Load API key from SSM Parameter Store',
       `export AWS_REGION="${Stack.of(this).region}"`,
