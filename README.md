@@ -32,6 +32,8 @@ openclaw-aws dashboard
 openclaw-aws connect
 ```
 
+See the OpenClaw docs for ongoing configuration and usage guidance for your bot: [OpenClaw Documentation](https://docs.openclaw.ai/)
+
 Managing multiple bots / instances:
 
 ```bash
