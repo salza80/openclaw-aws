@@ -111,8 +111,8 @@ export const readyCommand: CommandModule<{}, ReadyArgs> = {
           console.log(chalk.bold('Marker:') + ' Installation complete');
           
           console.log('\n' + chalk.bold('Next steps:'));
-          console.log('  ' + chalk.cyan('1.') + ' Run: ' + chalk.yellow('openclaw-aws onboard'));
-          console.log('  ' + chalk.cyan('2.') + ' Or connect: ' + chalk.yellow('openclaw-aws connect'));
+          console.log('  ' + chalk.cyan('1.') + ' Connect to your instance: ' + chalk.yellow('openclaw-aws connect'));
+          console.log('  ' + chalk.cyan('2.') + ' Check status: ' + chalk.yellow('openclaw-aws status'));
           
           return;
         } else {
