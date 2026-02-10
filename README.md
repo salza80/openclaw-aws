@@ -1,6 +1,6 @@
 # openclaw-aws
 
-OpenClaw AWS is a CLI that makes it simple provisions and manage OpenClaw bots on AWS. It creates a minimal Ubuntu EC2 setup with secure SSM-only access.
+OpenClaw AWS is a CLI that makes it simple to provision and manage OpenClaw bots on AWS. It creates a minimal Ubuntu EC2 setup with secure SSM-only access.
 
 ## Quick Start
 
@@ -8,28 +8,28 @@ OpenClaw AWS is a CLI that makes it simple provisions and manage OpenClaw bots o
 # Create a dedicated folder (recommended)
 mkdir my-openclaw-bot
 cd my-openclaw-bot
-npm install @salza80/openclaw-aws
 
 # Initialize your bot with interactive prompts
 # This will generate a config file
-openclaw-aws init
+npx @salza80/openclaw-aws init
 
-# Deploy. -- Thats it!
-openclaw-aws deploy
+# Deploy. -- That's it!
+npx @salza80/openclaw-aws deploy
 
-# Wait for deploy to finished. View the status of your bot
-
-openclaw-aws status
+# Wait for deploy to finish. View the status of your bot
+npx @salza80/openclaw-aws status
 ```
+
+If you didn’t install globally, prefix commands with `npx @salza80/openclaw-aws`.
 
 To access your bot:
 ```bash
 # Open the dashboard to view in your browser (port forwarded via secure SSM - not public access)
 openclaw-aws dashboard
-
-# Or connect to the intance via SSM - for full terminal access
-openclaw-aws connect
 # Opens http://localhost:18789 in your browser - short delay before it works - refresh browser after 5 seconds
+
+# Or connect to the instance via SSM - for full terminal access
+openclaw-aws connect
 ```
 
 Managing multiple bots / instances:
@@ -43,22 +43,22 @@ openclaw-aws deploy
 # List all bot configs
 openclaw-aws list
 
-# View status of current selected config
-openclaw-aws status --all
+# View status of the currently selected config
+openclaw-aws status
 # View status of all configs
 openclaw-aws status --all
 
-# See current selected config.
-# This is the config commands with be defaulted to.
+# See the currently selected config.
+# Commands default to this config.
 openclaw-aws current
 
 # Select another config
-openclase-aws use <name>
+openclaw-aws use <name>
 
-# run any command against a specific config or all configs with --name <name> or --all
+# Run any command against a specific config or all configs with --name <name> or --all
 
 # get help with commands
-openclaw-aws help
+openclaw-aws --help
 ```
 
 ## Prerequisites
@@ -68,13 +68,81 @@ openclaw-aws help
   - Install AWS CLI v2: [AWS CLI install guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
   - Configure SSO: [AWS CLI SSO setup guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)
 
-Check deployment and instance status.
+## Commands
 
-### `Commands`
+### `openclaw-aws init`
+
+Interactive setup wizard to create a config.
+
 **Example:**
 ```bash
-openclaw-aws status --name my-bot
+openclaw-aws init
+```
+
+### `openclaw-aws deploy`
+
+Deploy infrastructure to AWS.
+
+**Example:**
+```bash
+openclaw-aws deploy
+openclaw-aws deploy --name my-bot
+openclaw-aws deploy --all
+```
+
+### `openclaw-aws status`
+
+Check deployment and instance status.
+
+**Example:**
+```bash
+openclaw-aws status
 openclaw-aws status --all
+```
+
+### `openclaw-aws dashboard`
+
+Forward port 18789 to access the OpenClaw dashboard locally.
+
+**Example:**
+```bash
+openclaw-aws dashboard
+```
+
+### `openclaw-aws connect`
+
+Connect to your EC2 instance via SSM.
+
+**Example:**
+```bash
+openclaw-aws connect
+```
+
+### `openclaw-aws start`
+
+Start a stopped instance.
+
+**Example:**
+```bash
+openclaw-aws start
+```
+
+### `openclaw-aws stop`
+
+Stop a running instance to save costs.
+
+**Example:**
+```bash
+openclaw-aws stop
+```
+
+### `openclaw-aws restart`
+
+Reboot the instance.
+
+**Example:**
+```bash
+openclaw-aws restart
 ```
 
 ### `openclaw-aws outputs`
@@ -134,7 +202,7 @@ openclaw-aws use my-bot
 
 ## Configuration
 
-Configuration is created with init command, and stored per config in `.openclaw-aws/configs/<name>.json`.
+Configuration is created with the `init` command, and stored per config in `.openclaw-aws/configs/<name>.json`.
 The current selection is stored in `.openclaw-aws/current.json`.
 
 **Example configuration:**
@@ -240,7 +308,7 @@ Ensure SSM plugin is installed and instance is ready:
 openclaw-aws status
 ```
 
-Restart instance - if gateway or SSM has crashed
+Restart instance if the gateway or SSM has crashed:
 ```bash
 openclaw-aws restart
 ```
