@@ -5,15 +5,15 @@ import { getCurrentName } from '../utils/config-store.js';
 
 export const currentCommand: CommandModule = {
   command: 'current',
-  describe: 'Show current deployment',
+  describe: 'Show current config',
   handler: async () => {
     const current = getCurrentName();
     if (!current) {
-      logger.info('No current deployment selected');
+      logger.info('No current config selected');
       console.log('\nUse: ' + chalk.cyan('openclaw-aws use <name>'));
       return;
     }
-    logger.info(`Current deployment: ${chalk.cyan(current)}`);
+    logger.info(`Current config: ${chalk.cyan(current)}`);
   },
 };
 

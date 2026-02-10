@@ -9,24 +9,24 @@ interface UseArgs {
 
 export const useCommand: CommandModule<{}, UseArgs> = {
   command: 'use <name>',
-  describe: 'Select a deployment',
+  describe: 'Select a config',
   builder: (yargs) => {
     return yargs.positional('name', {
       type: 'string',
-      describe: 'Deployment name',
+      describe: 'Config name',
       demandOption: true,
     });
   },
   handler: async (argv) => {
     const names = listConfigNames();
     if (!names.includes(argv.name)) {
-      logger.error(`Deployment not found: ${argv.name}`);
+      logger.error(`Config not found: ${argv.name}`);
       console.log('\nCreate it first: ' + chalk.cyan(`openclaw-aws init --name ${argv.name}`));
       return;
     }
 
     setCurrentName(argv.name);
-    logger.success(`Current deployment set to ${chalk.cyan(argv.name)}`);
+    logger.success(`Current config set to ${chalk.cyan(argv.name)}`);
   },
 };
 

@@ -218,9 +218,9 @@ openclaw-aws outputs --name my-bot
 Delete all AWS resources.
 
 **Options:**
-- `--name <name>` - Deployment name
+- `--name <name>` - Config name
 - `--force` - Skip confirmation
-- `--keep-config` - Keep configuration file
+- `--delete-config` - Delete configuration file
 
 **Example:**
 ```bash
@@ -241,7 +241,7 @@ openclaw-aws list
 
 ### `openclaw-aws current`
 
-Show the current deployment.
+Show the current config.
 
 **Example:**
 ```bash
@@ -250,7 +250,7 @@ openclaw-aws current
 
 ### `openclaw-aws use`
 
-Select a deployment.
+Select a config.
 
 **Example:**
 ```bash
@@ -259,14 +259,13 @@ openclaw-aws use my-bot
 
 ## Configuration
 
-Configuration is stored per deployment in `.openclaw-aws/configs/<name>.json`.
+Configuration is stored per config in `.openclaw-aws/configs/<name>.json`.
 The current selection is stored in `.openclaw-aws/current.json`.
 
 **Example configuration:**
 ```json
 {
   "version": "1.0",
-  "projectName": "my-openclaw-bot",
   "aws": {
     "region": "us-east-1",
     "profile": "default"

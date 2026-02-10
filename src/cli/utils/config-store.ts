@@ -81,7 +81,7 @@ export function resolveConfig(options: ConfigResolveOptions = {}): ResolvedConfi
   }
 
   if (!name) {
-    throw new ConfigError('No deployment selected', [
+    throw new ConfigError('No config selected', [
       'List configs: openclaw-aws list',
       'Select one: openclaw-aws use <name>',
       'Create one: openclaw-aws init --name <name>'

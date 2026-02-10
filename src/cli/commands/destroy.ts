@@ -46,7 +46,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       })
       .option('all', {
         type: 'boolean',
-        describe: 'Destroy all deployments',
+        describe: 'Destroy all configs',
         default: false,
       });
   },
@@ -56,7 +56,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       if (argv.all) {
         const names = listConfigNames();
         if (names.length === 0) {
-          logger.info('No deployments found');
+          logger.info('No configs found');
           console.log('\nRun: ' + chalk.cyan('openclaw-aws init --name <name>'));
           return;
         }
@@ -144,7 +144,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           const { deleteConfigs } = await prompts({
             type: 'confirm',
             name: 'deleteConfigs',
-            message: 'Delete configuration files for all deployments?',
+            message: 'Delete configuration files for all configs?',
             initial: false
           });
 
