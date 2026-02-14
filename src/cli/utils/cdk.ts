@@ -42,7 +42,7 @@ export function validateCDKAvailable(): void {
   // For local CDK, we already checked it exists in getCDKBinary()
   if (!fs.existsSync(cdkPath)) {
     throw new AWSError('AWS CDK CLI not found', [
-      'Reinstall this package: npm install -g openclaw-aws',
+      'Reinstall this package: npm install -g @salza80/openclaw-aws',
       'Or install CDK globally: npm install -g aws-cdk'
     ]);
   }
