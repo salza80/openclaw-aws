@@ -226,7 +226,7 @@ The current selection is stored in `.openclaw-aws/current.json`.
     "cloudWatchLogs": true
   },
   "openclaw": {
-    "apiProvider": "anthropic"
+    "apiProvider": "anthropic-api-key"
   },
   "stack": {
     "name": "OpenclawStack-my-bot"
