@@ -18,7 +18,8 @@ import { config as loadEnv } from 'dotenv';
 import { PutParameterCommand } from '@aws-sdk/client-ssm';
 import { createSsmClient } from '../utils/aws-clients.js';
 import type { Provider } from '../types/index.js';
-import { getApiKeyEnvVar, getApiKeyParamName, resolveApiKey } from '../utils/api-keys.js';
+import { getApiKeyEnvVar, getApiKeyParamName, getGatewayTokenParamName, resolveApiKey } from '../utils/api-keys.js';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,6 +47,25 @@ async function storeApiKey(
     Type: 'SecureString',
     Overwrite: true,
     Description: `OpenClaw API key for ${configName} (${provider})`
+  }));
+
+  return paramName;
+}
+
+async function storeGatewayToken(
+  configName: string,
+  token: string,
+  region: string
+): Promise<string> {
+  const client = createSsmClient(region);
+  const paramName = getGatewayTokenParamName(configName);
+
+  await client.send(new PutParameterCommand({
+    Name: paramName,
+    Value: token,
+    Type: 'SecureString',
+    Overwrite: true,
+    Description: `OpenClaw gateway token for ${configName}`
   }));
 
   return paramName;
@@ -192,10 +212,15 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
             ]);
           }
 
-          const apiKeyParamName = await storeApiKey(
+          await storeApiKey(
             ctx.name,
             target.apiProvider,
             target.apiKey,
+            config.aws.region
+          );
+          await storeGatewayToken(
+            ctx.name,
+            crypto.randomBytes(24).toString('hex'),
             config.aws.region
           );
           const env = {
@@ -249,19 +274,6 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       // Run pre-deployment validation
       await validatePreDeploy(config);
 
-      const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
-      const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
-      const apiKey = resolveApiKey(apiProvider);
-      if (!apiKey) {
-        throw new AWSError(`Missing API key: ${apiKeyEnvVar}`, [
-          `Set it in your shell: export ${apiKeyEnvVar}=your-api-key`,
-          `Or add it to .env in your current directory: ${apiKeyEnvVar}=your-api-key`,
-          'Then rerun: openclaw-aws deploy'
-        ]);
-      }
-
-      const apiKeyParamName = await storeApiKey(ctx.name, apiProvider, apiKey, config.aws.region);
-
       // Check if stack already exists
       const statusSpinner = ora('Checking existing deployment...').start();
       try {
@@ -281,6 +293,17 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       }
 
       console.log(''); // Empty line after validation
+
+      const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
+      const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
+      const apiKey = resolveApiKey(apiProvider);
+      if (!apiKey) {
+        throw new AWSError(`Missing API key: ${apiKeyEnvVar}`, [
+          `Set it in your shell: export ${apiKeyEnvVar}=your-api-key`,
+          `Or add it to .env in your current directory: ${apiKeyEnvVar}=your-api-key`,
+          'Then rerun: openclaw-aws deploy'
+        ]);
+      }
 
       // Show deployment plan
       logger.info('Deployment Plan:');
@@ -306,6 +329,13 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           return;
         }
       }
+
+      await storeApiKey(ctx.name, apiProvider, apiKey, config.aws.region);
+      await storeGatewayToken(
+        ctx.name,
+        crypto.randomBytes(24).toString('hex'),
+        config.aws.region
+      );
 
       // Get CDK binary (local from node_modules or global fallback)
       const cdkBinary = getCDKBinary();

@@ -2,7 +2,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { OpenClawStack, OpenClawStackProps } from './stack.js';
 import { loadConfigByName } from '../cli/utils/config.js';
-import { getApiKeyParamName } from '../cli/utils/api-keys.js';
+import { getApiKeyParamName, getGatewayTokenParamName } from '../cli/utils/api-keys.js';
 import type { StackConfig } from '../cli/types/index.js';
 
 // Load configuration
@@ -25,6 +25,7 @@ try {
 const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key'; // Default to Anthropic if not set
 
 const apiKeyParamName = getApiKeyParamName(configName, apiProvider);
+const gatewayTokenParamName = getGatewayTokenParamName(configName);
 
 // Parse instance type
 function parseInstanceType(type: string): { class: string; size: string } {
@@ -55,6 +56,7 @@ const stackProps: OpenClawStackProps = {
   config: stackConfig,
   apiProvider,
   apiKeyParamName,
+  gatewayTokenParamName,
   useDefaultVpc: config.network.useDefaultVpc,
   env: {
     region: config.aws.region,

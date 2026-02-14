@@ -9,10 +9,10 @@ import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
-import { listConfigNames, clearCurrentName, getCurrentName } from '../utils/config-store.js';
+import { listConfigNames, clearCurrentName, getCurrentName, setCurrentName } from '../utils/config-store.js';
 import { DeleteParameterCommand } from '@aws-sdk/client-ssm';
 import { createSsmClient } from '../utils/aws-clients.js';
-import { getApiKeyParamName } from '../utils/api-keys.js';
+import { getApiKeyParamName, getGatewayTokenParamName } from '../utils/api-keys.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -43,6 +43,37 @@ async function deleteApiKeyParam(
       return;
     }
     logger.warn(`Failed to delete SSM parameter: ${paramName}`);
+  }
+}
+
+async function deleteGatewayTokenParam(
+  configName: string,
+  region: string
+): Promise<void> {
+  const client = createSsmClient(region);
+  const paramName = getGatewayTokenParamName(configName);
+  try {
+    await client.send(new DeleteParameterCommand({ Name: paramName }));
+    logger.info(`Deleted SSM parameter: ${paramName}`);
+  } catch (error) {
+    if (error instanceof Error && error.name === 'ParameterNotFound') {
+      return;
+    }
+    logger.warn(`Failed to delete SSM parameter: ${paramName}`);
+  }
+}
+
+function updateCurrentAfterDeletion(deletedNames: string[]): void {
+  const current = getCurrentName();
+  if (!current || !deletedNames.includes(current)) return;
+
+  const remaining = listConfigNames();
+  if (remaining.length > 0) {
+    setCurrentName(remaining[0]);
+    logger.info(`Current config set to ${remaining[0]}`);
+  } else {
+    clearCurrentName();
+    logger.info('No configs remaining. Current config cleared');
   }
 }
 
@@ -119,6 +150,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           if (!stackExists) {
             logger.info('No resources to delete');
             await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
+            await deleteGatewayTokenParam(ctx.name, config.aws.region);
             console.log('');
             continue;
           }
@@ -143,6 +175,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             logger.success('All resources removed');
             console.log('\nTotal cost: $0/month');
             await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
+            await deleteGatewayTokenParam(ctx.name, config.aws.region);
 
           } catch {
             destroySpinner.fail('Destruction failed');
@@ -164,7 +197,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
               logger.success(`Configuration deleted: ${name}`);
             }
           }
-          clearCurrentName();
+          updateCurrentAfterDeletion(names);
         } else {
           const { deleteConfigs } = await prompts({
             type: 'confirm',
@@ -181,7 +214,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
                 logger.success(`Configuration deleted: ${name}`);
               }
             }
-            clearCurrentName();
+            updateCurrentAfterDeletion(names);
           } else {
             logger.info('Configurations kept');
           }
@@ -218,15 +251,14 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
         console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
         await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
+        await deleteGatewayTokenParam(ctx.name, config.aws.region);
         if (argv.deleteConfig) {
           const configPath = getConfigPathByName(ctx.name);
           if (fs.existsSync(configPath)) {
             fs.unlinkSync(configPath);
             logger.success('Configuration file deleted');
           }
-          if (getCurrentName() === ctx.name) {
-            clearCurrentName();
-          }
+          updateCurrentAfterDeletion([ctx.name]);
         } else {
           const { deleteConfig } = await prompts({
             type: 'confirm',
@@ -241,9 +273,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
               fs.unlinkSync(configPath);
               logger.success('Configuration file deleted');
             }
-            if (getCurrentName() === ctx.name) {
-              clearCurrentName();
-            }
+            updateCurrentAfterDeletion([ctx.name]);
           } else {
             logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
           }
@@ -304,6 +334,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         logger.success('All resources removed');
         console.log('\nTotal cost: $0/month');
         await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
+        await deleteGatewayTokenParam(ctx.name, config.aws.region);
 
         // Ask about config file
         if (argv.deleteConfig) {
@@ -312,6 +343,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             fs.unlinkSync(configPath);
             logger.success('Configuration file deleted');
           }
+          updateCurrentAfterDeletion([ctx.name]);
         } else {
           const { deleteConfig } = await prompts({
             type: 'confirm',
@@ -326,6 +358,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
               fs.unlinkSync(configPath);
               logger.success('Configuration file deleted');
             }
+            updateCurrentAfterDeletion([ctx.name]);
           } else {
             logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
           }

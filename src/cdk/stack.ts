@@ -15,7 +15,6 @@ import {
   IVpc,
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
-import * as crypto from 'crypto';
 import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
 
@@ -23,6 +22,7 @@ export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
   apiProvider: Provider;
   apiKeyParamName: string;
+  gatewayTokenParamName: string;
   useDefaultVpc: boolean;
 }
 
@@ -30,15 +30,8 @@ export class OpenClawStack extends Stack {
   constructor(scope: Construct, id: string, props: OpenClawStackProps) {
     super(scope, id, props);
 
-    const { config, apiProvider, apiKeyParamName } = props;
+    const { config, apiProvider, apiKeyParamName, gatewayTokenParamName } = props;
     const gatewayPort = 18789;
-
-    // Generate gateway token (deterministic from stack ID for reproducibility)
-    const gatewayToken = crypto
-      .createHash('sha256')
-      .update(`${Stack.of(this).stackId}-${Stack.of(this).region}`)
-      .digest('hex')
-      .substring(0, 48);
 
     // VPC Configuration - Use default or create new based on config
     let vpc: IVpc;
@@ -92,9 +85,14 @@ export class OpenClawStack extends Stack {
       resource: 'parameter',
       resourceName: apiKeyParamName.replace(/^\/+/, ''),
     });
+    const gatewayTokenParamArn = Stack.of(this).formatArn({
+      service: 'ssm',
+      resource: 'parameter',
+      resourceName: gatewayTokenParamName.replace(/^\/+/, ''),
+    });
     role.addToPolicy(new PolicyStatement({
       actions: ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParameterHistory'],
-      resources: [apiKeyParamArn],
+      resources: [apiKeyParamArn, gatewayTokenParamArn],
     }));
 
     // Determine AMI - Ubuntu 24.04 LTS
@@ -155,6 +153,13 @@ export class OpenClawStack extends Stack {
       'API_KEY="$(aws ssm get-parameter --with-decryption --name "$API_KEY_PARAM_NAME" --query Parameter.Value --output text || true)"',
       'if [ -z "$API_KEY" ]; then',
       '  echo "WARNING: API key not found in SSM Parameter Store"',
+      'fi',
+      '',
+      '# Load gateway token from SSM Parameter Store',
+      `GATEWAY_TOKEN_PARAM_NAME="${gatewayTokenParamName}"`,
+      'GATEWAY_TOKEN="$(aws ssm get-parameter --with-decryption --name "$GATEWAY_TOKEN_PARAM_NAME" --query Parameter.Value --output text || true)"',
+      'if [ -z "$GATEWAY_TOKEN" ]; then',
+      '  echo "WARNING: Gateway token not found in SSM Parameter Store"',
       'fi',
       '',
       '# Install Docker',
@@ -253,7 +258,7 @@ export class OpenClawStack extends Stack {
       '',
       '# Configure gateway with authentication token',
       'echo "Configuring gateway..."',
-      `sudo -H -u ubuntu GATEWAY_TOKEN="${gatewayToken}" bash << 'CONFIG_SCRIPT'`,
+      `sudo -H -u ubuntu GATEWAY_TOKEN="$GATEWAY_TOKEN" bash << 'CONFIG_SCRIPT'`,
       'export HOME=/home/ubuntu',
       'export NVM_DIR="$HOME/.nvm"',
       '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
@@ -264,7 +269,7 @@ export class OpenClawStack extends Stack {
       'if [ -f "$config_path" ]; then',
       '    # Update the gateway token using sed',
       `    sed -i 's/"token": "[^"]*"/"token": "'"$GATEWAY_TOKEN"'"/' "$config_path"`,
-      '    echo "Configured gateway with authentication token: $GATEWAY_TOKEN"',
+      '    echo "Configured gateway with authentication token"',
       '    ',
       '    # Start the daemon with the correct token',
       '    openclaw daemon start || echo "WARNING: Could not start daemon"',
@@ -290,9 +295,9 @@ export class OpenClawStack extends Stack {
       'touch /tmp/openclaw-setup-complete',
       '',
       'echo "OpenClaw setup complete!"',
-      `echo "Gateway Token: ${gatewayToken}"`,
+      `echo "Gateway Token stored in SSM Parameter Store"`,
       `echo "Or use SSM: aws ssm start-session --target <instance-id>"`,
-      `echo "Dashboard: http://localhost:${gatewayPort}/?token=${gatewayToken} (via port forward)"`
+      `echo "Dashboard: http://localhost:${gatewayPort} (via port forward)"`
     );
 
     // Parse instance type from config
@@ -340,11 +345,6 @@ export class OpenClawStack extends Stack {
       description: 'EC2 Instance Name',
     });
 
-    new CfnOutput(this, 'GatewayToken', {
-      value: gatewayToken,
-      description: 'OpenClaw Gateway Authentication Token',
-    });
-
     new CfnOutput(this, 'GatewayPort', {
       value: gatewayPort.toString(),
       description: 'OpenClaw Gateway Port',
@@ -374,7 +374,8 @@ export class OpenClawStack extends Stack {
         '',
         '4. Access dashboard via SSM port forward:',
         `   aws ssm start-session --target ${instance.instanceId} --document-name AWS-StartPortForwardingSession --parameters "portNumber=${gatewayPort},localPortNumber=${gatewayPort}"`,
-        `   Then open: http://localhost:${gatewayPort}/?token=${gatewayToken}`,
+        `   Then open: http://localhost:${gatewayPort}`,
+        '   Tip: Use openclaw-aws dashboard to include the token automatically.',
       ].join('\n'),
       description: 'Post-deployment instructions',
     });

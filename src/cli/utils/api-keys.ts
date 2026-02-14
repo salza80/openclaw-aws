@@ -12,3 +12,7 @@ export function resolveApiKey(provider: Provider): string | undefined {
   const envVarName = getApiKeyEnvVar(provider);
   return process.env[envVarName];
 }
+
+export function getGatewayTokenParamName(configName: string): string {
+  return `/openclaw/${configName}/gateway-token`;
+}

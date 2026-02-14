@@ -5,10 +5,13 @@ import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
 import { loadOutputsByName } from '../utils/config.js';
 import { buildCommandContext } from '../utils/context.js';
-import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
+import { resolveInstanceId, checkSSMStatus, checkGatewayStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
 import { validateSSMPlugin } from '../utils/aws-validation.js';
 import net from 'net';
+import { GetParameterCommand } from '@aws-sdk/client-ssm';
+import { createSsmClient } from '../utils/aws-clients.js';
+import { getGatewayTokenParamName } from '../utils/api-keys.js';
 
 interface DashboardArgs {
   name?: string;
@@ -43,6 +46,23 @@ async function waitForLocalPort(
   }
 
   return false;
+}
+
+async function fetchGatewayToken(
+  configName: string,
+  region: string
+): Promise<string | undefined> {
+  const client = createSsmClient(region);
+  const paramName = getGatewayTokenParamName(configName);
+  try {
+    const response = await client.send(new GetParameterCommand({
+      Name: paramName,
+      WithDecryption: true,
+    }));
+    return response.Parameter?.Value;
+  } catch {
+    return undefined;
+  }
 }
 
 export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
@@ -98,6 +118,18 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       }
       spinner.succeed('Instance ready');
 
+      spinner.start('Checking gateway status...');
+      const gatewayStatus = await checkGatewayStatus(instanceId, config.aws.region);
+      if (!gatewayStatus.running) {
+        spinner.fail('Gateway not running');
+        throw new AWSError('OpenClaw gateway is not running', [
+          'Run: openclaw-aws status (to check gateway status)',
+          'Run: openclaw-aws connect (to restart the gateway)',
+          'If the instance is new, wait a few minutes and try again'
+        ]);
+      }
+      spinner.succeed('Gateway running');
+
       // Set up environment
       const env = ctx.awsEnv;
 
@@ -129,7 +161,10 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
         GatewayToken?: string;
         GatewayPort?: string;
       };
-      const gatewayToken = stackOutputs.GatewayToken;
+      let gatewayToken = stackOutputs.GatewayToken;
+      if (!gatewayToken) {
+        gatewayToken = await fetchGatewayToken(ctx.name, config.aws.region);
+      }
       const gatewayPort = stackOutputs.GatewayPort || '18789';
       const gatewayPortNumber = parseInt(gatewayPort, 10) || 18789;
       
