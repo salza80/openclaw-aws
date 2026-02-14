@@ -11,6 +11,7 @@ import connectCommand from './commands/connect.js';
 import dashboardCommand from './commands/dashboard.js';
 import statusCommand from './commands/status.js';
 import outputsCommand from './commands/outputs.js';
+import logsCommand from './commands/logs.js';
 import stopCommand from './commands/stop.js';
 import startCommand from './commands/start.js';
 import restartCommand from './commands/restart.js';
@@ -29,6 +30,7 @@ yargs(hideBin(process.argv))
   .command(connectCommand)
   .command(dashboardCommand)
   .command(outputsCommand)
+  .command(logsCommand)
   .command(stopCommand)
   .command(startCommand)
   .command(restartCommand)
