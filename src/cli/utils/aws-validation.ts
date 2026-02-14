@@ -241,7 +241,7 @@ export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
           spinner.fail('Bootstrap verification failed');
           throw new ValidationError('CDK bootstrap verification failed', [
             `Expected version 30+, got ${verifyStatus.version}`,
-            'Try running manually: npx cdk bootstrap aws://${credentials.account}/${config.aws.region}',
+            `Try running manually: npx cdk bootstrap aws://${credentials.account}/${config.aws.region}`,
           ]);
         }
         
