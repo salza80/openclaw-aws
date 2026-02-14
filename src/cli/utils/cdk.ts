@@ -14,8 +14,16 @@ const __dirname = path.dirname(__filename);
 export function getCDKBinary(): string {
   // Try to find local CDK binary
   // From src/cli/utils/ go up to package root, then to node_modules/.bin/cdk
-  const localCdkPath = path.resolve(__dirname, '../../../node_modules/.bin/cdk');
-  
+  const binDir = path.resolve(__dirname, '../../../node_modules/.bin');
+  const localCdkPath = path.join(binDir, 'cdk');
+  const localCdkCmd = path.join(binDir, 'cdk.cmd');
+  const localCdkPs1 = path.join(binDir, 'cdk.ps1');
+
+  if (process.platform === 'win32') {
+    if (fs.existsSync(localCdkCmd)) return localCdkCmd;
+    if (fs.existsSync(localCdkPs1)) return localCdkPs1;
+  }
+
   if (fs.existsSync(localCdkPath)) {
     return localCdkPath;
   }
