@@ -1,9 +1,12 @@
 {
   "version": "1.0",
-  "projectName": "my-openclaw-bot",
   "aws": {
     "region": "us-east-1",
     "profile": "default"
+  },
+  "instance": {
+    "type": "t3.micro",
+    "name": "openclaw-my-bot"
   },
   "network": {
     "useDefaultVpc": true
@@ -15,6 +18,6 @@
     "name": "OpenclawStack-my-bot"
   },
   "openclaw": {
-    "apiProvider": "anthropic"
+    "apiProvider": "anthropic-api-key"
   }
 }

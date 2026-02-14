@@ -31,11 +31,13 @@ export async function checkCloudInitStatus(
     // Check if cloud-init finished
     const isComplete = output.includes('Cloud-init v.') && output.includes('finished at');
     
-    // Check for errors
-    const hasError = output.includes('npm error') || 
-                     output.includes('Error:') || 
-                     output.includes('FAILED') ||
-                     output.includes('command not found') && !isComplete;
+    // Only treat these patterns as fatal while cloud-init is still running.
+    const hasError = (
+      output.includes('npm error') ||
+      output.includes('Error:') ||
+      output.includes('FAILED') ||
+      output.includes('command not found')
+    ) && !isComplete;
 
     // Check if OpenClaw installed successfully
     const isOpenClawInstalled = output.includes('OpenClaw CLI installed successfully') ||
