@@ -8,10 +8,41 @@ import { buildCommandContext } from '../utils/context.js';
 import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
 import { validateSSMPlugin } from '../utils/aws-validation.js';
+import net from 'net';
 
 interface DashboardArgs {
   name?: string;
   noOpen?: boolean;
+}
+
+async function waitForLocalPort(
+  port: number,
+  timeoutMs: number = 15000,
+  intervalMs: number = 500
+): Promise<boolean> {
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const isOpen = await new Promise<boolean>((resolve) => {
+      const socket = new net.Socket();
+      const onError = () => {
+        socket.destroy();
+        resolve(false);
+      };
+      socket.setTimeout(1000);
+      socket.once('error', onError);
+      socket.once('timeout', onError);
+      socket.connect(port, '127.0.0.1', () => {
+        socket.end();
+        resolve(true);
+      });
+    });
+
+    if (isOpen) return true;
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+
+  return false;
 }
 
 export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
@@ -100,6 +131,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       };
       const gatewayToken = stackOutputs.GatewayToken;
       const gatewayPort = stackOutputs.GatewayPort || '18789';
+      const gatewayPortNumber = parseInt(gatewayPort, 10) || 18789;
       
       const dashboardUrl = gatewayToken 
         ? `http://localhost:${gatewayPort}/?token=${gatewayToken}`
@@ -118,6 +150,14 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       }
       
       if (!argv.noOpen) {
+        spinner.start('Waiting for dashboard to become ready...');
+        const ready = await waitForLocalPort(gatewayPortNumber);
+        if (ready) {
+          spinner.succeed('Dashboard ready');
+        } else {
+          spinner.warn('Dashboard not ready yet; opening anyway');
+        }
+
         console.log('\n📖 Opening in your default browser...');
         try {
           // Try to open browser (cross-platform)

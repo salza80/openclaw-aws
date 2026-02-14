@@ -2,16 +2,19 @@
 import * as cdk from 'aws-cdk-lib';
 import { OpenClawStack, OpenClawStackProps } from './stack.js';
 import { loadConfigByName } from '../cli/utils/config.js';
+import { getApiKeyParamName } from '../cli/utils/api-keys.js';
 import type { StackConfig } from '../cli/types/index.js';
 
 // Load configuration
 let config;
+let configName: string;
 try {
-  const configName = process.env.OPENCLAW_CONFIG_NAME;
-  if (!configName) {
+  const envConfigName = process.env.OPENCLAW_CONFIG_NAME;
+  if (!envConfigName) {
     console.error('Error loading configuration: OPENCLAW_CONFIG_NAME is required');
     process.exit(1);
   }
+  configName = envConfigName;
   config = loadConfigByName(configName);
 } catch (error) {
   console.error('Error loading configuration:', error instanceof Error ? error.message : String(error));
@@ -21,13 +24,7 @@ try {
 // Determine API provider from config
 const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key'; // Default to Anthropic if not set
 
-// Get API key parameter name (written by CLI before deploy)
-const apiKeyParamName = process.env.OPENCLAW_API_KEY_PARAM;
-if (!apiKeyParamName) {
-  console.error('Error: OPENCLAW_API_KEY_PARAM environment variable is required');
-  console.error('Run deployment via the CLI so it can store your API key in Parameter Store.');
-  process.exit(1);
-}
+const apiKeyParamName = getApiKeyParamName(configName, apiProvider);
 
 // Parse instance type
 function parseInstanceType(type: string): { class: string; size: string } {

@@ -107,7 +107,7 @@ export async function checkGatewayStatus(
       DocumentName: 'AWS-RunShellScript',
       Parameters: {
         commands: [
-          'sudo -u ubuntu bash -c "export XDG_RUNTIME_DIR=/run/user/1000 && systemctl --user is-active openclaw-gateway.service"'
+          'sudo -u ubuntu bash -c "export XDG_RUNTIME_DIR=/run/user/1000; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus; systemctl --user is-active openclaw-gateway.service"'
         ]
       },
       TimeoutSeconds: 30

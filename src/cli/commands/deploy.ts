@@ -200,8 +200,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           );
           const env = {
             ...ctx.awsEnv,
-            OPENCLAW_CONFIG_NAME: ctx.name,
-            OPENCLAW_API_KEY_PARAM: apiKeyParamName
+            OPENCLAW_CONFIG_NAME: ctx.name
           };
 
           spinner.start('Deploying stack... (this may take 3-5 minutes)');
@@ -330,8 +329,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       // Set up environment
       const env = {
         ...ctx.awsEnv,
-        OPENCLAW_CONFIG_NAME: ctx.name,
-        OPENCLAW_API_KEY_PARAM: apiKeyParamName
+        OPENCLAW_CONFIG_NAME: ctx.name
       };
 
       // Deploy stack with retry logic
