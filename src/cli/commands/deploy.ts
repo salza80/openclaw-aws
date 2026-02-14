@@ -414,8 +414,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           console.log('  ' + chalk.cyan('1.') + ' Wait 10-15 minutes for OpenClaw installation');
           console.log('  ' + chalk.cyan('2.') + ' Check if ready: ' + chalk.yellow('openclaw-aws ready'));
           console.log('  ' + chalk.cyan('3.') + ' Check instance status: ' + chalk.yellow('openclaw-aws status'));
-          console.log('  ' + chalk.cyan('4.') + ' When ready, run: ' + chalk.yellow('openclaw-aws onboard'));
-          console.log('  ' + chalk.cyan('5.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
+          console.log('  ' + chalk.cyan('4.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
           
           console.log('\n' + chalk.gray('💡 Tip: Use ') + chalk.cyan('openclaw-aws ready --watch') + chalk.gray(' to monitor installation progress'));
         }
