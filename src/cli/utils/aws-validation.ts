@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import { ValidationError, AWSError, withRetry } from './errors.js';
 import { awsCredentialSuggestions } from './suggestions.js';
 import type { OpenClawConfig } from '../types/index.js';
+import { MIN_NODE_VERSION } from '../constants.js';
 
 export interface AWSCredentials {
   account: string;
@@ -291,11 +292,11 @@ export function validateNodeVersion(): void {
   const nodeVersion = process.version;
   const majorVersion = parseInt(nodeVersion.split('.')[0].substring(1));
   
-  if (majorVersion < 18) {
+  if (majorVersion < MIN_NODE_VERSION) {
     throw new ValidationError(
-      `Node.js version ${nodeVersion} is not supported. Requires Node.js 18 or higher.`,
+      `Node.js version ${nodeVersion} is not supported. Requires Node.js ${MIN_NODE_VERSION} or higher.`,
       [
-        'Install Node.js 18 or higher from https://nodejs.org/',
+        `Install Node.js ${MIN_NODE_VERSION} or higher from https://nodejs.org/`,
         'Or use nvm: nvm install 22 && nvm use 22'
       ]
     );

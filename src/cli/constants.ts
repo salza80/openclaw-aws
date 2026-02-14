@@ -16,3 +16,6 @@ export const API_PROVIDERS = [
   { title: 'Minimax', value: 'minimax-api-key', description: 'Minimax API' },
   { title: 'Opencode Zen', value: 'opencode-zen-api-key', description: 'Opencode Zen API' },
 ] as const;
+
+// Minimum supported Node.js major version
+export const MIN_NODE_VERSION = 20;
