@@ -2,25 +2,39 @@
 
 OpenClaw AWS is a CLI that makes it simple to provision and manage OpenClaw bots on AWS. It creates a minimal Ubuntu EC2 setup with secure SSM-only access.
 
+## Install
+
+```bash
+# Recommended: local install in your bot folder
+mkdir my-openclaw-bot
+cd my-openclaw-bot
+npm init -y
+npm install @salza80/openclaw-aws
+npx openclaw-aws --help
+
+# Alternative: run directly with npx (no install)
+npx @salza80/openclaw-aws --help
+
+# Alternative: install globally
+npm install -g @salza80/openclaw-aws
+openclaw-aws --help
+```
+
 ## Quick Start
 
 ```bash
-# Create a dedicated folder (recommended)
-mkdir my-openclaw-bot
-cd my-openclaw-bot
-
 # Initialize your bot with interactive prompts
 # This will generate a config file
-npx @salza80/openclaw-aws init
+npx openclaw-aws init
 
 # Deploy. -- That's it!
-npx @salza80/openclaw-aws deploy
+npx openclaw-aws deploy
 
 # Wait for deploy to finish. View the status of your bot
-npx @salza80/openclaw-aws status
+npx openclaw-aws status
 ```
 
-If you didn’t install globally, prefix commands with `npx @salza80/openclaw-aws`.
+If you installed locally, prefix commands with `npx openclaw-aws`.
 
 To access your bot:
 ```bash
