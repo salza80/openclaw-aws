@@ -3,7 +3,7 @@ import {
   formatStackStatus,
   formatInstanceStatus,
   formatSSMStatus,
-  formatGatewayStatus
+  formatGatewayStatus,
 } from '../../src/cli/commands/status.js';
 
 describe('status formatting', () => {

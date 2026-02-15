@@ -4,21 +4,21 @@ import { validateConfig, validateConfigStructure } from '../../src/cli/utils/con
 const validConfig = {
   version: '1.0',
   aws: {
-    region: 'us-east-1'
+    region: 'us-east-1',
   },
   network: {
-    useDefaultVpc: true
+    useDefaultVpc: true,
   },
   instance: {
     type: 't3.micro',
-    name: 'openclaw-my-openclaw-bot'
+    name: 'openclaw-my-openclaw-bot',
   },
   features: {
-    cloudWatchLogs: true
+    cloudWatchLogs: true,
   },
   stack: {
-    name: 'OpenclawStack-my-openclaw-bot'
-  }
+    name: 'OpenclawStack-my-openclaw-bot',
+  },
 };
 
 describe('config-validation', () => {
@@ -32,6 +32,8 @@ describe('config-validation', () => {
 
   it('throws on invalid config values', () => {
     const badConfig = { ...validConfig, aws: { region: 'bad-region' } };
-    expect(() => validateConfig(badConfig as unknown as typeof validConfig)).toThrow('Configuration validation failed');
+    expect(() => validateConfig(badConfig as unknown as typeof validConfig)).toThrow(
+      'Configuration validation failed',
+    );
   });
 });

@@ -4,7 +4,12 @@ import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
 import { saveConfigByName, configExistsByName } from '../utils/config.js';
 import { setCurrentName } from '../utils/config-store.js';
-import { validateProjectName, validateInstanceName, AWS_REGIONS, INSTANCE_TYPES } from '../utils/validation.js';
+import {
+  validateProjectName,
+  validateInstanceName,
+  AWS_REGIONS,
+  INSTANCE_TYPES,
+} from '../utils/validation.js';
 import { handleError, ValidationError } from '../utils/errors.js';
 import type { OpenClawConfig, Provider } from '../types/index.js';
 import { API_PROVIDERS } from '../constants.js';
@@ -20,7 +25,7 @@ interface InitArgs {
 export const initCommand: CommandModule<{}, InitArgs> = {
   command: 'init',
   describe: 'Initialize OpenClaw AWS deployment configuration',
-  
+
   builder: (yargs) => {
     return yargs
       .option('region', {
@@ -38,7 +43,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       .option('api-provider', {
         type: 'string',
         describe: 'API provider',
-        choices: API_PROVIDERS.map(p => p.value),
+        choices: API_PROVIDERS.map((p) => p.value),
       })
       .option('yes', {
         type: 'boolean',
@@ -47,15 +52,15 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         default: false,
       });
   },
-  
+
   handler: async (argv) => {
     try {
       logger.title('OpenClaw AWS - Deployment Setup Wizard');
-      const apiProviderValues = API_PROVIDERS.map(p => p.value);
+      const apiProviderValues = API_PROVIDERS.map((p) => p.value);
 
       if (argv.apiProvider && !apiProviderValues.includes(argv.apiProvider)) {
         throw new ValidationError(`Invalid API provider: ${argv.apiProvider}`, [
-          `Valid providers: ${apiProviderValues.join(', ')}`
+          `Valid providers: ${apiProviderValues.join(', ')}`,
         ]);
       }
 
@@ -65,7 +70,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           type: 'confirm',
           name: 'overwrite',
           message: `Deployment "${argv.name}" already exists. Overwrite?`,
-          initial: false
+          initial: false,
         });
 
         if (!overwrite) {
@@ -81,7 +86,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         // Use defaults
         const apiProvider = (argv.apiProvider as Provider) || 'anthropic-api-key';
         deploymentName = deploymentName || 'my-openclaw-bot';
-        
+
         config = {
           version: '1.0',
           // deployment name is the single source of truth; project name removed
@@ -113,59 +118,64 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             name: 'deploymentName',
             message: 'Deployment name (unique):',
             initial: deploymentName,
-            validate: (value) => validateProjectName(value) === true ? true : `Name your bot. ${String(validateProjectName(value))}`
+            validate: (value) =>
+              validateProjectName(value) === true
+                ? true
+                : `Name your bot. ${String(validateProjectName(value))}`,
           },
           {
             type: 'select',
             name: 'region',
             message: 'AWS Region:',
             choices: AWS_REGIONS,
-            initial: 0
+            initial: 0,
           },
           {
             type: 'select',
             name: 'useDefaultVpc',
             message: 'VPC Configuration:',
             choices: [
-              { 
-                title: 'Use default VPC (recommended)', 
+              {
+                title: 'Use default VPC (recommended)',
                 value: true,
-                description: 'Simpler, faster, uses existing VPC'
+                description: 'Simpler, faster, uses existing VPC',
               },
-              { 
-                title: 'Create new VPC', 
+              {
+                title: 'Create new VPC',
                 value: false,
-                description: 'Dedicated isolated VPC for OpenClaw'
+                description: 'Dedicated isolated VPC for OpenClaw',
               },
             ],
-            initial: 0
+            initial: 0,
           },
           {
             type: 'select',
             name: 'instanceType',
             message: 'EC2 Instance type:',
             choices: INSTANCE_TYPES,
-            initial: 0
+            initial: 0,
           },
           {
             type: 'text',
             name: 'instanceName',
             message: 'Instance name:',
-            initial: (_prev: string, values: { deploymentName: string }) => `openclaw-${values.deploymentName}`,
-            validate: (value: string) => validateInstanceName(value) === true ? true : String(validateInstanceName(value))
+            initial: (_prev: string, values: { deploymentName: string }) =>
+              `openclaw-${values.deploymentName}`,
+            validate: (value: string) =>
+              validateInstanceName(value) === true ? true : String(validateInstanceName(value)),
           },
           {
             type: 'select',
             name: 'apiProvider',
             message: 'Select AI API Provider:',
             choices: [...API_PROVIDERS],
-            initial: 0
+            initial: 0,
           },
           {
             type: 'confirm',
             name: 'cloudWatchLogs',
             message: 'Enable CloudWatch Logs?',
-            initial: true
+            initial: true,
           },
         ]);
 
@@ -232,7 +242,9 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       console.log(`  ${chalk.bold('AMI:')} ${chalk.cyan('Ubuntu 24.04 LTS')}`);
       console.log(`  ${chalk.bold('Node.js:')} ${chalk.cyan('22 (hardcoded)')}`);
       console.log(`  ${chalk.bold('Stack:')} ${chalk.cyan(config.stack.name)}`);
-      console.log(`  ${chalk.bold('API Provider:')} ${chalk.cyan(config.openclaw?.apiProvider || 'anthropic')}`);
+      console.log(
+        `  ${chalk.bold('API Provider:')} ${chalk.cyan(config.openclaw?.apiProvider || 'anthropic')}`,
+      );
 
       // Show required environment variable
       const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
@@ -240,7 +252,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       console.log(`\n${chalk.yellow('⚠ Required before deployment:')}`);
       console.log(`  Set your API key: export ${envVarName}=your-api-key`);
       console.log(`  Or add it to .env: ${envVarName}=your-api-key`);
-      
+
       if (apiProvider === 'openrouter-api-key') {
         console.log(`  Get your key: https://openrouter.ai/keys`);
       } else if (apiProvider === 'anthropic-api-key') {
@@ -256,13 +268,18 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           type: 'confirm',
           name: 'deployNow',
           message: 'Deploy now?',
-          initial: false
+          initial: false,
         });
 
         if (deployNow) {
           console.log('');
           await import('./deploy.js').then(({ default: deployCommand }) =>
-            deployCommand.handler?.({ name: deploymentName, autoApprove: false, _: [], $0: 'openclaw-aws' } as any)
+            deployCommand.handler?.({
+              name: deploymentName,
+              autoApprove: false,
+              _: [],
+              $0: 'openclaw-aws',
+            } as Parameters<NonNullable<typeof deployCommand.handler>>[0]),
           );
         } else {
           console.log(`\n${chalk.bold('Next steps:')}`);
@@ -271,7 +288,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           console.log(`  When you're ready, run: ${chalk.cyan('openclaw-aws deploy')}`);
         }
       }
-
     } catch (error) {
       handleError(error);
     }

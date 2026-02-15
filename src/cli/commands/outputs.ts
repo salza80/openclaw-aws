@@ -13,15 +13,14 @@ interface OutputsArgs {
 export const outputsCommand: CommandModule<{}, OutputsArgs> = {
   command: 'outputs',
   describe: 'Show CloudFormation stack outputs',
-  
+
   builder: (yargs) => {
-    return yargs
-      .option('name', {
-        type: 'string',
-        describe: 'Deployment name',
-      });
+    return yargs.option('name', {
+      type: 'string',
+      describe: 'Deployment name',
+    });
   },
-  
+
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
@@ -29,13 +28,13 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
 
       logger.title('CloudFormation Outputs');
       logger.info(`Showing outputs for ${chalk.cyan(ctx.name)}`);
-      
+
       const spinner = ora('Fetching stack outputs...').start();
-      
+
       try {
         const outputs = await withRetry(
           () => getStackOutputs(config.stack.name, config.aws.region),
-          { maxAttempts: 2, operationName: 'get stack outputs' }
+          { maxAttempts: 2, operationName: 'get stack outputs' },
         );
         spinner.succeed('Outputs retrieved');
 
@@ -47,13 +46,13 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
         // Display each output
         for (const [key, value] of Object.entries(outputs)) {
           console.log(chalk.bold(key + ':'));
-          
+
           // Format commands nicely
           if (value.includes('aws ssm')) {
             // Multi-line command
             const parts = value.split(' --');
             console.log('  ' + chalk.cyan(parts[0]));
-            parts.slice(1).forEach(part => {
+            parts.slice(1).forEach((part) => {
               console.log('    ' + chalk.cyan('--' + part));
             });
           } else {
@@ -66,10 +65,9 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
         console.log(chalk.bold('Quick Commands:'));
         console.log(`  ${chalk.cyan('openclaw-aws connect')}    - Use SSMConnectCommand`);
         console.log(`  ${chalk.cyan('openclaw-aws dashboard')}  - Use SSMPortForwardCommand`);
-
       } catch (error) {
         spinner.fail('Failed to get outputs');
-        
+
         if (error instanceof Error && error.message.includes('not found')) {
           console.log('\n' + chalk.yellow('⚠ No deployment found'));
           console.log('\nRun: ' + chalk.cyan('openclaw-aws deploy'));
@@ -77,7 +75,6 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
           throw error;
         }
       }
-
     } catch (error) {
       handleError(error);
     }

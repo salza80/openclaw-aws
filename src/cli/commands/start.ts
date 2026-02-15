@@ -14,20 +14,19 @@ interface StartArgs {
 export const startCommand: CommandModule<{}, StartArgs> = {
   command: 'start',
   describe: 'Start a stopped EC2 instance',
-  
+
   builder: (yargs) => {
-    return yargs
-      .option('name', {
-        type: 'string',
-        describe: 'Deployment name',
-      });
+    return yargs.option('name', {
+      type: 'string',
+      describe: 'Deployment name',
+    });
   },
-  
+
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
-      
+
       logger.title('OpenClaw AWS - Start Instance');
       logger.info(`Starting ${chalk.cyan(ctx.name)}`);
 
@@ -51,42 +50,41 @@ export const startCommand: CommandModule<{}, StartArgs> = {
       spinner.start('Starting instance...');
       await startInstance(instanceId, config.aws.region);
       spinner.text = 'Waiting for instance to start... (this may take 1-2 minutes)';
-      
+
       const didStart = await waitForInstanceState(instanceId, config.aws.region, 'running', 180000);
-      
+
       if (didStart) {
         spinner.succeed('Instance started successfully');
-        
+
         // Check SSM connectivity
         spinner.start('Waiting for SSM to be ready...');
         let ssmReady = false;
-        
+
         // Wait up to 2 minutes for SSM
-        for (let i = 0; i < 24; i++) { // 24 * 5 seconds = 2 minutes
+        for (let i = 0; i < 24; i++) {
+          // 24 * 5 seconds = 2 minutes
           ssmReady = await checkSSMStatus(instanceId, config.aws.region);
           if (ssmReady) break;
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise((resolve) => setTimeout(resolve, 5000));
         }
-        
+
         if (ssmReady) {
           spinner.succeed('Instance ready for connection');
         } else {
           spinner.warn('Instance running, SSM not ready yet');
           console.log('\nWait a minute then check: ' + chalk.cyan('openclaw-aws status'));
         }
-        
+
         console.log('\n' + chalk.bold('Instance is now running'));
         console.log('\n' + chalk.bold('Next steps:'));
         console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
         console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
         console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
         console.log('  ' + chalk.cyan('openclaw-aws stop') + '       - Stop to save costs');
-        
       } else {
         spinner.warn('Instance start initiated (still starting...)');
         console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
       }
-
     } catch (error) {
       handleError(error);
     }

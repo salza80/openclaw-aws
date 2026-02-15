@@ -1,5 +1,7 @@
 # openclaw-aws
 
+[![CI](https://github.com/salza80/openclaw-aws/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/salza80/openclaw-aws/actions/workflows/ci.yml)
+
 OpenClaw AWS is a CLI that makes it simple to provision and manage OpenClaw bots on AWS. It creates a minimal Ubuntu EC2 setup with secure SSM-only access.
 
 ## Install
@@ -37,6 +39,7 @@ npx openclaw-aws status
 If you installed locally, prefix commands with `npx openclaw-aws`.
 
 To access your bot:
+
 ```bash
 # Open the dashboard to view in your browser (port forwarded via secure SSM - not public access)
 openclaw-aws dashboard
@@ -91,6 +94,7 @@ openclaw-aws --help
 Interactive setup wizard to create a config.
 
 **Example:**
+
 ```bash
 openclaw-aws init
 ```
@@ -100,6 +104,7 @@ openclaw-aws init
 Deploy infrastructure to AWS.
 
 **Example:**
+
 ```bash
 openclaw-aws deploy
 openclaw-aws deploy --name my-bot
@@ -111,6 +116,7 @@ openclaw-aws deploy --all
 Check deployment and instance status.
 
 **Example:**
+
 ```bash
 openclaw-aws status
 openclaw-aws status --all
@@ -121,6 +127,7 @@ openclaw-aws status --all
 Forward port 18789 to access the OpenClaw dashboard locally.
 
 **Example:**
+
 ```bash
 openclaw-aws dashboard
 ```
@@ -130,6 +137,7 @@ openclaw-aws dashboard
 Connect to your EC2 instance via SSM.
 
 **Example:**
+
 ```bash
 openclaw-aws connect
 ```
@@ -139,6 +147,7 @@ openclaw-aws connect
 Start a stopped instance.
 
 **Example:**
+
 ```bash
 openclaw-aws start
 ```
@@ -148,6 +157,7 @@ openclaw-aws start
 Stop a running instance to save costs.
 
 **Example:**
+
 ```bash
 openclaw-aws stop
 ```
@@ -157,6 +167,7 @@ openclaw-aws stop
 Reboot the instance.
 
 **Example:**
+
 ```bash
 openclaw-aws restart
 ```
@@ -166,6 +177,7 @@ openclaw-aws restart
 Show CloudFormation stack outputs.
 
 **Example:**
+
 ```bash
 openclaw-aws outputs --name my-bot
 ```
@@ -175,12 +187,14 @@ openclaw-aws outputs --name my-bot
 Delete all AWS resources.
 
 **Options:**
+
 - `--name <name>` - Config name
 - `--all` - Destroy all configs
 - `--force` - Skip confirmation
 - `--delete-config` - Delete configuration file
 
 **Example:**
+
 ```bash
 openclaw-aws destroy --name my-bot
 openclaw-aws destroy --all
@@ -194,6 +208,7 @@ openclaw-aws destroy --name my-bot --force
 List configs.
 
 **Example:**
+
 ```bash
 openclaw-aws list
 ```
@@ -203,6 +218,7 @@ openclaw-aws list
 Show the current config.
 
 **Example:**
+
 ```bash
 openclaw-aws current
 ```
@@ -212,6 +228,7 @@ openclaw-aws current
 Select a config.
 
 **Example:**
+
 ```bash
 openclaw-aws use my-bot
 ```
@@ -222,6 +239,7 @@ Configuration is created with the `init` command, and stored per config in `.ope
 The current selection is stored in `.openclaw-aws/current.json`.
 
 **Example configuration:**
+
 ```json
 {
   "version": "1.0",
@@ -298,6 +316,7 @@ The deployment creates:
 ### Troubleshooting - Instance not appearing in SSM
 
 Wait 2-3 minutes after deployment. Check status:
+
 ```bash
 openclaw-aws status
 ```
@@ -305,6 +324,7 @@ openclaw-aws status
 ### "Config file not found"
 
 Run the init command first:
+
 ```bash
 openclaw-aws init
 openclaw-aws list
@@ -314,17 +334,21 @@ openclaw-aws use my-bot
 ### Deployment fails
 
 Check AWS credentials:
+
 ```bash
 aws sts get-caller-identity
 ```
+
 ### Port forwarding fails
 
 Ensure SSM plugin is installed and instance is ready:
+
 ```bash
 openclaw-aws status
 ```
 
 Restart instance if the gateway or SSM has crashed:
+
 ```bash
 openclaw-aws restart
 ```

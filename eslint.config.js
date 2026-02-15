@@ -5,7 +5,14 @@ import globals from 'globals';
 
 export default [
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**', 'cdk.out/**', '**/*.d.ts', 'jest.config.js'],
+    ignores: [
+      'dist/**',
+      'coverage/**',
+      'node_modules/**',
+      'cdk.out/**',
+      '**/*.d.ts',
+      'jest.config.js',
+    ],
   },
   js.configs.recommended,
   {

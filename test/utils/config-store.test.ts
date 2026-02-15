@@ -7,30 +7,30 @@ import {
   listConfigNames,
   resolveConfig,
   getCurrentName,
-  setCurrentName
+  setCurrentName,
 } from '../../src/cli/utils/config-store.js';
 
 const validConfig = {
   version: '1.0',
   aws: {
-    region: 'us-east-1'
+    region: 'us-east-1',
   },
   network: {
-    useDefaultVpc: true
+    useDefaultVpc: true,
   },
   instance: {
     type: 't3.micro',
-    name: 'openclaw-my-openclaw-bot'
+    name: 'openclaw-my-openclaw-bot',
   },
   features: {
-    cloudWatchLogs: true
+    cloudWatchLogs: true,
   },
   stack: {
-    name: 'OpenclawStack-my-openclaw-bot'
+    name: 'OpenclawStack-my-openclaw-bot',
   },
   openclaw: {
-    apiProvider: 'anthropic-api-key'
-  }
+    apiProvider: 'anthropic-api-key',
+  },
 };
 
 describe('config-store', () => {

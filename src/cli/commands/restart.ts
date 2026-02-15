@@ -16,7 +16,7 @@ interface RestartArgs {
 export const restartCommand: CommandModule<{}, RestartArgs> = {
   command: 'restart',
   describe: 'Restart (reboot) the EC2 instance',
-  
+
   builder: (yargs) => {
     return yargs
       .option('name', {
@@ -29,12 +29,12 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
         default: false,
       });
   },
-  
+
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
-      
+
       logger.title('OpenClaw AWS - Restart Instance');
       logger.info(`Restarting ${chalk.cyan(ctx.name)}`);
 
@@ -55,7 +55,7 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
           type: 'confirm',
           name: 'confirm',
           message: `Restart instance ${config.instance.name}?`,
-          initial: true
+          initial: true,
         });
 
         if (!confirm) {
@@ -68,25 +68,31 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
       spinner.start('Rebooting instance...');
       await rebootInstance(instanceId, config.aws.region);
       spinner.succeed('Reboot initiated');
-      
+
       spinner.start('Waiting for instance to restart... (this may take 1-2 minutes)');
-      
+
       // Wait for instance to go through stopping and back to running
-      await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10s for reboot to start
-      
-      const didRestart = await waitForInstanceState(instanceId, config.aws.region, 'running', 180000);
-      
+      await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait 10s for reboot to start
+
+      const didRestart = await waitForInstanceState(
+        instanceId,
+        config.aws.region,
+        'running',
+        180000,
+      );
+
       if (didRestart) {
         spinner.text = 'Waiting for SSM to be ready...';
-        
+
         // Wait for SSM
         let ssmReady = false;
-        for (let i = 0; i < 24; i++) { // 2 minutes
+        for (let i = 0; i < 24; i++) {
+          // 2 minutes
           ssmReady = await checkSSMStatus(instanceId, config.aws.region);
           if (ssmReady) break;
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise((resolve) => setTimeout(resolve, 5000));
         }
-        
+
         if (ssmReady) {
           spinner.succeed('Instance restarted and ready');
           logger.success('Instance is back online');
@@ -94,12 +100,10 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
           spinner.warn('Instance restarted, SSM not ready yet');
           console.log('\nWait a minute then check: ' + chalk.cyan('openclaw-aws status'));
         }
-        
       } else {
         spinner.warn('Instance reboot in progress...');
         console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
       }
-
     } catch (error) {
       handleError(error);
     }
