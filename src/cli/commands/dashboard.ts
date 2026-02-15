@@ -62,6 +62,8 @@ async function fetchGatewayToken(
     return response.Parameter?.Value;
   } catch {
     return undefined;
+  } finally {
+    client.destroy();
   }
 }
 
@@ -148,6 +150,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
         '--region', config.aws.region,
       ], {
         env,
+        stdio: 'inherit',
       });
 
       // Wait a moment for port forwarding to establish
@@ -223,15 +226,28 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       console.log(`\n${chalk.bold('Keep this terminal window open')}`);
       console.log(`Press ${chalk.yellow('Ctrl+C')} to stop port forwarding\n`);
 
-      // Handle cleanup
-      process.on('SIGINT', () => {
+      let cleanupRequested = false;
+      const cleanup = () => {
+        if (cleanupRequested) return;
+        cleanupRequested = true;
         console.log('\n\nStopping port forwarding...');
-        portForward.kill('SIGTERM');
-        process.exit(0);
-      });
+        portForward.kill('SIGINT');
+      };
 
-      // Keep process alive
-      await portForward;
+      process.once('SIGINT', cleanup);
+      process.once('SIGTERM', cleanup);
+
+      // Keep process alive until session ends or user interrupts
+      try {
+        await portForward;
+      } catch (error) {
+        if (!cleanupRequested) {
+          throw error;
+        }
+      } finally {
+        process.off('SIGINT', cleanup);
+        process.off('SIGTERM', cleanup);
+      }
 
     } catch (error) {
       handleError(error);

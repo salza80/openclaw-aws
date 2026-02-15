@@ -40,14 +40,17 @@ async function storeApiKey(
 ): Promise<string> {
   const client = createSsmClient(region);
   const paramName = getApiKeyParamName(configName, provider);
-
-  await client.send(new PutParameterCommand({
-    Name: paramName,
-    Value: apiKey,
-    Type: 'SecureString',
-    Overwrite: true,
-    Description: `OpenClaw API key for ${configName} (${provider})`
-  }));
+  try {
+    await client.send(new PutParameterCommand({
+      Name: paramName,
+      Value: apiKey,
+      Type: 'SecureString',
+      Overwrite: true,
+      Description: `OpenClaw API key for ${configName} (${provider})`
+    }));
+  } finally {
+    client.destroy();
+  }
 
   return paramName;
 }
@@ -59,14 +62,17 @@ async function storeGatewayToken(
 ): Promise<string> {
   const client = createSsmClient(region);
   const paramName = getGatewayTokenParamName(configName);
-
-  await client.send(new PutParameterCommand({
-    Name: paramName,
-    Value: token,
-    Type: 'SecureString',
-    Overwrite: true,
-    Description: `OpenClaw gateway token for ${configName}`
-  }));
+  try {
+    await client.send(new PutParameterCommand({
+      Name: paramName,
+      Value: token,
+      Type: 'SecureString',
+      Overwrite: true,
+      Description: `OpenClaw gateway token for ${configName}`
+    }));
+  } finally {
+    client.destroy();
+  }
 
   return paramName;
 }

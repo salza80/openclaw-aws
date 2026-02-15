@@ -43,6 +43,8 @@ async function deleteApiKeyParam(
       return;
     }
     logger.warn(`Failed to delete SSM parameter: ${paramName}`);
+  } finally {
+    client.destroy();
   }
 }
 
@@ -60,6 +62,8 @@ async function deleteGatewayTokenParam(
       return;
     }
     logger.warn(`Failed to delete SSM parameter: ${paramName}`);
+  } finally {
+    client.destroy();
   }
 }
 
