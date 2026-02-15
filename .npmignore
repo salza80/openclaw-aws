@@ -1,6 +1,33 @@
-*.ts
-!*.d.ts
+# Source files
+src/
+tsconfig.json
+!dist/
 
-# CDK asset staging directory
+# Development files
+*.test.ts
+*.spec.ts
+.vscode/
+.idea/
+
+# Build artifacts
+*.log
+*.tgz
+node_modules/
+
+# Git
+.git/
+.gitignore
+
+# Test files
+test/
+
+# CDK
 .cdk.staging
-cdk.out
+cdk.out/
+
+# Config
+.openclaw-aws/
+
+# Old structure (no longer needed)
+bin/
+lib/
