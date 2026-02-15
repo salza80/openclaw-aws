@@ -78,6 +78,8 @@ export async function checkCloudInitStatus(
       hasError: false,
       isOpenClawInstalled: false
     };
+  } finally {
+    client.destroy();
   }
 }
 
@@ -99,6 +101,8 @@ export async function getConsoleOutput(
     return response.Output || '';
   } catch {
     return '';
+  } finally {
+    client.destroy();
   }
 }
 

@@ -27,8 +27,8 @@ export async function requireAwsCredentials(config: OpenClawConfig): Promise<AWS
 }
 
 export async function validateAWSCredentials(region: string): Promise<AWSCredentials> {
+  const client = new STSClient({ region });
   try {
-    const client = new STSClient({ region });
     const command = new GetCallerIdentityCommand({});
     
     const response = await withRetry(
@@ -59,12 +59,14 @@ export async function validateAWSCredentials(region: string): Promise<AWSCredent
     throw new AWSError('Failed to validate AWS credentials', [
       ...awsCredentialSuggestions()
     ]);
+  } finally {
+    client.destroy();
   }
 }
 
 export async function validateAWSRegion(region: string): Promise<boolean> {
+  const client = new EC2Client({ region });
   try {
-    const client = new EC2Client({ region });
     const command = new DescribeRegionsCommand({
       RegionNames: [region]
     });
@@ -76,6 +78,8 @@ export async function validateAWSRegion(region: string): Promise<boolean> {
       'Check available regions: aws ec2 describe-regions',
       'Common regions: us-east-1, us-west-2, eu-west-1'
     ]);
+  } finally {
+    client.destroy();
   }
 }
 
@@ -84,8 +88,8 @@ export async function validateAWSRegion(region: string): Promise<boolean> {
  * Returns the version number or null if not bootstrapped.
  */
 export async function getCDKBootstrapVersion(region: string): Promise<number | null> {
+  const client = new CloudFormationClient({ region });
   try {
-    const client = new CloudFormationClient({ region });
     const command = new DescribeStacksCommand({
       StackName: 'CDKToolkit'
     });
@@ -105,6 +109,8 @@ export async function getCDKBootstrapVersion(region: string): Promise<number | n
     return parseInt(versionOutput.OutputValue, 10);
   } catch {
     return null; // Not bootstrapped
+  } finally {
+    client.destroy();
   }
 }
 
@@ -148,6 +154,9 @@ export async function runCDKBootstrap(
   const env: Record<string, string | undefined> = {
     ...process.env,
     AWS_REGION: region,
+    CDK_DISABLE_VERSION_CHECK: 'true',
+    CDK_DISABLE_CLI_TELEMETRY: '1',
+    CI: 'true'
   };
 
   if (profile) {
@@ -157,6 +166,8 @@ export async function runCDKBootstrap(
   try {
     await execa(cdkBinary, [
       'bootstrap',
+      '--no-notices',
+      '--no-version-reporting',
       envQualifier,
     ], {
       env,
@@ -277,14 +288,16 @@ export function validateInstanceType(instanceType: string): void {
 }
 
 export async function validateStackExists(stackName: string, region: string): Promise<boolean> {
+  const client = new CloudFormationClient({ region });
   try {
-    const client = new CloudFormationClient({ region });
     const command = new DescribeStacksCommand({ StackName: stackName });
     
     await client.send(command);
     return true;
   } catch {
     return false;
+  } finally {
+    client.destroy();
   }
 }
 

@@ -231,7 +231,10 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           );
           const env = {
             ...ctx.awsEnv,
-            OPENCLAW_CONFIG_NAME: ctx.name
+            OPENCLAW_CONFIG_NAME: ctx.name,
+            CDK_DISABLE_VERSION_CHECK: 'true',
+            CDK_DISABLE_CLI_TELEMETRY: '1',
+            CI: 'true'
           };
 
           spinner.start('Deploying stack... (this may take 3-5 minutes)');
@@ -241,7 +244,10 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
               async () => {
                 await execa(cdkBinary, [
                   'deploy',
+                  config.stack.name,
                   '--app', `node ${cdkAppPath}`,
+                  '--no-notices',
+                  '--no-version-reporting',
                   '--require-approval', 'never',
                   '--outputs-file', outputsFile,
                   '--progress', 'events',
@@ -365,7 +371,10 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       // Set up environment
       const env = {
         ...ctx.awsEnv,
-        OPENCLAW_CONFIG_NAME: ctx.name
+        OPENCLAW_CONFIG_NAME: ctx.name,
+        CDK_DISABLE_VERSION_CHECK: 'true',
+        CDK_DISABLE_CLI_TELEMETRY: '1',
+        CI: 'true'
       };
 
       // Deploy stack with retry logic
@@ -378,7 +387,10 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           async () => {
             await execa(cdkBinary, [
               'deploy',
+              config.stack.name,
               '--app', `node ${cdkAppPath}`,
+              '--no-notices',
+              '--no-version-reporting',
               '--require-approval', 'never',
               '--outputs-file', outputsFile,
               '--progress', 'events',
@@ -417,12 +429,12 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           }
 
           console.log('\n' + chalk.bold('Next steps:'));
-          console.log('  ' + chalk.cyan('1.') + ' Wait 10-15 minutes for OpenClaw installation');
-          console.log('  ' + chalk.cyan('2.') + ' Check if ready: ' + chalk.yellow('openclaw-aws ready'));
-          console.log('  ' + chalk.cyan('3.') + ' Check instance status: ' + chalk.yellow('openclaw-aws status'));
+          console.log('  ' + chalk.cyan('1.') + ' Wait approx 5-10 minutes for OpenClaw installation to complete and gateway to start');
+          console.log('  ' + chalk.cyan('3.') + ' Check status: ' + chalk.yellow('openclaw-aws status'));
           console.log('  ' + chalk.cyan('4.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
+          console.log(' ' + chalk.cyan('or') + ' Connect to terminal: ' + chalk.yellow('openclaw-aws connect'));
           
-          console.log('\n' + chalk.gray('💡 Tip: Use ') + chalk.cyan('openclaw-aws ready --watch') + chalk.gray(' to monitor installation progress'));
+          console.log('\n' + chalk.gray('💡 Tip: Use ') + chalk.cyan('openclaw-aws logs --init') + chalk.gray(' to view installation logs'));
         }
 
       } catch (error) {

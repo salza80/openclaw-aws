@@ -33,7 +33,8 @@ const sendMock = vi.fn();
 
 vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   createSsmClient: vi.fn(() => ({
-    send: sendMock
+    send: sendMock,
+    destroy: vi.fn()
   }))
 }));
 

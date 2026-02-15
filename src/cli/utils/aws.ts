@@ -27,6 +27,8 @@ export async function getInstanceIdFromStack(
       throw new Error(`Stack '${stackName}' not found in region '${region}'`);
     }
     throw error;
+  } finally {
+    client.destroy();
   }
 }
 
@@ -65,6 +67,8 @@ export async function checkSSMStatus(
     return instance?.PingStatus === 'Online';
   } catch {
     return false;
+  } finally {
+    client.destroy();
   }
 }
 
@@ -91,6 +95,8 @@ export async function getSSMStatus(
     };
   } catch {
     return { status: 'error' };
+  } finally {
+    client.destroy();
   }
 }
 
@@ -141,6 +147,8 @@ export async function checkGatewayStatus(
       running: false, 
       error: error instanceof Error ? error.message : 'Unknown error'
     };
+  } finally {
+    client.destroy();
   }
 }
 
@@ -190,15 +198,19 @@ export async function getStackStatus(
 
       // Get instance status
       const ec2Client = createEc2Client(region);
-      const instanceResponse = await ec2Client.send(
-        new DescribeInstancesCommand({
-          InstanceIds: [instanceId]
-        })
-      );
+      try {
+        const instanceResponse = await ec2Client.send(
+          new DescribeInstancesCommand({
+            InstanceIds: [instanceId]
+          })
+        );
 
-      const instance = instanceResponse.Reservations?.[0]?.Instances?.[0];
-      if (instance) {
-        status.instanceStatus = instance.State?.Name || 'unknown';
+        const instance = instanceResponse.Reservations?.[0]?.Instances?.[0];
+        if (instance) {
+          status.instanceStatus = instance.State?.Name || 'unknown';
+        }
+      } finally {
+        ec2Client.destroy();
       }
 
       // Get SSM status
@@ -214,6 +226,8 @@ export async function getStackStatus(
       throw new Error(`Stack '${stackName}' not found in region '${region}'`);
     }
     throw error;
+  } finally {
+    client.destroy();
   }
 }
 
@@ -241,5 +255,7 @@ export async function getStackOutputs(
       throw new Error(`Stack '${stackName}' not found in region '${region}'`);
     }
     throw error;
+  } finally {
+    client.destroy();
   }
 }

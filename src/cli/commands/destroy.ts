@@ -161,14 +161,20 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
           const env = {
             ...ctx.awsEnv,
-            OPENCLAW_CONFIG_NAME: ctx.name
+            OPENCLAW_CONFIG_NAME: ctx.name,
+            CDK_DISABLE_VERSION_CHECK: 'true',
+            CDK_DISABLE_CLI_TELEMETRY: '1',
+            CI: 'true'
           };
           const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
 
           try {
             await execa(cdkBinary, [
               'destroy',
+              config.stack.name,
               '--app', `node ${cdkAppPath}`,
+              '--no-notices',
+              '--no-version-reporting',
               '--force',
             ], { 
               env,
@@ -318,7 +324,10 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       // Set up environment
       const env = {
         ...ctx.awsEnv,
-        OPENCLAW_CONFIG_NAME: ctx.name
+        OPENCLAW_CONFIG_NAME: ctx.name,
+        CDK_DISABLE_VERSION_CHECK: 'true',
+        CDK_DISABLE_CLI_TELEMETRY: '1',
+        CI: 'true'
       };
 
       // Destroy stack
@@ -327,7 +336,10 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       try {
         await execa(cdkBinary, [
           'destroy',
+          config.stack.name,
           '--app', `node ${cdkAppPath}`,
+          '--no-notices',
+          '--no-version-reporting',
           '--force',
         ], { 
           env,

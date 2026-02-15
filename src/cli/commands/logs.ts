@@ -51,42 +51,46 @@ async function runSsmCommand(
   timeoutSeconds: number = 30
 ): Promise<{ stdout: string; stderr: string }> {
   const client = createSsmClient(region);
-  const send = await client.send(new SendCommandCommand({
-    InstanceIds: [instanceId],
-    DocumentName: 'AWS-RunShellScript',
-    Parameters: { commands },
-    TimeoutSeconds: timeoutSeconds
-  }));
-
-  const commandId = send.Command?.CommandId;
-  if (!commandId) {
-    throw new AWSError('Failed to send SSM command', [
-      'Check instance status: openclaw-aws status',
-      'Try again in a few minutes'
-    ]);
-  }
-
-  const start = Date.now();
-  while (Date.now() - start < timeoutSeconds * 1000) {
-    const result = await client.send(new GetCommandInvocationCommand({
-      CommandId: commandId,
-      InstanceId: instanceId
+  try {
+    const send = await client.send(new SendCommandCommand({
+      InstanceIds: [instanceId],
+      DocumentName: 'AWS-RunShellScript',
+      Parameters: { commands },
+      TimeoutSeconds: timeoutSeconds
     }));
 
-    if (result.Status && ['Success', 'Failed', 'Cancelled', 'TimedOut'].includes(result.Status)) {
-      return {
-        stdout: result.StandardOutputContent?.trim() ?? '',
-        stderr: result.StandardErrorContent?.trim() ?? ''
-      };
+    const commandId = send.Command?.CommandId;
+    if (!commandId) {
+      throw new AWSError('Failed to send SSM command', [
+        'Check instance status: openclaw-aws status',
+        'Try again in a few minutes'
+      ]);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  }
+    const start = Date.now();
+    while (Date.now() - start < timeoutSeconds * 1000) {
+      const result = await client.send(new GetCommandInvocationCommand({
+        CommandId: commandId,
+        InstanceId: instanceId
+      }));
 
-  throw new AWSError('Timed out waiting for logs', [
-    'Try again with a smaller --tail value',
-    'Check instance health: openclaw-aws status'
-  ]);
+      if (result.Status && ['Success', 'Failed', 'Cancelled', 'TimedOut'].includes(result.Status)) {
+        return {
+          stdout: result.StandardOutputContent?.trim() ?? '',
+          stderr: result.StandardErrorContent?.trim() ?? ''
+        };
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    throw new AWSError('Timed out waiting for logs', [
+      'Try again with a smaller --tail value',
+      'Check instance health: openclaw-aws status'
+    ]);
+  } finally {
+    client.destroy();
+  }
 }
 
 export const logsCommand: CommandModule<{}, LogsArgs> = {

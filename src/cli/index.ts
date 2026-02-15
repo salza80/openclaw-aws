@@ -15,7 +15,6 @@ import logsCommand from './commands/logs.js';
 import stopCommand from './commands/stop.js';
 import startCommand from './commands/start.js';
 import restartCommand from './commands/restart.js';
-import readyCommand from './commands/ready.js';
 
 yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
@@ -26,7 +25,6 @@ yargs(hideBin(process.argv))
   .command(useCommand)
   .command(deployCommand)
   .command(statusCommand)
-  .command(readyCommand)
   .command(connectCommand)
   .command(dashboardCommand)
   .command(outputsCommand)
