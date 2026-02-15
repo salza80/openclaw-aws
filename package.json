@@ -1,7 +1,7 @@
 {
   "name": "@salza80/openclaw-aws",
   "version": "0.1.0",
-  "description": "Deploy OpenClaw AI agents on AWS with a simple CLI",
+  "description": "Deploy and manage multiple OpenClaw AI agents on AWS EC2 with a simple CLI",
   "keywords": [
     "openclaw",
     "moltbot",
@@ -14,6 +14,8 @@
     "telegram",
     "discord",
     "claude",
+    "installation",
+    "setup",
     "infrastructure"
   ],
   "author": "Sally Mclean <smclean17@gmail.com>",

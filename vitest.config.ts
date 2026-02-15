@@ -12,6 +12,8 @@ export default defineConfig({
         'dist/**',
         'bin/**',
         '**/*.d.ts',
+        'eslint.config.js',
+        'scripts/**',
         'src/cli/types/**',
         'vitest.config.ts',
         'jest.config.js',
