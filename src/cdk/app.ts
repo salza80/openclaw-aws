@@ -17,7 +17,10 @@ try {
   configName = envConfigName;
   config = loadConfigByName(configName);
 } catch (error) {
-  console.error('Error loading configuration:', error instanceof Error ? error.message : String(error));
+  console.error(
+    'Error loading configuration:',
+    error instanceof Error ? error.message : String(error),
+  );
   process.exit(1);
 }
 

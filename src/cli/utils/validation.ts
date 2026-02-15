@@ -2,19 +2,19 @@ export function validateProjectName(name: string): string | boolean {
   if (!name || name.trim().length === 0) {
     return 'Project name is required';
   }
-  
+
   if (!/^[a-z0-9-]+$/.test(name)) {
     return 'Use lowercase letters, numbers, and hyphens only';
   }
-  
+
   if (name.startsWith('-') || name.endsWith('-')) {
     return 'Cannot start or end with a hyphen';
   }
-  
+
   if (name.length > 50) {
     return 'Project name must be 50 characters or less';
   }
-  
+
   return true;
 }
 
@@ -22,15 +22,15 @@ export function validateInstanceName(name: string): string | boolean {
   if (!name || name.trim().length === 0) {
     return 'Instance name is required';
   }
-  
+
   if (!/^[a-zA-Z0-9-]+$/.test(name)) {
     return 'Use letters, numbers, and hyphens only';
   }
-  
+
   if (name.length > 63) {
     return 'Instance name must be 63 characters or less';
   }
-  
+
   return true;
 }
 
@@ -50,7 +50,11 @@ export const AWS_REGIONS = [
 ];
 
 export const INSTANCE_TYPES = [
-  { title: 't3.micro - 2 vCPU, 1 GB RAM (Free tier eligible)', value: 't3.micro', description: '$~7.50/month' },
+  {
+    title: 't3.micro - 2 vCPU, 1 GB RAM (Free tier eligible)',
+    value: 't3.micro',
+    description: '$~7.50/month',
+  },
   { title: 't3.small - 2 vCPU, 2 GB RAM', value: 't3.small', description: '$~15/month' },
   { title: 't3.medium - 2 vCPU, 4 GB RAM', value: 't3.medium', description: '$~30/month' },
   { title: 't3.large - 2 vCPU, 8 GB RAM', value: 't3.large', description: '$~60/month' },

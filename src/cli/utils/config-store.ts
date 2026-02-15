@@ -7,7 +7,7 @@ import {
   getCurrentPath,
   getOutputsDir,
   getOutputsPathByName,
-  loadConfigByName
+  loadConfigByName,
 } from './config.js';
 import { ConfigError } from './errors.js';
 import type { OpenClawConfig } from '../types/index.js';
@@ -36,9 +36,10 @@ function ensureDirs(): void {
 export function listConfigNames(): string[] {
   ensureDirs();
   const configsDir = getConfigsDir();
-  return fs.readdirSync(configsDir)
-    .filter(file => file.endsWith('.json'))
-    .map(file => path.basename(file, '.json'))
+  return fs
+    .readdirSync(configsDir)
+    .filter((file) => file.endsWith('.json'))
+    .map((file) => path.basename(file, '.json'))
     .sort();
 }
 
@@ -84,14 +85,14 @@ export function resolveConfig(options: ConfigResolveOptions = {}): ResolvedConfi
     throw new ConfigError('No config selected', [
       'List configs: openclaw-aws list',
       'Select one: openclaw-aws use <name>',
-      'Create one: openclaw-aws init --name <name>'
+      'Create one: openclaw-aws init --name <name>',
     ]);
   }
 
   if (!available.includes(name)) {
     throw new ConfigError(`Config not found: ${name}`, [
       'Create a deployment: openclaw-aws init --name <name>',
-      'List configs: openclaw-aws list'
+      'List configs: openclaw-aws list',
     ]);
   }
 
@@ -99,7 +100,7 @@ export function resolveConfig(options: ConfigResolveOptions = {}): ResolvedConfi
     name,
     config: loadConfigByName(name),
     configPath: getConfigPathByName(name),
-    configRoot: getConfigRoot()
+    configRoot: getConfigRoot(),
   };
 }
 

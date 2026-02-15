@@ -18,7 +18,12 @@ import { config as loadEnv } from 'dotenv';
 import { PutParameterCommand } from '@aws-sdk/client-ssm';
 import { createSsmClient } from '../utils/aws-clients.js';
 import type { Provider } from '../types/index.js';
-import { getApiKeyEnvVar, getApiKeyParamName, getGatewayTokenParamName, resolveApiKey } from '../utils/api-keys.js';
+import {
+  getApiKeyEnvVar,
+  getApiKeyParamName,
+  getGatewayTokenParamName,
+  resolveApiKey,
+} from '../utils/api-keys.js';
 import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -36,18 +41,20 @@ async function storeApiKey(
   configName: string,
   provider: Provider,
   apiKey: string,
-  region: string
+  region: string,
 ): Promise<string> {
   const client = createSsmClient(region);
   const paramName = getApiKeyParamName(configName, provider);
   try {
-    await client.send(new PutParameterCommand({
-      Name: paramName,
-      Value: apiKey,
-      Type: 'SecureString',
-      Overwrite: true,
-      Description: `OpenClaw API key for ${configName} (${provider})`
-    }));
+    await client.send(
+      new PutParameterCommand({
+        Name: paramName,
+        Value: apiKey,
+        Type: 'SecureString',
+        Overwrite: true,
+        Description: `OpenClaw API key for ${configName} (${provider})`,
+      }),
+    );
   } finally {
     client.destroy();
   }
@@ -58,18 +65,20 @@ async function storeApiKey(
 async function storeGatewayToken(
   configName: string,
   token: string,
-  region: string
+  region: string,
 ): Promise<string> {
   const client = createSsmClient(region);
   const paramName = getGatewayTokenParamName(configName);
   try {
-    await client.send(new PutParameterCommand({
-      Name: paramName,
-      Value: token,
-      Type: 'SecureString',
-      Overwrite: true,
-      Description: `OpenClaw gateway token for ${configName}`
-    }));
+    await client.send(
+      new PutParameterCommand({
+        Name: paramName,
+        Value: token,
+        Type: 'SecureString',
+        Overwrite: true,
+        Description: `OpenClaw gateway token for ${configName}`,
+      }),
+    );
   } finally {
     client.destroy();
   }
@@ -80,7 +89,7 @@ async function storeGatewayToken(
 export const deployCommand: CommandModule<{}, DeployArgs> = {
   command: 'deploy',
   describe: 'Deploy OpenClaw infrastructure to AWS',
-  
+
   builder: (yargs) => {
     return yargs
       .option('auto-approve', {
@@ -98,7 +107,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         default: false,
       });
   },
-  
+
   handler: async (argv) => {
     try {
       // Validate Node version
@@ -149,12 +158,12 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         if (missingKeys.length > 0) {
           throw new AWSError(
             `Missing API keys for ${missingKeys.length} config(s): ${missingKeys
-              .map(item => item.name)
+              .map((item) => item.name)
               .join(', ')}`,
             [
               'Set them in your shell or .env before deploying:',
-              ...missingKeys.map(item => `  ${item.name}: ${item.envVar}=your-api-key`)
-            ]
+              ...missingKeys.map((item) => `  ${item.name}: ${item.envVar}=your-api-key`),
+            ],
           );
         }
 
@@ -174,7 +183,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           type: 'text',
           name: 'confirmText',
           message: `This will deploy ${toDeploy.length} instance(s). Type "DEPLOY ALL" to confirm:`,
-          validate: (value) => value === 'DEPLOY ALL' || 'You must type DEPLOY ALL to confirm'
+          validate: (value) => value === 'DEPLOY ALL' || 'You must type DEPLOY ALL to confirm',
         });
 
         if (confirmText !== 'DEPLOY ALL') {
@@ -196,7 +205,9 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           logger.info('Deployment Plan:');
           console.log(`  Stack: ${chalk.cyan(config.stack.name)}`);
           console.log(`  Region: ${chalk.cyan(config.aws.region)}`);
-          console.log(`  Instance: ${chalk.cyan(config.instance.type)} (${chalk.cyan(config.instance.name)})`);
+          console.log(
+            `  Instance: ${chalk.cyan(config.instance.type)} (${chalk.cyan(config.instance.name)})`,
+          );
           console.log(`  Resources:`);
           console.log(`    - EC2 Instance (${config.instance.type})`);
           console.log(`    - Security Group (no inbound rules)`);
@@ -214,27 +225,22 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
             spinner.fail('CDK CLI not available');
             throw new AWSError('AWS CDK CLI not available', [
               'Reinstall this package: npm install -g @salza80/openclaw-aws',
-              'Or install CDK globally: npm install -g aws-cdk'
+              'Or install CDK globally: npm install -g aws-cdk',
             ]);
           }
 
-          await storeApiKey(
-            ctx.name,
-            target.apiProvider,
-            target.apiKey,
-            config.aws.region
-          );
+          await storeApiKey(ctx.name, target.apiProvider, target.apiKey, config.aws.region);
           await storeGatewayToken(
             ctx.name,
             crypto.randomBytes(24).toString('hex'),
-            config.aws.region
+            config.aws.region,
           );
           const env = {
             ...ctx.awsEnv,
             OPENCLAW_CONFIG_NAME: ctx.name,
             CDK_DISABLE_VERSION_CHECK: 'true',
             CDK_DISABLE_CLI_TELEMETRY: '1',
-            CI: 'true'
+            CI: 'true',
           };
 
           spinner.start('Deploying stack... (this may take 3-5 minutes)');
@@ -242,19 +248,27 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
             const outputsFile = resolveOutputsPath(ctx.name);
             await withRetry(
               async () => {
-                await execa(cdkBinary, [
-                  'deploy',
-                  config.stack.name,
-                  '--app', `node ${cdkAppPath}`,
-                  '--no-notices',
-                  '--no-version-reporting',
-                  '--require-approval', 'never',
-                  '--outputs-file', outputsFile,
-                  '--progress', 'events',
-                ], { 
-                  env,
-                  cwd: process.cwd(),
-                });
+                await execa(
+                  cdkBinary,
+                  [
+                    'deploy',
+                    config.stack.name,
+                    '--app',
+                    `node ${cdkAppPath}`,
+                    '--no-notices',
+                    '--no-version-reporting',
+                    '--require-approval',
+                    'never',
+                    '--outputs-file',
+                    outputsFile,
+                    '--progress',
+                    'events',
+                  ],
+                  {
+                    env,
+                    cwd: process.cwd(),
+                  },
+                );
               },
               {
                 maxAttempts: 2,
@@ -262,8 +276,8 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
                 shouldRetry: (error) => {
                   return isRetryableError(error);
                 },
-                operationName: 'CDK deploy'
-              }
+                operationName: 'CDK deploy',
+              },
             );
 
             spinner.succeed('Stack deployed successfully!');
@@ -279,7 +293,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       // Load and validate configuration
       const ctx = await buildCommandContext({ name: argv.name, requireCredentials: false });
       const config = ctx.config;
-      
+
       logger.title('OpenClaw AWS - Deploy');
       logger.info(`Deploying ${chalk.cyan(ctx.name)}`);
 
@@ -291,7 +305,9 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       try {
         const status = await getStackStatus(config.stack.name, config.aws.region);
         statusSpinner.succeed('Existing deployment found');
-        logger.info(`Stack ${chalk.cyan(config.stack.name)} already exists (${status.stackStatus})`);
+        logger.info(
+          `Stack ${chalk.cyan(config.stack.name)} already exists (${status.stackStatus})`,
+        );
         console.log('\n' + chalk.bold('Next steps:'));
         console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
         console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
@@ -313,7 +329,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         throw new AWSError(`Missing API key: ${apiKeyEnvVar}`, [
           `Set it in your shell: export ${apiKeyEnvVar}=your-api-key`,
           `Or add it to .env in your current directory: ${apiKeyEnvVar}=your-api-key`,
-          'Then rerun: openclaw-aws deploy'
+          'Then rerun: openclaw-aws deploy',
         ]);
       }
 
@@ -321,7 +337,9 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       logger.info('Deployment Plan:');
       console.log(`  Stack: ${chalk.cyan(config.stack.name)}`);
       console.log(`  Region: ${chalk.cyan(config.aws.region)}`);
-      console.log(`  Instance: ${chalk.cyan(config.instance.type)} (${chalk.cyan(config.instance.name)})`);
+      console.log(
+        `  Instance: ${chalk.cyan(config.instance.type)} (${chalk.cyan(config.instance.name)})`,
+      );
       console.log(`  Resources:`);
       console.log(`    - EC2 Instance (${config.instance.type})`);
       console.log(`    - Security Group (no inbound rules)`);
@@ -333,7 +351,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           type: 'confirm',
           name: 'confirm',
           message: 'Confirm deployment?',
-          initial: true
+          initial: true,
         });
 
         if (!confirm) {
@@ -343,18 +361,14 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       }
 
       await storeApiKey(ctx.name, apiProvider, apiKey, config.aws.region);
-      await storeGatewayToken(
-        ctx.name,
-        crypto.randomBytes(24).toString('hex'),
-        config.aws.region
-      );
+      await storeGatewayToken(ctx.name, crypto.randomBytes(24).toString('hex'), config.aws.region);
 
       // Get CDK binary (local from node_modules or global fallback)
       const cdkBinary = getCDKBinary();
 
       // Get CDK app path
       const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
-      
+
       // Verify CDK is available
       const spinner = ora('Verifying CDK CLI...').start();
       try {
@@ -364,40 +378,48 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         spinner.fail('CDK CLI not available');
         throw new AWSError('AWS CDK CLI not available', [
           'Reinstall this package: npm install -g @salza80/openclaw-aws',
-          'Or install CDK globally: npm install -g aws-cdk'
+          'Or install CDK globally: npm install -g aws-cdk',
         ]);
       }
-      
+
       // Set up environment
       const env = {
         ...ctx.awsEnv,
         OPENCLAW_CONFIG_NAME: ctx.name,
         CDK_DISABLE_VERSION_CHECK: 'true',
         CDK_DISABLE_CLI_TELEMETRY: '1',
-        CI: 'true'
+        CI: 'true',
       };
 
       // Deploy stack with retry logic
       spinner.start('Deploying stack... (this may take 3-5 minutes)');
-      
+
       try {
         const outputsFile = resolveOutputsPath(ctx.name);
-        
+
         await withRetry(
           async () => {
-            await execa(cdkBinary, [
-              'deploy',
-              config.stack.name,
-              '--app', `node ${cdkAppPath}`,
-              '--no-notices',
-              '--no-version-reporting',
-              '--require-approval', 'never',
-              '--outputs-file', outputsFile,
-              '--progress', 'events',
-            ], { 
-              env,
-              cwd: process.cwd(),
-            });
+            await execa(
+              cdkBinary,
+              [
+                'deploy',
+                config.stack.name,
+                '--app',
+                `node ${cdkAppPath}`,
+                '--no-notices',
+                '--no-version-reporting',
+                '--require-approval',
+                'never',
+                '--outputs-file',
+                outputsFile,
+                '--progress',
+                'events',
+              ],
+              {
+                env,
+                cwd: process.cwd(),
+              },
+            );
           },
           {
             maxAttempts: 2,
@@ -406,8 +428,8 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
               // Only retry on network/throttling errors, not on validation errors
               return isRetryableError(error);
             },
-            operationName: 'CDK deploy'
-          }
+            operationName: 'CDK deploy',
+          },
         );
 
         spinner.succeed('Stack deployed successfully!');
@@ -429,19 +451,38 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           }
 
           console.log('\n' + chalk.bold('Next steps:'));
-          console.log('  ' + chalk.cyan('1.') + ' Wait approx 5-10 minutes for OpenClaw installation to complete and gateway to start');
-          console.log('  ' + chalk.cyan('3.') + ' Check status: ' + chalk.yellow('openclaw-aws status'));
-          console.log('  ' + chalk.cyan('4.') + ' Access dashboard: ' + chalk.yellow('openclaw-aws dashboard'));
-          console.log(' ' + chalk.cyan('or') + ' Connect to terminal: ' + chalk.yellow('openclaw-aws connect'));
-          
-          console.log('\n' + chalk.gray('💡 Tip: Use ') + chalk.cyan('openclaw-aws logs --init') + chalk.gray(' to view installation logs'));
-        }
+          console.log(
+            '  ' +
+              chalk.cyan('1.') +
+              ' Wait approx 5-10 minutes for OpenClaw installation to complete and gateway to start',
+          );
+          console.log(
+            '  ' + chalk.cyan('3.') + ' Check status: ' + chalk.yellow('openclaw-aws status'),
+          );
+          console.log(
+            '  ' +
+              chalk.cyan('4.') +
+              ' Access dashboard: ' +
+              chalk.yellow('openclaw-aws dashboard'),
+          );
+          console.log(
+            ' ' +
+              chalk.cyan('or') +
+              ' Connect to terminal: ' +
+              chalk.yellow('openclaw-aws connect'),
+          );
 
+          console.log(
+            '\n' +
+              chalk.gray('💡 Tip: Use ') +
+              chalk.cyan('openclaw-aws logs --init') +
+              chalk.gray(' to view installation logs'),
+          );
+        }
       } catch (error) {
         spinner.fail('Deployment failed');
         throw error;
       }
-
     } catch (error) {
       handleError(error);
     }

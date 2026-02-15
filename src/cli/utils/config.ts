@@ -35,12 +35,9 @@ export function getCurrentPath(): string {
 
 export function loadConfigByName(name: string): OpenClawConfig {
   const configFile = getConfigPathByName(name);
-  
+
   if (!fs.existsSync(configFile)) {
-    throw new ConfigError(
-      `Config file not found: ${configFile}`,
-      ['Run: openclaw-aws init']
-    );
+    throw new ConfigError(`Config file not found: ${configFile}`, ['Run: openclaw-aws init']);
   }
 
   let config: unknown;
@@ -48,21 +45,17 @@ export function loadConfigByName(name: string): OpenClawConfig {
     const content = fs.readFileSync(configFile, 'utf-8');
     config = JSON.parse(content);
   } catch {
-    throw new ConfigError(
-      `Failed to parse config file: ${configFile}`,
-      [
-        'Check the file is valid JSON',
-        'Run: openclaw-aws init (to recreate)'
-      ]
-    );
+    throw new ConfigError(`Failed to parse config file: ${configFile}`, [
+      'Check the file is valid JSON',
+      'Run: openclaw-aws init (to recreate)',
+    ]);
   }
 
   // Validate structure
   if (!validateConfigStructure(config)) {
-    throw new ConfigError(
-      'Invalid configuration structure',
-      ['Run: openclaw-aws init (to recreate configuration)']
-    );
+    throw new ConfigError('Invalid configuration structure', [
+      'Run: openclaw-aws init (to recreate configuration)',
+    ]);
   }
 
   // Validate contents
@@ -95,7 +88,7 @@ export function loadOutputsByName(name: string): Record<string, unknown> | null 
   if (!fs.existsSync(outputsPath)) {
     return null;
   }
-  
+
   try {
     const content = fs.readFileSync(outputsPath, 'utf-8');
     return JSON.parse(content);

@@ -1,6 +1,6 @@
 import { API_PROVIDERS } from '../constants.js';
 
-export type Provider = typeof API_PROVIDERS[number]['value'];
+export type Provider = (typeof API_PROVIDERS)[number]['value'];
 export interface OpenClawConfig {
   version: string;
   aws: {

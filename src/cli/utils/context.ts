@@ -15,7 +15,7 @@ export interface CommandContextOptions {
 }
 
 export async function buildCommandContext(
-  options: CommandContextOptions = {}
+  options: CommandContextOptions = {},
 ): Promise<CommandContext> {
   const { name, config, configPath } = resolveConfig({ name: options.name });
 
@@ -29,14 +29,14 @@ export async function buildCommandContext(
     name,
     config,
     configPath,
-    awsEnv: buildAwsEnv(config)
+    awsEnv: buildAwsEnv(config),
   };
 }
 
 export function buildAwsEnv(config: OpenClawConfig): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {
     ...process.env,
-    AWS_REGION: config.aws.region
+    AWS_REGION: config.aws.region,
   };
 
   if (config.aws.profile) {

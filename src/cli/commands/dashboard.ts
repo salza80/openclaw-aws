@@ -21,7 +21,7 @@ interface DashboardArgs {
 async function waitForLocalPort(
   port: number,
   timeoutMs: number = 15000,
-  intervalMs: number = 500
+  intervalMs: number = 500,
 ): Promise<boolean> {
   const start = Date.now();
 
@@ -42,23 +42,22 @@ async function waitForLocalPort(
     });
 
     if (isOpen) return true;
-    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
   return false;
 }
 
-async function fetchGatewayToken(
-  configName: string,
-  region: string
-): Promise<string | undefined> {
+async function fetchGatewayToken(configName: string, region: string): Promise<string | undefined> {
   const client = createSsmClient(region);
   const paramName = getGatewayTokenParamName(configName);
   try {
-    const response = await client.send(new GetParameterCommand({
-      Name: paramName,
-      WithDecryption: true,
-    }));
+    const response = await client.send(
+      new GetParameterCommand({
+        Name: paramName,
+        WithDecryption: true,
+      }),
+    );
     return response.Parameter?.Value;
   } catch {
     return undefined;
@@ -70,7 +69,7 @@ async function fetchGatewayToken(
 export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
   command: 'dashboard',
   describe: 'Forward port 18789 for OpenClaw dashboard access',
-  
+
   builder: (yargs) => {
     return yargs
       .option('name', {
@@ -83,12 +82,12 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
         default: false,
       });
   },
-  
+
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
-      
+
       // Validate SSM plugin is installed
       await validateSSMPlugin();
 
@@ -96,7 +95,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      
+
       let instanceId: string;
       try {
         instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
@@ -109,13 +108,13 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       // Check SSM connectivity
       spinner.start('Checking SSM connectivity...');
       const isReady = await checkSSMStatus(instanceId, config.aws.region);
-      
+
       if (!isReady) {
         spinner.fail('Instance not ready');
         throw new AWSError('Instance not ready for SSM connection', [
           'Run: openclaw-aws status (to check instance state)',
           'Run: openclaw-aws connect (which will wait for instance)',
-          'The instance may still be starting up'
+          'The instance may still be starting up',
         ]);
       }
       spinner.succeed('Instance ready');
@@ -127,7 +126,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
         throw new AWSError('OpenClaw gateway is not running', [
           'Run: openclaw-aws status (to check gateway status)',
           'Run: openclaw-aws connect (to restart the gateway)',
-          'If the instance is new, wait a few minutes and try again'
+          'If the instance is new, wait a few minutes and try again',
         ]);
       }
       spinner.succeed('Gateway running');
@@ -139,22 +138,31 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
 
       // Start port forwarding
       // Note: This is a long-running process, so we don't await it
-      const portForward = execa('aws', [
-        'ssm', 'start-session',
-        '--target', instanceId,
-        '--document-name', 'AWS-StartPortForwardingSession',
-        '--parameters', JSON.stringify({
-          portNumber: ['18789'],
-          localPortNumber: ['18789']
-        }),
-        '--region', config.aws.region,
-      ], {
-        env,
-        stdio: 'inherit',
-      });
+      const portForward = execa(
+        'aws',
+        [
+          'ssm',
+          'start-session',
+          '--target',
+          instanceId,
+          '--document-name',
+          'AWS-StartPortForwardingSession',
+          '--parameters',
+          JSON.stringify({
+            portNumber: ['18789'],
+            localPortNumber: ['18789'],
+          }),
+          '--region',
+          config.aws.region,
+        ],
+        {
+          env,
+          stdio: 'inherit',
+        },
+      );
 
       // Wait a moment for port forwarding to establish
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       spinner.succeed('Port forwarding established');
 
@@ -174,8 +182,8 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       }
       const gatewayPort = stackOutputs.GatewayPort || '18789';
       const gatewayPortNumber = parseInt(gatewayPort, 10) || 18789;
-      
-      const dashboardUrl = gatewayToken 
+
+      const dashboardUrl = gatewayToken
         ? `http://localhost:${gatewayPort}/?token=${gatewayToken}`
         : `http://localhost:${gatewayPort}`;
 
@@ -183,7 +191,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       logger.success('Dashboard Available!');
       console.log('='.repeat(50));
       console.log(`\n🌐 Dashboard URL: ${chalk.cyan(dashboardUrl)}`);
-      
+
       if (gatewayToken) {
         console.log(`\n🔑 Gateway Token (${tokenSource}): ${chalk.gray(gatewayToken)}`);
       } else {
@@ -191,7 +199,7 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
         console.log(`   Checked: CloudFormation outputs and SSM Parameter Store.`);
         console.log(`   Dashboard auth may fail without ?token=<value> in the URL.`);
       }
-      
+
       if (!argv.noOpen) {
         spinner.start('Waiting for dashboard to become ready...');
         const ready = await waitForLocalPort(gatewayPortNumber);
@@ -203,7 +211,9 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
 
         if (!gatewayToken) {
           console.log('\nSkipping automatic browser open because gateway token is missing.');
-          console.log('Use openclaw-aws logs --service to inspect gateway startup/auth configuration.');
+          console.log(
+            'Use openclaw-aws logs --service to inspect gateway startup/auth configuration.',
+          );
         } else {
           console.log('\n📖 Opening in your default browser...');
           try {
@@ -248,7 +258,6 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
         process.off('SIGINT', cleanup);
         process.off('SIGTERM', cleanup);
       }
-
     } catch (error) {
       handleError(error);
     }

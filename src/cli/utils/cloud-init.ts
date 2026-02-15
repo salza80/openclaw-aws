@@ -12,42 +12,42 @@ export interface CloudInitStatus {
 
 export async function checkCloudInitStatus(
   instanceId: string,
-  region: string
+  region: string,
 ): Promise<CloudInitStatus> {
   const client = createEc2Client(region);
   const command = new GetConsoleOutputCommand({
     InstanceId: instanceId,
-    Latest: true
+    Latest: true,
   });
 
   try {
-    const response = await withRetry(
-      () => client.send(command),
-      { maxAttempts: 2, operationName: 'get console output' }
-    );
+    const response = await withRetry(() => client.send(command), {
+      maxAttempts: 2,
+      operationName: 'get console output',
+    });
 
     const output = response.Output || '';
 
     // Check if cloud-init finished
     const isComplete = output.includes('Cloud-init v.') && output.includes('finished at');
-    
+
     // Only treat these patterns as fatal while cloud-init is still running.
-    const hasError = (
-      output.includes('npm error') ||
-      output.includes('Error:') ||
-      output.includes('FAILED') ||
-      output.includes('command not found')
-    ) && !isComplete;
+    const hasError =
+      (output.includes('npm error') ||
+        output.includes('Error:') ||
+        output.includes('FAILED') ||
+        output.includes('command not found')) &&
+      !isComplete;
 
     // Check if OpenClaw installed successfully
-    const isOpenClawInstalled = output.includes('OpenClaw CLI installed successfully') ||
-                                (output.includes('openclaw@') && output.includes('added'));
+    const isOpenClawInstalled =
+      output.includes('OpenClaw CLI installed successfully') ||
+      (output.includes('openclaw@') && output.includes('added'));
 
     // Extract error message if present
     let errorMessage: string | undefined;
     if (hasError && !isComplete) {
-      const errorMatch = output.match(/npm error (.*?)$/m) || 
-                        output.match(/Error: (.*?)$/m);
+      const errorMatch = output.match(/npm error (.*?)$/m) || output.match(/Error: (.*?)$/m);
       if (errorMatch) {
         errorMessage = errorMatch[1].trim();
       }
@@ -68,36 +68,32 @@ export async function checkCloudInitStatus(
       hasError,
       isOpenClawInstalled,
       errorMessage,
-      elapsedMinutes
+      elapsedMinutes,
     };
-
   } catch {
     // If we can't get console output, assume not ready
     return {
       isComplete: false,
       hasError: false,
-      isOpenClawInstalled: false
+      isOpenClawInstalled: false,
     };
   } finally {
     client.destroy();
   }
 }
 
-export async function getConsoleOutput(
-  instanceId: string,
-  region: string
-): Promise<string> {
+export async function getConsoleOutput(instanceId: string, region: string): Promise<string> {
   const client = createEc2Client(region);
   const command = new GetConsoleOutputCommand({
     InstanceId: instanceId,
-    Latest: true
+    Latest: true,
   });
 
   try {
-    const response = await withRetry(
-      () => client.send(command),
-      { maxAttempts: 2, operationName: 'get console output' }
-    );
+    const response = await withRetry(() => client.send(command), {
+      maxAttempts: 2,
+      operationName: 'get console output',
+    });
     return response.Output || '';
   } catch {
     return '';

@@ -27,7 +27,7 @@ export function getCDKBinary(): string {
   if (fs.existsSync(localCdkPath)) {
     return localCdkPath;
   }
-  
+
   // Fallback to global CDK
   // This will throw if 'cdk' is not in PATH, which execa will catch
   return 'cdk';
@@ -39,19 +39,19 @@ export function getCDKBinary(): string {
  */
 export function validateCDKAvailable(): void {
   const cdkPath = getCDKBinary();
-  
+
   // If using global CDK, we can't easily check if it exists without running it
   // execa will throw if the command doesn't exist, which is fine
   if (cdkPath === 'cdk') {
     // Global CDK - will be validated when we try to run it
     return;
   }
-  
+
   // For local CDK, we already checked it exists in getCDKBinary()
   if (!fs.existsSync(cdkPath)) {
     throw new AWSError('AWS CDK CLI not found', [
       'Reinstall this package: npm install -g @salza80/openclaw-aws',
-      'Or install CDK globally: npm install -g aws-cdk'
+      'Or install CDK globally: npm install -g aws-cdk',
     ]);
   }
 }

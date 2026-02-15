@@ -16,7 +16,7 @@ interface StopArgs {
 export const stopCommand: CommandModule<{}, StopArgs> = {
   command: 'stop',
   describe: 'Stop the EC2 instance (saves ~90% on costs)',
-  
+
   builder: (yargs) => {
     return yargs
       .option('name', {
@@ -29,12 +29,12 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
         default: false,
       });
   },
-  
+
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
-      
+
       logger.title('OpenClaw AWS - Stop Instance');
       logger.info(`Stopping ${chalk.cyan(ctx.name)}`);
 
@@ -69,7 +69,7 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
           type: 'confirm',
           name: 'confirm',
           message: `Stop instance ${config.instance.name}?`,
-          initial: true
+          initial: true,
         });
 
         if (!confirm) {
@@ -82,9 +82,9 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
       spinner.start('Stopping instance...');
       await stopInstance(instanceId, config.aws.region);
       spinner.text = 'Waiting for instance to stop...';
-      
+
       const didStop = await waitForInstanceState(instanceId, config.aws.region, 'stopped', 120000);
-      
+
       if (didStop) {
         spinner.succeed('Instance stopped successfully');
         logger.success('Instance is now stopped');
@@ -94,7 +94,6 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
         spinner.warn('Instance stop initiated (still stopping...)');
         console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
       }
-
     } catch (error) {
       handleError(error);
     }

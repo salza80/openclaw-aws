@@ -24,7 +24,7 @@ describe('init command', () => {
     await initCommand.handler?.({
       yes: true,
       region: 'us-east-1',
-      instanceType: 't3.micro'
+      instanceType: 't3.micro',
     } as unknown as { yes: boolean; region: string; instanceType: string });
 
     const configPath = getConfigPathByName('my-openclaw-bot');

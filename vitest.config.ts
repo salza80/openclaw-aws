@@ -14,8 +14,8 @@ export default defineConfig({
         '**/*.d.ts',
         'src/cli/types/**',
         'vitest.config.ts',
-        'jest.config.js'
-      ]
-    }
-  }
+        'jest.config.js',
+      ],
+    },
+  },
 });

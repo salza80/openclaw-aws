@@ -6,16 +6,16 @@ vi.mock('../../src/cli/utils/context.js', () => ({
     name: 'alpha',
     config: {
       aws: { region: 'us-east-1' },
-      stack: { name: 'OpenclawStack-alpha' }
+      stack: { name: 'OpenclawStack-alpha' },
     },
     configPath: '/tmp/alpha.json',
-    awsEnv: {}
-  }))
+    awsEnv: {},
+  })),
 }));
 
 vi.mock('../../src/cli/utils/aws.js', () => ({
   resolveInstanceId: vi.fn(async () => 'i-123'),
-  checkSSMStatus: vi.fn(async () => true)
+  checkSSMStatus: vi.fn(async () => true),
 }));
 
 vi.mock('../../src/cli/utils/logger.js', () => ({
@@ -25,8 +25,8 @@ vi.mock('../../src/cli/utils/logger.js', () => ({
     success: vi.fn(),
     error: vi.fn(),
     title: vi.fn(),
-    box: vi.fn()
-  }
+    box: vi.fn(),
+  },
 }));
 
 const sendMock = vi.fn();
@@ -34,8 +34,8 @@ const sendMock = vi.fn();
 vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   createSsmClient: vi.fn(() => ({
     send: sendMock,
-    destroy: vi.fn()
-  }))
+    destroy: vi.fn(),
+  })),
 }));
 
 vi.mock('@aws-sdk/client-ssm', () => {
@@ -52,11 +52,15 @@ vi.mock('@aws-sdk/client-ssm', () => {
 
   class SendCommandCommand {
     input: MockSendCommandInput;
-    constructor(input: MockSendCommandInput) { this.input = input; }
+    constructor(input: MockSendCommandInput) {
+      this.input = input;
+    }
   }
   class GetCommandInvocationCommand {
     input: MockGetCommandInvocationInput;
-    constructor(input: MockGetCommandInvocationInput) { this.input = input; }
+    constructor(input: MockGetCommandInvocationInput) {
+      this.input = input;
+    }
   }
   return { SendCommandCommand, GetCommandInvocationCommand };
 });

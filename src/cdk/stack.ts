@@ -1,16 +1,16 @@
 import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import { 
-  Instance, 
-  InstanceType, 
-  InstanceClass, 
+import {
+  Instance,
+  InstanceType,
+  InstanceClass,
   InstanceSize,
   MachineImage,
   BlockDeviceVolume,
   EbsDeviceVolumeType,
-  SecurityGroup, 
-  UserData, 
-  SubnetType, 
+  SecurityGroup,
+  UserData,
+  SubnetType,
   Vpc,
   IVpc,
 } from 'aws-cdk-lib/aws-ec2';
@@ -67,14 +67,12 @@ export class OpenClawStack extends Stack {
     const managedPolicies = [
       ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
     ];
-    
+
     // Conditionally add CloudWatch policy if enabled
     if (config.enableCloudWatchLogs) {
-      managedPolicies.push(
-        ManagedPolicy.fromAwsManagedPolicyName('CloudWatchAgentServerPolicy')
-      );
+      managedPolicies.push(ManagedPolicy.fromAwsManagedPolicyName('CloudWatchAgentServerPolicy'));
     }
-    
+
     const role = new Role(this, 'OpenClawEc2Role', {
       assumedBy: new ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies,
@@ -90,10 +88,12 @@ export class OpenClawStack extends Stack {
       resource: 'parameter',
       resourceName: gatewayTokenParamName.replace(/^\/+/, ''),
     });
-    role.addToPolicy(new PolicyStatement({
-      actions: ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParameterHistory'],
-      resources: [apiKeyParamArn, gatewayTokenParamArn],
-    }));
+    role.addToPolicy(
+      new PolicyStatement({
+        actions: ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParameterHistory'],
+        resources: [apiKeyParamArn, gatewayTokenParamArn],
+      }),
+    );
 
     // Determine AMI - Ubuntu 24.04 LTS
     const ami = MachineImage.lookup({
@@ -103,12 +103,11 @@ export class OpenClawStack extends Stack {
 
     // UserData script - simplified without Tailscale
     const userData = UserData.forLinux();
-    
+
     // Set appropriate environment variable based on API provider
     const apiKeyEnvVar = apiProvider.toUpperCase().replace(/-/g, '_');
     const authChoiceFlag = apiProvider === 'anthropic-api-key' ? 'apiKey' : apiProvider;
 
-    
     userData.addCommands(
       '#!/bin/bash',
       'set -e',
@@ -169,7 +168,7 @@ export class OpenClawStack extends Stack {
       'usermod -aG docker ubuntu',
       '',
       '# Install NVM and Node.js for ubuntu user',
-      'sudo -u ubuntu bash << \'UBUNTU_SCRIPT\'',
+      "sudo -u ubuntu bash << 'UBUNTU_SCRIPT'",
       'set -e',
       'cd ~',
       '',
@@ -193,14 +192,14 @@ export class OpenClawStack extends Stack {
       'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || echo "WARNING: Homebrew installation failed"',
       '',
       '# Add NVM to bashrc if not already there',
-      'if ! grep -q \'NVM_DIR\' ~/.bashrc; then',
+      "if ! grep -q 'NVM_DIR' ~/.bashrc; then",
       '    echo \'export NVM_DIR="$HOME/.nvm"\' >> ~/.bashrc',
       '    echo \'[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\' >> ~/.bashrc',
       'fi',
       '',
       '# Add Homebrew to bashrc if it was installed',
       'if [ -d /home/linuxbrew/.linuxbrew ]; then',
-      '    if ! grep -q \'linuxbrew\' ~/.bashrc; then',
+      "    if ! grep -q 'linuxbrew' ~/.bashrc; then",
       '        echo >> ~/.bashrc',
       '        echo \'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"\' >> ~/.bashrc',
       '    fi',
@@ -245,7 +244,7 @@ export class OpenClawStack extends Stack {
       '',
       '# Install daemon service',
       'echo "Installing OpenClaw daemon..."',
-      'sudo -H -u ubuntu XDG_RUNTIME_DIR=/run/user/1000 bash << \'DAEMON_SCRIPT\'',
+      "sudo -H -u ubuntu XDG_RUNTIME_DIR=/run/user/1000 bash << 'DAEMON_SCRIPT'",
       'export HOME=/home/ubuntu',
       'export NVM_DIR="$HOME/.nvm"',
       '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
@@ -288,7 +287,7 @@ export class OpenClawStack extends Stack {
       'chown -R ubuntu:ubuntu /home/ubuntu/.openclaw',
       '',
       '# Restart daemon as ubuntu user to ensure it picks up all changes',
-      'sudo -H -u ubuntu bash << \'RESTART_SCRIPT\'',
+      "sudo -H -u ubuntu bash << 'RESTART_SCRIPT'",
       'export HOME=/home/ubuntu',
       'export NVM_DIR="$HOME/.nvm"',
       '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"',
@@ -303,7 +302,7 @@ export class OpenClawStack extends Stack {
       'echo "OpenClaw setup complete!"',
       `echo "Gateway Token stored in SSM Parameter Store"`,
       `echo "Or use SSM: aws ssm start-session --target <instance-id>"`,
-      `echo "Dashboard: http://localhost:${gatewayPort} (via port forward)"`
+      `echo "Dashboard: http://localhost:${gatewayPort} (via port forward)"`,
     );
 
     // Parse instance type from config

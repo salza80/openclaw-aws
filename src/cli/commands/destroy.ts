@@ -9,7 +9,12 @@ import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
-import { listConfigNames, clearCurrentName, getCurrentName, setCurrentName } from '../utils/config-store.js';
+import {
+  listConfigNames,
+  clearCurrentName,
+  getCurrentName,
+  setCurrentName,
+} from '../utils/config-store.js';
 import { DeleteParameterCommand } from '@aws-sdk/client-ssm';
 import { createSsmClient } from '../utils/aws-clients.js';
 import { getApiKeyParamName, getGatewayTokenParamName } from '../utils/api-keys.js';
@@ -31,7 +36,7 @@ interface DestroyArgs {
 async function deleteApiKeyParam(
   configName: string,
   provider: Provider,
-  region: string
+  region: string,
 ): Promise<void> {
   const client = createSsmClient(region);
   const paramName = getApiKeyParamName(configName, provider);
@@ -48,10 +53,7 @@ async function deleteApiKeyParam(
   }
 }
 
-async function deleteGatewayTokenParam(
-  configName: string,
-  region: string
-): Promise<void> {
+async function deleteGatewayTokenParam(configName: string, region: string): Promise<void> {
   const client = createSsmClient(region);
   const paramName = getGatewayTokenParamName(configName);
   try {
@@ -84,7 +86,7 @@ function updateCurrentAfterDeletion(deletedNames: string[]): void {
 export const destroyCommand: CommandModule<{}, DestroyArgs> = {
   command: 'destroy',
   describe: 'Delete all AWS resources',
-  
+
   builder: (yargs) => {
     return yargs
       .option('force', {
@@ -107,7 +109,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         default: false,
       });
   },
-  
+
   handler: async (argv) => {
     try {
       if (argv.all) {
@@ -122,7 +124,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           type: 'text',
           name: 'confirmText',
           message: 'Type "DESTROY ALL" to confirm:',
-          validate: (value) => value === 'DESTROY ALL' || 'You must type DESTROY ALL to confirm'
+          validate: (value) => value === 'DESTROY ALL' || 'You must type DESTROY ALL to confirm',
         });
 
         if (confirmText !== 'DESTROY ALL') {
@@ -164,35 +166,39 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             OPENCLAW_CONFIG_NAME: ctx.name,
             CDK_DISABLE_VERSION_CHECK: 'true',
             CDK_DISABLE_CLI_TELEMETRY: '1',
-            CI: 'true'
+            CI: 'true',
           };
           const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
 
           try {
-            await execa(cdkBinary, [
-              'destroy',
-              config.stack.name,
-              '--app', `node ${cdkAppPath}`,
-              '--no-notices',
-              '--no-version-reporting',
-              '--force',
-            ], { 
-              env,
-              cwd: process.cwd(),
-            });
+            await execa(
+              cdkBinary,
+              [
+                'destroy',
+                config.stack.name,
+                '--app',
+                `node ${cdkAppPath}`,
+                '--no-notices',
+                '--no-version-reporting',
+                '--force',
+              ],
+              {
+                env,
+                cwd: process.cwd(),
+              },
+            );
 
             destroySpinner.succeed('Stack destroyed successfully');
             logger.success('All resources removed');
             console.log('\nTotal cost: $0/month');
             await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
             await deleteGatewayTokenParam(ctx.name, config.aws.region);
-
           } catch {
             destroySpinner.fail('Destruction failed');
             throw new AWSError('Stack destruction failed', [
               'Check AWS Console CloudFormation page for details',
               'Some resources may need manual cleanup',
-              'Try running destroy again after a few minutes'
+              'Try running destroy again after a few minutes',
             ]);
           }
 
@@ -213,7 +219,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             type: 'confirm',
             name: 'deleteConfigs',
             message: 'Delete configuration files for all configs?',
-            initial: false
+            initial: false,
           });
 
           if (deleteConfigs) {
@@ -237,14 +243,14 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       const ctx = await buildCommandContext({ name: argv.name });
       const config = ctx.config;
       const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
-      
+
       logger.title('OpenClaw AWS - Destroy');
       logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
 
       // Try to get stack status
       let stackExists = true;
       let instanceId: string | undefined;
-      
+
       const spinner = ora('Checking stack status...').start();
       try {
         const status = await getStackStatus(config.stack.name, config.aws.region);
@@ -274,7 +280,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             type: 'confirm',
             name: 'deleteConfig',
             message: 'Delete configuration file?',
-            initial: false
+            initial: false,
           });
 
           if (deleteConfig) {
@@ -293,7 +299,11 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
       // Show what will be deleted
       console.log('\n' + chalk.red('⚠ WARNING:') + ' This will permanently delete:\n');
-      console.log(chalk.red('  ✗ EC2 instance: ' + config.instance.name + (instanceId ? ` (${instanceId})` : '')));
+      console.log(
+        chalk.red(
+          '  ✗ EC2 instance: ' + config.instance.name + (instanceId ? ` (${instanceId})` : ''),
+        ),
+      );
       console.log(chalk.red('  ✗ All data on the instance'));
       console.log(chalk.red('  ✗ Security group'));
       console.log(chalk.red('  ✗ IAM role'));
@@ -306,7 +316,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           type: 'text',
           name: 'confirmText',
           message: 'Type "DELETE" to confirm:',
-          validate: (value) => value === 'DELETE' || 'You must type DELETE to confirm'
+          validate: (value) => value === 'DELETE' || 'You must type DELETE to confirm',
         });
 
         if (confirmText !== 'DELETE') {
@@ -320,31 +330,36 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
       // Get CDK app path
       const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
-      
+
       // Set up environment
       const env = {
         ...ctx.awsEnv,
         OPENCLAW_CONFIG_NAME: ctx.name,
         CDK_DISABLE_VERSION_CHECK: 'true',
         CDK_DISABLE_CLI_TELEMETRY: '1',
-        CI: 'true'
+        CI: 'true',
       };
 
       // Destroy stack
       const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
-      
+
       try {
-        await execa(cdkBinary, [
-          'destroy',
-          config.stack.name,
-          '--app', `node ${cdkAppPath}`,
-          '--no-notices',
-          '--no-version-reporting',
-          '--force',
-        ], { 
-          env,
-          cwd: process.cwd(),
-        });
+        await execa(
+          cdkBinary,
+          [
+            'destroy',
+            config.stack.name,
+            '--app',
+            `node ${cdkAppPath}`,
+            '--no-notices',
+            '--no-version-reporting',
+            '--force',
+          ],
+          {
+            env,
+            cwd: process.cwd(),
+          },
+        );
 
         destroySpinner.succeed('Stack destroyed successfully');
         logger.success('All resources removed');
@@ -365,7 +380,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             type: 'confirm',
             name: 'deleteConfig',
             message: 'Delete configuration file?',
-            initial: false
+            initial: false,
           });
 
           if (deleteConfig) {
@@ -379,16 +394,14 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
           }
         }
-
       } catch {
         destroySpinner.fail('Destruction failed');
         throw new AWSError('Stack destruction failed', [
           'Check AWS Console CloudFormation page for details',
           'Some resources may need manual cleanup',
-          'Try running destroy again after a few minutes'
+          'Try running destroy again after a few minutes',
         ]);
       }
-
     } catch (error) {
       handleError(error);
     }
