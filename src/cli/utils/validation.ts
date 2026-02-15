@@ -50,11 +50,11 @@ export const AWS_REGIONS = [
 ];
 
 export const INSTANCE_TYPES = [
-  {
-    title: 't3.micro - 2 vCPU, 1 GB RAM (Free tier eligible)',
-    value: 't3.micro',
-    description: '$~7.50/month',
-  },
+  // {
+  //   title: 't3.micro - 2 vCPU, 1 GB RAM (Free tier eligible)',
+  //   value: 't3.micro',
+  //   description: '$~7.50/month',
+  // },
   { title: 't3.small - 2 vCPU, 2 GB RAM', value: 't3.small', description: '$~15/month' },
   { title: 't3.medium - 2 vCPU, 4 GB RAM', value: 't3.medium', description: '$~30/month' },
   { title: 't3.large - 2 vCPU, 8 GB RAM', value: 't3.large', description: '$~60/month' },

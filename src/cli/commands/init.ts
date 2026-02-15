@@ -97,7 +97,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             useDefaultVpc: true,
           },
           instance: {
-            type: argv.instanceType || 't3.micro',
+            type: argv.instanceType || 't3.small',
             name: `openclaw-${deploymentName}`,
           },
           features: {
