@@ -28,7 +28,7 @@
   },
   "type": "module",
   "bin": {
-    "openclaw-aws": "./dist/cli/index.js"
+    "openclaw-aws": "dist/cli/index.js"
   },
   "files": [
     "dist/",
