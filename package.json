@@ -1,6 +1,6 @@
 {
   "name": "@salza80/openclaw-aws",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deploy OpenClaw AI agents on AWS with a simple CLI",
   "keywords": [
     "openclaw",
