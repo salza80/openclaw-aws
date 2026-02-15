@@ -161,9 +161,13 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
         GatewayToken?: string;
         GatewayPort?: string;
       };
+      let tokenSource: 'outputs' | 'ssm' | 'missing' = 'missing';
       let gatewayToken = stackOutputs.GatewayToken;
       if (!gatewayToken) {
         gatewayToken = await fetchGatewayToken(ctx.name, config.aws.region);
+        tokenSource = gatewayToken ? 'ssm' : 'missing';
+      } else {
+        tokenSource = 'outputs';
       }
       const gatewayPort = stackOutputs.GatewayPort || '18789';
       const gatewayPortNumber = parseInt(gatewayPort, 10) || 18789;
@@ -178,10 +182,11 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
       console.log(`\n🌐 Dashboard URL: ${chalk.cyan(dashboardUrl)}`);
       
       if (gatewayToken) {
-        console.log(`\n🔑 Gateway Token: ${chalk.gray(gatewayToken)}`);
+        console.log(`\n🔑 Gateway Token (${tokenSource}): ${chalk.gray(gatewayToken)}`);
       } else {
-        console.log(`\n${chalk.yellow('⚠️  Gateway token not found in outputs.')}`);
-        console.log(`   You may need to manually add ?token=<your-token> to the URL`);
+        console.log(`\n${chalk.yellow('⚠️  Gateway token could not be retrieved.')}`);
+        console.log(`   Checked: CloudFormation outputs and SSM Parameter Store.`);
+        console.log(`   Dashboard auth may fail without ?token=<value> in the URL.`);
       }
       
       if (!argv.noOpen) {
@@ -193,20 +198,25 @@ export const dashboardCommand: CommandModule<{}, DashboardArgs> = {
           spinner.warn('Dashboard not ready yet; opening anyway');
         }
 
-        console.log('\n📖 Opening in your default browser...');
-        try {
-          // Try to open browser (cross-platform)
-          const { execa: execaSync } = await import('execa');
-          if (process.platform === 'darwin') {
-            await execaSync('open', [dashboardUrl]);
-          } else if (process.platform === 'win32') {
-            await execaSync('cmd', ['/c', 'start', dashboardUrl]);
-          } else {
-            await execaSync('xdg-open', [dashboardUrl]);
+        if (!gatewayToken) {
+          console.log('\nSkipping automatic browser open because gateway token is missing.');
+          console.log('Use openclaw-aws logs --service to inspect gateway startup/auth configuration.');
+        } else {
+          console.log('\n📖 Opening in your default browser...');
+          try {
+            // Try to open browser (cross-platform)
+            const { execa: execaSync } = await import('execa');
+            if (process.platform === 'darwin') {
+              await execaSync('open', [dashboardUrl]);
+            } else if (process.platform === 'win32') {
+              await execaSync('cmd', ['/c', 'start', dashboardUrl]);
+            } else {
+              await execaSync('xdg-open', [dashboardUrl]);
+            }
+          } catch {
+            // Silently fail if browser open doesn't work
+            console.log('\n(Could not open browser automatically)');
           }
-        } catch {
-          // Silently fail if browser open doesn't work
-          console.log('\n(Could not open browser automatically)');
         }
       }
 

@@ -102,11 +102,8 @@ export async function withRetry<T>(
   const {
     maxAttempts = 3,
     delayMs = 1000,
-    shouldRetry = () => true,
-    operationName = 'operation'
+    shouldRetry = () => true
   } = options;
-
-  void operationName; // reserved for future logging
   
   let lastError: unknown;
   
