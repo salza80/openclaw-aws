@@ -262,7 +262,12 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         if (deployNow) {
           console.log('');
           await import('./deploy.js').then(({ default: deployCommand }) =>
-            deployCommand.handler?.({ name: deploymentName, autoApprove: false, _: [], $0: 'openclaw-aws' } as any)
+            deployCommand.handler?.({
+              name: deploymentName,
+              autoApprove: false,
+              _: [],
+              $0: 'openclaw-aws'
+            } as Parameters<NonNullable<typeof deployCommand.handler>>[0])
           );
         } else {
           console.log(`\n${chalk.bold('Next steps:')}`);
