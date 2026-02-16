@@ -24,16 +24,18 @@ vi.mock('prompts', () => ({
   default: promptsMock,
 }));
 
-const buildCommandContextMock = vi.hoisted(() => vi.fn(async () => ({
-  name: 'alpha',
-  config: {
-    aws: { region: 'us-east-1' },
-    stack: { name: 'OpenclawStack-alpha' },
-    instance: { name: 'openclaw-alpha' },
-    openclaw: { apiProvider: 'anthropic-api-key' },
-  },
-  awsEnv: { AWS_PROFILE: 'test' },
-})));
+const buildCommandContextMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    name: 'alpha',
+    config: {
+      aws: { region: 'us-east-1' },
+      stack: { name: 'OpenclawStack-alpha' },
+      instance: { name: 'openclaw-alpha' },
+      openclaw: { apiProvider: 'anthropic-api-key' },
+    },
+    awsEnv: { AWS_PROFILE: 'test' },
+  })),
+);
 
 vi.mock('../../src/cli/utils/context.js', () => ({
   buildCommandContext: buildCommandContextMock,
@@ -61,10 +63,12 @@ vi.mock('../../src/cli/utils/logger.js', () => ({
 
 const sendMock = vi.hoisted(() => vi.fn().mockResolvedValue({}));
 const destroyMock = vi.hoisted(() => vi.fn());
-const createSsmClientMock = vi.hoisted(() => vi.fn(() => ({
-  send: sendMock,
-  destroy: destroyMock,
-})));
+const createSsmClientMock = vi.hoisted(() =>
+  vi.fn(() => ({
+    send: sendMock,
+    destroy: destroyMock,
+  })),
+);
 
 vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   createSsmClient: createSsmClientMock,

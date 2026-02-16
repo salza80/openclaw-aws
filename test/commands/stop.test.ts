@@ -18,15 +18,17 @@ vi.mock('prompts', () => ({
   default: promptsMock,
 }));
 
-const buildCommandContextMock = vi.hoisted(() => vi.fn(async () => ({
-  name: 'alpha',
-  config: {
-    aws: { region: 'us-east-1' },
-    stack: { name: 'OpenclawStack-alpha' },
-    instance: { name: 'openclaw-alpha' },
-  },
-  awsEnv: {},
-})));
+const buildCommandContextMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    name: 'alpha',
+    config: {
+      aws: { region: 'us-east-1' },
+      stack: { name: 'OpenclawStack-alpha' },
+      instance: { name: 'openclaw-alpha' },
+    },
+    awsEnv: {},
+  })),
+);
 
 vi.mock('../../src/cli/utils/context.js', () => ({
   buildCommandContext: buildCommandContextMock,

@@ -12,14 +12,16 @@ vi.mock('ora', () => ({
   default: vi.fn(() => spinner),
 }));
 
-const buildCommandContextMock = vi.hoisted(() => vi.fn(async () => ({
-  name: 'alpha',
-  config: {
-    aws: { region: 'us-east-1' },
-    stack: { name: 'OpenclawStack-alpha' },
-  },
-  awsEnv: {},
-})));
+const buildCommandContextMock = vi.hoisted(() =>
+  vi.fn(async () => ({
+    name: 'alpha',
+    config: {
+      aws: { region: 'us-east-1' },
+      stack: { name: 'OpenclawStack-alpha' },
+    },
+    awsEnv: {},
+  })),
+);
 
 vi.mock('../../src/cli/utils/context.js', () => ({
   buildCommandContext: buildCommandContextMock,
