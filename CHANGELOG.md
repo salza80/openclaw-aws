@@ -1,5 +1,11 @@
 # @salza80/openclaw-aws
 
+## 0.1.2
+
+### Patch Changes
+
+- 6ca8786: Add tests and test coverage report
+
 ## 0.1.1
 
 ### Patch Changes
