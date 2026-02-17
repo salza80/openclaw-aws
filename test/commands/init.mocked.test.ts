@@ -40,13 +40,13 @@ import { handleError, ValidationError } from '../../src/cli/utils/errors.js';
 import { logger } from '../../src/cli/utils/logger.js';
 import deployCommand from '../../src/cli/commands/deploy.js';
 
-type InitHandler = NonNullable<(typeof import('../../src/cli/commands/init.js'))['default']['handler']>;
+type InitHandler = NonNullable<
+  (typeof import('../../src/cli/commands/init.js'))['default']['handler']
+>;
 type InitHandlerArgs = Parameters<InitHandler>[0];
 const handleErrorMock = vi.mocked(handleError);
 
 describe('init command (mocked)', () => {
-  const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-
   afterEach(() => {
     vi.clearAllMocks();
   });

@@ -78,9 +78,8 @@ vi.mock('../../src/cli/utils/logger.js', async () => {
 });
 
 vi.mock('../../src/cli/utils/errors.js', async () => {
-  const { createErrorsModuleMock, passthroughWithRetry } = await import(
-    '../helpers/mocks/errors.js'
-  );
+  const { createErrorsModuleMock, passthroughWithRetry } =
+    await import('../helpers/mocks/errors.js');
   return createErrorsModuleMock({
     handleError: vi.fn(),
     withRetry: passthroughWithRetry,

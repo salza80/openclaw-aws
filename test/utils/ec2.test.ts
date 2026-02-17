@@ -8,7 +8,9 @@ const mockClient = vi.hoisted(() => ({
 }));
 
 const createEc2ClientMock = vi.hoisted(() => vi.fn(() => mockClient));
-const withRetryMock = vi.hoisted(() => vi.fn(async <T>(operation: () => Promise<T>) => operation()));
+const withRetryMock = vi.hoisted(() =>
+  vi.fn(async <T>(operation: () => Promise<T>) => operation()),
+);
 
 vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   createEc2Client: createEc2ClientMock,

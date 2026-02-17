@@ -59,7 +59,10 @@ describe('config-validation', () => {
   });
 
   it('throws when instance configuration is missing', () => {
-    expectValidationError({ ...validConfig, instance: undefined }, 'Missing instance configuration');
+    expectValidationError(
+      { ...validConfig, instance: undefined },
+      'Missing instance configuration',
+    );
   });
 
   it('throws when instance.type is missing', () => {
@@ -109,7 +112,10 @@ describe('config-validation', () => {
   });
 
   it('throws when features configuration is missing', () => {
-    expectValidationError({ ...validConfig, features: undefined }, 'Missing features configuration');
+    expectValidationError(
+      { ...validConfig, features: undefined },
+      'Missing features configuration',
+    );
   });
 
   it('throws when features.cloudWatchLogs is not a boolean', () => {

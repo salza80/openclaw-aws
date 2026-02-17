@@ -82,10 +82,7 @@ describe('status command', () => {
       'all',
       expect.objectContaining({ type: 'boolean', default: false }),
     );
-    expect(option).toHaveBeenCalledWith(
-      'name',
-      expect.objectContaining({ type: 'string' }),
-    );
+    expect(option).toHaveBeenCalledWith('name', expect.objectContaining({ type: 'string' }));
   });
 
   it('prints guidance when --all has no configs', async () => {
@@ -202,7 +199,10 @@ describe('status command', () => {
       ssmStatus: 'ready',
       instanceId: 'i-123',
     });
-    getSSMStatusMock.mockResolvedValue({ status: 'ConnectionLost', lastPing: '2026-02-17T00:00:00.000Z' });
+    getSSMStatusMock.mockResolvedValue({
+      status: 'ConnectionLost',
+      lastPing: '2026-02-17T00:00:00.000Z',
+    });
 
     const handler = (statusCommand as CommandModule).handler!;
     const args: StatusHandlerArgs = { _: [], $0: 'openclaw-aws' };

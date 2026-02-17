@@ -63,10 +63,7 @@ describe('errors utils', () => {
   });
 
   it('withRetry retries and succeeds', async () => {
-    const op = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('fail'))
-      .mockResolvedValueOnce('ok');
+    const op = vi.fn().mockRejectedValueOnce(new Error('fail')).mockResolvedValueOnce('ok');
     const result = await withRetry(op, { maxAttempts: 2, delayMs: 1 });
     expect(result).toBe('ok');
     expect(op).toHaveBeenCalledTimes(2);

@@ -153,7 +153,9 @@ describe('aws-validation utils', () => {
       'aws://123456789012/us-east-1',
     ]);
     expect(options).toEqual(expect.objectContaining({ stdio: 'inherit' }));
-    expect(options).toEqual(expect.objectContaining({ env: expect.objectContaining({ AWS_PROFILE: 'dev' }) }));
+    expect(options).toEqual(
+      expect.objectContaining({ env: expect.objectContaining({ AWS_PROFILE: 'dev' }) }),
+    );
   });
 
   it('runCDKBootstrap throws AWSError on failure', async () => {

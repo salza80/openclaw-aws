@@ -174,9 +174,7 @@ describe('aws utils', () => {
 
   it('getStackOutputs maps outputs to key/value', async () => {
     cfnSendMock.mockResolvedValue({
-      Stacks: [
-        { Outputs: [{ OutputKey: 'GatewayUrl', OutputValue: 'https://example.com' }] },
-      ],
+      Stacks: [{ Outputs: [{ OutputKey: 'GatewayUrl', OutputValue: 'https://example.com' }] }],
     });
     const outputs = await getStackOutputs('stack', 'us-east-1');
     expect(outputs.GatewayUrl).toBe('https://example.com');

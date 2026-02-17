@@ -23,8 +23,12 @@ describe('suggestions', () => {
   it('includes CDK bootstrap guidance', () => {
     const suggestions = cdkBootstrapSuggestions();
     expect(suggestions).toHaveLength(2);
-    expect(suggestions).toContain('Bootstrap your account/region: cdk bootstrap aws://ACCOUNT-ID/REGION');
-    expect(suggestions).toContain('Docs: https://docs.aws.amazon.com/cdk/latest/guide/bootstrapping.html');
+    expect(suggestions).toContain(
+      'Bootstrap your account/region: cdk bootstrap aws://ACCOUNT-ID/REGION',
+    );
+    expect(suggestions).toContain(
+      'Docs: https://docs.aws.amazon.com/cdk/latest/guide/bootstrapping.html',
+    );
   });
 
   it('includes stack-not-found guidance', () => {
@@ -45,7 +49,9 @@ describe('suggestions', () => {
   it('includes SSM troubleshooting guidance', () => {
     const suggestions = ssmSuggestions();
     expect(suggestions).toHaveLength(3);
-    expect(suggestions).toContain('Install Session Manager plugin: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html');
+    expect(suggestions).toContain(
+      'Install Session Manager plugin: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html',
+    );
     expect(suggestions).toContain('Wait a few minutes after start/restart for SSM to be ready');
     expect(suggestions).toContain('Check: openclaw-aws status');
   });
