@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import fs from 'fs';
+import fs from 'fs';
 import type { CommandModule } from 'yargs';
 
 const execaMock = vi.hoisted(() => vi.fn());
@@ -48,6 +50,22 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
 
 vi.mock('../../src/cli/utils/cdk.js', () => ({
   getCDKBinary: vi.fn(() => 'cdk'),
+}));
+
+const listConfigNamesMock = vi.hoisted(() => vi.fn());
+const getCurrentNameMock = vi.hoisted(() => vi.fn());
+const clearCurrentNameMock = vi.hoisted(() => vi.fn());
+const setCurrentNameMock = vi.hoisted(() => vi.fn());
+vi.mock('../../src/cli/utils/config-store.js', () => ({
+  listConfigNames: listConfigNamesMock,
+  getCurrentName: getCurrentNameMock,
+  clearCurrentName: clearCurrentNameMock,
+  setCurrentName: setCurrentNameMock,
+}));
+
+const getConfigPathByNameMock = vi.hoisted(() => vi.fn((name: string) => `/tmp/${name}.json`));
+vi.mock('../../src/cli/utils/config.js', () => ({
+  getConfigPathByName: getConfigPathByNameMock,
 }));
 
 vi.mock('../../src/cli/utils/logger.js', () => ({
@@ -150,5 +168,44 @@ describe('destroy command', () => {
       }),
     );
     expect(sendMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('all mode returns early when no configs exist', async () => {
+    listConfigNamesMock.mockReturnValue([]);
+
+    const handler = (destroyCommand as CommandModule).handler!;
+    const args: DestroyHandlerArgs = { all: true, _: [], $0: 'openclaw-aws' };
+    await handler(args);
+
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(handleErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('all mode cancels when confirm text is wrong', async () => {
+    listConfigNamesMock.mockReturnValue(['alpha']);
+    promptsMock.mockResolvedValue({ confirmText: 'NOPE' });
+
+    const handler = (destroyCommand as CommandModule).handler!;
+    const args: DestroyHandlerArgs = { all: true, _: [], $0: 'openclaw-aws' };
+    await handler(args);
+
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('deletes config files in all mode when deleteConfig is true', async () => {
+    listConfigNamesMock.mockReturnValue(['alpha']);
+    promptsMock.mockResolvedValue({ confirmText: 'DESTROY ALL' });
+    getStackStatusMock.mockRejectedValue(new Error('not found'));
+
+    const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+
+    const handler = (destroyCommand as CommandModule).handler!;
+    const args: DestroyHandlerArgs = { all: true, deleteConfig: true, _: [], $0: 'openclaw-aws' };
+    await handler(args);
+
+    expect(unlinkSpy).toHaveBeenCalledWith('/tmp/alpha.json');
+    existsSpy.mockRestore();
+    unlinkSpy.mockRestore();
   });
 });

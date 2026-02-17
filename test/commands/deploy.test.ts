@@ -105,6 +105,7 @@ vi.mock('../../src/cli/utils/errors.js', async () => {
   return {
     ...actual,
     handleError: vi.fn(),
+    withRetry: async <T>(operation: () => Promise<T>) => operation(),
   };
 });
 
@@ -159,5 +160,39 @@ describe('deploy command', () => {
     const [error] = handleErrorMock.mock.calls[0];
     expect(error).toBeInstanceOf(AWSError);
     expect((error as AWSError).message).toContain('Missing API key');
+  });
+
+  it('deploys when stack missing and autoApprove is true', async () => {
+    getStackStatusMock.mockRejectedValue(new Error('not found'));
+    resolveApiKeyMock.mockReturnValue('secret');
+    execaMock.mockResolvedValue({});
+
+    const handler = (deployCommand as CommandModule).handler!;
+    const args: DeployHandlerArgs = { autoApprove: true, _: [], $0: 'openclaw-aws' };
+    await handler(args);
+
+    expect(execaMock).toHaveBeenCalledWith(
+      'cdk',
+      expect.arrayContaining(['deploy', 'OpenclawStack-alpha']),
+      expect.objectContaining({
+        env: expect.objectContaining({ OPENCLAW_CONFIG_NAME: 'alpha' }),
+      }),
+    );
+    expect(handleErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('deploys all configs when confirmed', async () => {
+    listConfigNamesMock.mockReturnValue(['alpha']);
+    getStackStatusMock.mockRejectedValue(new Error('not found'));
+    resolveApiKeyMock.mockReturnValue('secret');
+    promptsMock.mockResolvedValue({ confirmText: 'DEPLOY ALL' });
+    execaMock.mockResolvedValue({});
+
+    const handler = (deployCommand as CommandModule).handler!;
+    const args: DeployHandlerArgs = { all: true, _: [], $0: 'openclaw-aws' };
+    await handler(args);
+
+    expect(promptsMock).toHaveBeenCalled();
+    expect(execaMock).toHaveBeenCalled();
   });
 });
