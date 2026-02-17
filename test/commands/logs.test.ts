@@ -1,16 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { CommandModule } from 'yargs';
+import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
+const buildCommandContextMock = vi.hoisted(() => vi.fn());
+buildCommandContextMock.mockImplementation(async () => makeCommandContext());
 vi.mock('../../src/cli/utils/context.js', () => ({
-  buildCommandContext: vi.fn(async () => ({
-    name: 'alpha',
-    config: {
-      aws: { region: 'us-east-1' },
-      stack: { name: 'OpenclawStack-alpha' },
-    },
-    configPath: '/tmp/alpha.json',
-    awsEnv: {},
-  })),
+  buildCommandContext: buildCommandContextMock,
 }));
 
 vi.mock('../../src/cli/utils/aws.js', () => ({
@@ -18,16 +13,12 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
   checkSSMStatus: vi.fn(async () => true),
 }));
 
-vi.mock('../../src/cli/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    success: vi.fn(),
-    error: vi.fn(),
-    title: vi.fn(),
-    box: vi.fn(),
-  },
-}));
+vi.mock('../../src/cli/utils/logger.js', async () => {
+  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
+  return {
+    logger: createLoggerMock(),
+  };
+});
 
 const sendMock = vi.fn();
 
@@ -38,7 +29,8 @@ vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   })),
 }));
 
-vi.mock('@aws-sdk/client-ssm', () => {
+vi.mock('@aws-sdk/client-ssm', async () => {
+  const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
   interface MockSendCommandInput {
     Parameters: {
       commands: string[];
@@ -50,18 +42,8 @@ vi.mock('@aws-sdk/client-ssm', () => {
     InstanceId: string;
   }
 
-  class SendCommandCommand {
-    input: MockSendCommandInput;
-    constructor(input: MockSendCommandInput) {
-      this.input = input;
-    }
-  }
-  class GetCommandInvocationCommand {
-    input: MockGetCommandInvocationInput;
-    constructor(input: MockGetCommandInvocationInput) {
-      this.input = input;
-    }
-  }
+  const SendCommandCommand = createAwsCommandClass<MockSendCommandInput>();
+  const GetCommandInvocationCommand = createAwsCommandClass<MockGetCommandInvocationInput>();
   return { SendCommandCommand, GetCommandInvocationCommand };
 });
 

@@ -1,27 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { CommandModule } from 'yargs';
+import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
-const spinner = vi.hoisted(() => ({
-  start: vi.fn().mockReturnThis(),
-  succeed: vi.fn().mockReturnThis(),
-  fail: vi.fn().mockReturnThis(),
-  warn: vi.fn().mockReturnThis(),
-}));
+vi.mock('ora', async () => {
+  const { createSpinnerMock } = await import('../helpers/mocks/spinner.js');
+  return {
+    default: vi.fn(() => createSpinnerMock()),
+  };
+});
 
-vi.mock('ora', () => ({
-  default: vi.fn(() => spinner),
-}));
-
-const buildCommandContextMock = vi.hoisted(() =>
-  vi.fn(async () => ({
-    name: 'alpha',
-    config: {
-      aws: { region: 'us-east-1' },
-      stack: { name: 'OpenclawStack-alpha' },
-    },
-    awsEnv: {},
-  })),
-);
+const buildCommandContextMock = vi.hoisted(() => vi.fn());
+buildCommandContextMock.mockImplementation(async () => makeCommandContext());
 
 vi.mock('../../src/cli/utils/context.js', () => ({
   buildCommandContext: buildCommandContextMock,
@@ -32,27 +21,19 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
   getStackOutputs: getStackOutputsMock,
 }));
 
-vi.mock('../../src/cli/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    success: vi.fn(),
-    error: vi.fn(),
-    title: vi.fn(),
-    box: vi.fn(),
-  },
-}));
-
-vi.mock('../../src/cli/utils/errors.js', async () => {
-  const actual = await vi.importActual<typeof import('../../src/cli/utils/errors.js')>(
-    '../../src/cli/utils/errors.js',
-  );
+vi.mock('../../src/cli/utils/logger.js', async () => {
+  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
   return {
-    ...actual,
-    handleError: vi.fn(),
-    withRetry: async <T>(operation: () => Promise<T>) => operation(),
+    logger: createLoggerMock(),
   };
 });
+
+vi.mock('../../src/cli/utils/errors.js', async () =>
+  (await import('../helpers/mocks/errors.js')).createErrorsModuleMock({
+    handleError: vi.fn(),
+    withRetry: (await import('../helpers/mocks/errors.js')).passthroughWithRetry,
+  }),
+);
 
 import { handleError } from '../../src/cli/utils/errors.js';
 import outputsCommand from '../../src/cli/commands/outputs.js';

@@ -9,16 +9,12 @@ vi.mock('../../src/cli/utils/config-store.js', () => ({
   getCurrentName: getCurrentNameMock,
 }));
 
-vi.mock('../../src/cli/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    success: vi.fn(),
-    error: vi.fn(),
-    title: vi.fn(),
-    box: vi.fn(),
-  },
-}));
+vi.mock('../../src/cli/utils/logger.js', async () => {
+  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
+  return {
+    logger: createLoggerMock(),
+  };
+});
 
 import { logger } from '../../src/cli/utils/logger.js';
 import listCommand from '../../src/cli/commands/list.js';

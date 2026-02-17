@@ -48,16 +48,12 @@ vi.mock('execa', () => ({
   execa: execaMock,
 }));
 
-const spinner = vi.hoisted(() => ({
-  start: vi.fn().mockReturnThis(),
-  succeed: vi.fn().mockReturnThis(),
-  fail: vi.fn().mockReturnThis(),
-  warn: vi.fn().mockReturnThis(),
-  text: '',
-}));
-vi.mock('ora', () => ({
-  default: vi.fn(() => spinner),
-}));
+vi.mock('ora', async () => {
+  const { createSpinnerMock } = await import('../helpers/mocks/spinner.js');
+  return {
+    default: vi.fn(() => createSpinnerMock()),
+  };
+});
 
 const promptsMock = vi.hoisted(() => vi.fn());
 vi.mock('prompts', () => ({

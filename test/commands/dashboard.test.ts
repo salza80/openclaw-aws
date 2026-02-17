@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { CommandModule } from 'yargs';
+import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
 const execaMock = vi.hoisted(() => vi.fn());
 
@@ -7,29 +8,15 @@ vi.mock('execa', () => ({
   execa: execaMock,
 }));
 
-const spinner = vi.hoisted(() => ({
-  start: vi.fn().mockReturnThis(),
-  succeed: vi.fn().mockReturnThis(),
-  fail: vi.fn().mockReturnThis(),
-  warn: vi.fn().mockReturnThis(),
-  text: '',
-}));
+vi.mock('ora', async () => {
+  const { createSpinnerMock } = await import('../helpers/mocks/spinner.js');
+  return {
+    default: vi.fn(() => createSpinnerMock()),
+  };
+});
 
-vi.mock('ora', () => ({
-  default: vi.fn(() => spinner),
-}));
-
-const buildCommandContextMock = vi.hoisted(() =>
-  vi.fn(async () => ({
-    name: 'alpha',
-    config: {
-      aws: { region: 'us-east-1' },
-      stack: { name: 'OpenclawStack-alpha' },
-      instance: { name: 'openclaw-alpha' },
-    },
-    awsEnv: { AWS_PROFILE: 'test' },
-  })),
-);
+const buildCommandContextMock = vi.hoisted(() => vi.fn());
+buildCommandContextMock.mockImplementation(async () => makeCommandContext());
 
 vi.mock('../../src/cli/utils/context.js', () => ({
   buildCommandContext: buildCommandContextMock,
@@ -49,16 +36,12 @@ vi.mock('../../src/cli/utils/aws-validation.js', () => ({
   validateSSMPlugin: vi.fn(async () => {}),
 }));
 
-vi.mock('../../src/cli/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    success: vi.fn(),
-    error: vi.fn(),
-    title: vi.fn(),
-    box: vi.fn(),
-  },
-}));
+vi.mock('../../src/cli/utils/logger.js', async () => {
+  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
+  return {
+    logger: createLoggerMock(),
+  };
+});
 
 const loadOutputsByNameMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/cli/utils/config.js', () => ({
@@ -70,24 +53,16 @@ vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   createSsmClient: createSsmClientMock,
 }));
 
-vi.mock('@aws-sdk/client-ssm', () => {
-  class GetParameterCommand {
-    input: { Name: string; WithDecryption: boolean };
-    constructor(input: { Name: string; WithDecryption: boolean }) {
-      this.input = input;
-    }
-  }
-  return { GetParameterCommand };
+vi.mock('@aws-sdk/client-ssm', async () => {
+  const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
+  return {
+    GetParameterCommand: createAwsCommandClass<{ Name: string; WithDecryption: boolean }>(),
+  };
 });
 
 vi.mock('../../src/cli/utils/errors.js', async () => {
-  const actual = await vi.importActual<typeof import('../../src/cli/utils/errors.js')>(
-    '../../src/cli/utils/errors.js',
-  );
-  return {
-    ...actual,
-    handleError: vi.fn(),
-  };
+  const { createErrorsModuleMock } = await import('../helpers/mocks/errors.js');
+  return createErrorsModuleMock({ handleError: vi.fn() });
 });
 
 import { AWSError, handleError } from '../../src/cli/utils/errors.js';
@@ -147,7 +122,7 @@ describe('dashboard command', () => {
         'us-east-1',
       ],
       {
-        env: { AWS_PROFILE: 'test' },
+        env: expect.objectContaining({ AWS_PROFILE: 'test' }),
         stdio: 'inherit',
       },
     );

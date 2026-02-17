@@ -1,15 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-
-vi.mock('../../src/cli/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    success: vi.fn(),
-    error: vi.fn(),
-    title: vi.fn(),
-    box: vi.fn(),
-  },
-}));
+vi.mock('../../src/cli/utils/logger.js', async () => {
+  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
+  return {
+    logger: createLoggerMock(),
+  };
+});
 
 const awsCredentialSuggestionsMock = vi.hoisted(() => vi.fn(() => ['aws creds']));
 const cdkBootstrapSuggestionsMock = vi.hoisted(() => vi.fn(() => ['cdk bootstrap']));

@@ -22,54 +22,34 @@ vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   })),
 }));
 
-vi.mock('@aws-sdk/client-cloudformation', () => ({
-  DescribeStacksCommand: class {
-    input: Record<string, unknown>;
-    constructor(input: Record<string, unknown>) {
-      this.input = input;
-    }
-  },
-}));
-
-vi.mock('@aws-sdk/client-ssm', () => ({
-  DescribeInstanceInformationCommand: class {
-    input: Record<string, unknown>;
-    constructor(input: Record<string, unknown>) {
-      this.input = input;
-    }
-  },
-  SendCommandCommand: class {
-    input: Record<string, unknown>;
-    constructor(input: Record<string, unknown>) {
-      this.input = input;
-    }
-  },
-  GetCommandInvocationCommand: class {
-    input: Record<string, unknown>;
-    constructor(input: Record<string, unknown>) {
-      this.input = input;
-    }
-  },
-}));
-
-vi.mock('@aws-sdk/client-ec2', () => ({
-  DescribeInstancesCommand: class {
-    input: Record<string, unknown>;
-    constructor(input: Record<string, unknown>) {
-      this.input = input;
-    }
-  },
-}));
-
-vi.mock('../../src/cli/utils/errors.js', async () => {
-  const actual = await vi.importActual<typeof import('../../src/cli/utils/errors.js')>(
-    '../../src/cli/utils/errors.js',
-  );
+vi.mock('@aws-sdk/client-cloudformation', async () => {
+  const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
   return {
-    ...actual,
-    withRetry: async <T>(operation: () => Promise<T>) => operation(),
+    DescribeStacksCommand: createAwsCommandClass<Record<string, unknown>>(),
   };
 });
+
+vi.mock('@aws-sdk/client-ssm', async () => {
+  const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
+  return {
+    DescribeInstanceInformationCommand: createAwsCommandClass<Record<string, unknown>>(),
+    SendCommandCommand: createAwsCommandClass<Record<string, unknown>>(),
+    GetCommandInvocationCommand: createAwsCommandClass<Record<string, unknown>>(),
+  };
+});
+
+vi.mock('@aws-sdk/client-ec2', async () => {
+  const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
+  return {
+    DescribeInstancesCommand: createAwsCommandClass<Record<string, unknown>>(),
+  };
+});
+
+vi.mock('../../src/cli/utils/errors.js', async () =>
+  (await import('../helpers/mocks/errors.js')).createErrorsModuleMock({
+    withRetry: (await import('../helpers/mocks/errors.js')).passthroughWithRetry,
+  }),
+);
 
 import {
   getInstanceIdFromStack,

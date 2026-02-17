@@ -9,18 +9,17 @@ vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   createEc2Client: createEc2ClientMock,
 }));
 
-vi.mock('../../src/cli/utils/errors.js', () => ({
-  withRetry: withRetryMock,
-}));
+vi.mock('../../src/cli/utils/errors.js', async () => {
+  const { createErrorsModuleMock } = await import('../helpers/mocks/errors.js');
+  return createErrorsModuleMock({ withRetry: withRetryMock });
+});
 
-vi.mock('@aws-sdk/client-ec2', () => ({
-  GetConsoleOutputCommand: class {
-    input: Record<string, unknown>;
-    constructor(input: Record<string, unknown>) {
-      this.input = input;
-    }
-  },
-}));
+vi.mock('@aws-sdk/client-ec2', async () => {
+  const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
+  return {
+    GetConsoleOutputCommand: createAwsCommandClass<Record<string, unknown>>(),
+  };
+});
 
 import {
   checkCloudInitStatus,

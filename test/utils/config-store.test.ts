@@ -1,7 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import { saveConfigByName } from '../../src/cli/utils/config.js';
 import {
   listConfigNames,
@@ -9,6 +6,7 @@ import {
   getCurrentName,
   setCurrentName,
 } from '../../src/cli/utils/config-store.js';
+import { createWorkspace } from '../helpers/workspace.js';
 
 const validConfig = {
   version: '1.0',
@@ -35,16 +33,16 @@ const validConfig = {
 
 describe('config-store', () => {
   const originalCwd = process.cwd();
-  let tempDir: string;
+  let workspace: ReturnType<typeof createWorkspace>;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-aws-'));
-    process.chdir(tempDir);
+    workspace = createWorkspace();
+    process.chdir(workspace.cwd);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    workspace.cleanup();
   });
 
   it('lists no configs when empty', () => {

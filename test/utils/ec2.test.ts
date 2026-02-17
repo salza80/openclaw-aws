@@ -15,13 +15,8 @@ vi.mock('../../src/cli/utils/aws-clients.js', () => ({
 }));
 
 vi.mock('../../src/cli/utils/errors.js', async () => {
-  const actual = await vi.importActual<typeof import('../../src/cli/utils/errors.js')>(
-    '../../src/cli/utils/errors.js',
-  );
-  return {
-    ...actual,
-    withRetry: withRetryMock,
-  };
+  const { createErrorsModuleMock } = await import('../helpers/mocks/errors.js');
+  return createErrorsModuleMock({ withRetry: withRetryMock });
 });
 
 import {

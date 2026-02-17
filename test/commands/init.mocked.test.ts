@@ -18,16 +18,12 @@ vi.mock('../../src/cli/utils/config-store.js', () => ({
   setCurrentName: setCurrentNameMock,
 }));
 
-vi.mock('../../src/cli/utils/logger.js', () => ({
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    success: vi.fn(),
-    error: vi.fn(),
-    title: vi.fn(),
-    box: vi.fn(),
-  },
-}));
+vi.mock('../../src/cli/utils/logger.js', async () => {
+  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
+  return {
+    logger: createLoggerMock(),
+  };
+});
 
 vi.mock('../../src/cli/commands/deploy.js', () => ({
   default: {
@@ -36,13 +32,8 @@ vi.mock('../../src/cli/commands/deploy.js', () => ({
 }));
 
 vi.mock('../../src/cli/utils/errors.js', async () => {
-  const actual = await vi.importActual<typeof import('../../src/cli/utils/errors.js')>(
-    '../../src/cli/utils/errors.js',
-  );
-  return {
-    ...actual,
-    handleError: vi.fn(),
-  };
+  const { createErrorsModuleMock } = await import('../helpers/mocks/errors.js');
+  return createErrorsModuleMock({ handleError: vi.fn() });
 });
 
 import { handleError, ValidationError } from '../../src/cli/utils/errors.js';
