@@ -1,23 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import initCommand from '../../src/cli/commands/init.js';
 import { getConfigPathByName } from '../../src/cli/utils/config.js';
 import { getCurrentName } from '../../src/cli/utils/config-store.js';
+import { createWorkspace } from '../helpers/workspace.js';
 
 describe('init command', () => {
   const originalCwd = process.cwd();
-  let tempDir: string;
+  let workspace: ReturnType<typeof createWorkspace>;
 
   beforeEach(() => {
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-aws-'));
-    process.chdir(tempDir);
+    workspace = createWorkspace();
+    process.chdir(workspace.cwd);
   });
 
   afterEach(() => {
     process.chdir(originalCwd);
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    workspace.cleanup();
   });
 
   it('defaults name in non-interactive mode and sets current', async () => {

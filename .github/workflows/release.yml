@@ -34,6 +34,8 @@ jobs:
         with:
           version: npm run version
           publish: npm run release
+          title: 'Release: @salza80/openclaw-aws'
+          commit: 'chore: release'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

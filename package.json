@@ -14,6 +14,8 @@
     "telegram",
     "discord",
     "claude",
+    "installation",
+    "setup",
     "infrastructure"
   ],
   "author": "Sally Mclean <smclean17@gmail.com>",
@@ -28,7 +30,7 @@
   },
   "type": "module",
   "bin": {
-    "openclaw-aws": "./dist/cli/index.js"
+    "openclaw-aws": "dist/cli/index.js"
   },
   "files": [
     "dist/",
