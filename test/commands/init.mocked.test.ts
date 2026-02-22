@@ -18,6 +18,11 @@ vi.mock('../../src/cli/utils/config-store.js', () => ({
   setCurrentName: setCurrentNameMock,
 }));
 
+const ensureEnvFilesMock = vi.hoisted(() => vi.fn(() => ({ createdEnv: true, createdEnvExample: true })));
+vi.mock('../../src/cli/utils/env-files.js', () => ({
+  ensureEnvFiles: ensureEnvFilesMock,
+}));
+
 vi.mock('../../src/cli/utils/logger.js', async () => {
   const { createLoggerMock } = await import('../helpers/mocks/logger.js');
   return {
@@ -68,7 +73,7 @@ describe('init command (mocked)', () => {
 
     const { default: initCommand } = await import('../../src/cli/commands/init.js');
     const handler = (initCommand as CommandModule).handler!;
-    const args = { name: 'alpha', _: [], $0: 'openclaw-aws' } as InitHandlerArgs;
+    const args = { name: 'alpha', yes: true, _: [], $0: 'openclaw-aws' } as InitHandlerArgs;
     await handler(args);
 
     expect(logger.info).toHaveBeenCalledWith('Configuration unchanged');
@@ -89,24 +94,26 @@ describe('init command (mocked)', () => {
     expect(saveConfigByNameMock).not.toHaveBeenCalled();
   });
 
-  it('warns when deployment already exists after prompts', async () => {
+  it('returns unchanged when deployment already exists after prompts and overwrite is false', async () => {
     configExistsByNameMock.mockReturnValue(true);
-    promptsMock.mockResolvedValue({
-      deploymentName: 'alpha',
-      region: 'us-east-1',
-      useDefaultVpc: true,
-      instanceType: 't3.micro',
-      instanceName: 'openclaw-alpha',
-      apiProvider: 'anthropic-api-key',
-      cloudWatchLogs: true,
-    });
+    promptsMock
+      .mockResolvedValueOnce({
+        deploymentName: 'alpha',
+        region: 'us-east-1',
+        useDefaultVpc: true,
+        instanceType: 't3.micro',
+        instanceName: 'openclaw-alpha',
+        apiProvider: 'anthropic-api-key',
+        cloudWatchLogs: true,
+      })
+      .mockResolvedValueOnce({ overwrite: false });
 
     const { default: initCommand } = await import('../../src/cli/commands/init.js');
     const handler = (initCommand as CommandModule).handler!;
     const args = { _: [], $0: 'openclaw-aws' } as InitHandlerArgs;
     await handler(args);
 
-    expect(logger.warn).toHaveBeenCalledWith('Deployment "alpha" already exists');
+    expect(logger.info).toHaveBeenCalledWith('Configuration unchanged');
     expect(saveConfigByNameMock).not.toHaveBeenCalled();
   });
 
@@ -131,6 +138,7 @@ describe('init command (mocked)', () => {
 
     expect(saveConfigByNameMock).toHaveBeenCalledTimes(1);
     expect(setCurrentNameMock).toHaveBeenCalledWith('alpha');
+    expect(ensureEnvFilesMock).toHaveBeenCalledTimes(1);
     expect(deployCommand.handler).not.toHaveBeenCalled();
   });
 

@@ -1,6 +1,8 @@
 import type { CommandModule } from 'yargs';
 import prompts from 'prompts';
 import chalk from 'chalk';
+import fs from 'fs';
+import path from 'path';
 import { logger } from '../utils/logger.js';
 import { saveConfigByName, configExistsByName } from '../utils/config.js';
 import { setCurrentName } from '../utils/config-store.js';
@@ -13,8 +15,10 @@ import {
 import { handleError, ValidationError } from '../utils/errors.js';
 import type { OpenClawConfig, Provider } from '../types/index.js';
 import { API_PROVIDERS } from '../constants.js';
+import { ensureEnvFiles } from '../utils/env-files.js';
 
 interface InitArgs {
+  folder?: string;
   name?: string;
   region?: string;
   instanceType?: string;
@@ -22,12 +26,40 @@ interface InitArgs {
   apiProvider?: Provider;
 }
 
+function hasExistingSetup(directory: string): boolean {
+  return fs.existsSync(path.join(directory, '.openclaw-aws', 'configs'));
+}
+
+function resolveTargetDir(baseDir: string, folderInput?: string): { targetDir: string; created: boolean } {
+  const folderName = folderInput?.trim();
+  if (!folderName) {
+    return { targetDir: baseDir, created: false };
+  }
+
+  const targetDir = path.resolve(baseDir, folderName);
+  if (fs.existsSync(targetDir)) {
+    if (!fs.statSync(targetDir).isDirectory()) {
+      throw new ValidationError(`Path exists and is not a directory: ${targetDir}`, [
+        'Choose a different folder and rerun: openclaw-aws init',
+      ]);
+    }
+    return { targetDir, created: false };
+  }
+
+  fs.mkdirSync(targetDir, { recursive: true });
+  return { targetDir, created: true };
+}
+
 export const initCommand: CommandModule<{}, InitArgs> = {
-  command: 'init',
+  command: 'init [folder]',
   describe: 'Initialize OpenClaw AWS deployment configuration',
 
   builder: (yargs) => {
     return yargs
+      .positional('folder', {
+        type: 'string',
+        describe: 'Folder to initialize (created if missing)',
+      })
       .option('region', {
         type: 'string',
         describe: 'AWS region',
@@ -54,6 +86,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
   },
 
   handler: async (argv) => {
+    const originalCwd = process.cwd();
+
     try {
       logger.title('OpenClaw AWS - Deployment Setup Wizard');
       const apiProviderValues = API_PROVIDERS.map((p) => p.value);
@@ -64,23 +98,9 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         ]);
       }
 
-      // Check if config already exists (by name)
-      if (argv.name && configExistsByName(argv.name)) {
-        const { overwrite } = await prompts({
-          type: 'confirm',
-          name: 'overwrite',
-          message: `Deployment "${argv.name}" already exists. Overwrite?`,
-          initial: false,
-        });
-
-        if (!overwrite) {
-          logger.info('Configuration unchanged');
-          return;
-        }
-      }
-
       let config: OpenClawConfig;
       let deploymentName = argv.name;
+      let folderNameFromPrompt: string | undefined;
 
       if (argv.yes) {
         // Use defaults
@@ -89,7 +109,6 @@ export const initCommand: CommandModule<{}, InitArgs> = {
 
         config = {
           version: '1.0',
-          // deployment name is the single source of truth; project name removed
           aws: {
             region: argv.region || 'us-east-1',
           },
@@ -111,14 +130,32 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           },
         };
       } else {
+        const shouldPromptForFolder = !argv.folder && !hasExistingSetup(originalCwd);
+
         // Interactive prompts
-        const answers = await prompts([
+        const questions = [
+          ...(shouldPromptForFolder
+            ? [
+                {
+                  type: 'text',
+                  name: 'folderName',
+                  message: 'Folder name (leave blank to use current folder):',
+                  initial: '',
+                  validate: (value: string) => {
+                    const normalized = value.trim();
+                    if (!normalized) return true;
+                    const validation = validateProjectName(normalized);
+                    return validation === true ? true : `Folder name: ${String(validation)}`;
+                  },
+                },
+              ]
+            : []),
           {
             type: 'text',
             name: 'deploymentName',
             message: 'Deployment name (unique):',
             initial: deploymentName,
-            validate: (value) =>
+            validate: (value: string) =>
               validateProjectName(value) === true
                 ? true
                 : `Name your bot. ${String(validateProjectName(value))}`,
@@ -177,7 +214,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
             message: 'Enable CloudWatch Logs?',
             initial: true,
           },
-        ]);
+        ] as any;
+        const answers = await prompts(questions);
 
         // Check if user cancelled
         if (!answers.deploymentName) {
@@ -185,6 +223,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
           return;
         }
 
+        folderNameFromPrompt = answers.folderName;
         deploymentName = answers.deploymentName;
 
         config = {
@@ -220,10 +259,27 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         throw new Error('Deployment name is required');
       }
 
-      if (configExistsByName(deploymentName) && !argv.name) {
-        logger.warn(`Deployment "${deploymentName}" already exists`);
-        console.log('Choose a different name or rerun with --name to overwrite.');
-        return;
+      const { targetDir, created } = resolveTargetDir(originalCwd, argv.folder || folderNameFromPrompt);
+      if (targetDir !== originalCwd) {
+        process.chdir(targetDir);
+      }
+
+      if (configExistsByName(deploymentName)) {
+        const { overwrite } = await prompts({
+          type: 'confirm',
+          name: 'overwrite',
+          message: `Deployment "${deploymentName}" already exists. Overwrite?`,
+          initial: false,
+        });
+
+        if (!overwrite) {
+          logger.info('Configuration unchanged');
+          return;
+        }
+      }
+
+      if (created) {
+        logger.success(`Created folder: ${chalk.cyan(targetDir)}`);
       }
 
       logger.info(`Creating deployment ${chalk.cyan(deploymentName)}`);
@@ -232,6 +288,16 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       saveConfigByName(config, deploymentName);
       logger.success(`Configuration saved for "${deploymentName}"`);
       setCurrentName(deploymentName);
+
+      const envResult = ensureEnvFiles(process.cwd());
+      if (envResult.createdEnvExample) {
+        logger.success(`Created ${chalk.cyan('.env.example')} with API key placeholders`);
+      }
+      if (envResult.createdEnv) {
+        logger.success(`Created ${chalk.cyan('.env')} template. Add your API key before deploy.`);
+      } else {
+        logger.info(`${chalk.cyan('.env')} already exists. Keeping existing values.`);
+      }
 
       // Display summary
       console.log('\n' + chalk.bold('Configuration Summary:'));
@@ -290,6 +356,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       }
     } catch (error) {
       handleError(error);
+    } finally {
+      process.chdir(originalCwd);
     }
   },
 };

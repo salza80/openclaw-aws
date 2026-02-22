@@ -7,33 +7,36 @@ OpenClaw AWS is a CLI that makes it simple to provision and manage OpenClaw bots
 ## Install
 
 ```bash
-# Recommended: local install in your bot folder
-mkdir my-openclaw-bot
-cd my-openclaw-bot
-npm init -y
-npm install @salza80/openclaw-aws
-npx openclaw-aws --help
+# Recommended: install globally for the fastest setup
+npm install -g @salza80/openclaw-aws
+openclaw-aws --help
 
 # Alternative: run directly with npx (no install)
 npx @salza80/openclaw-aws --help
 
-# Alternative: install globally
-npm install -g @salza80/openclaw-aws
-openclaw-aws --help
+# Alternative: local install inside an existing project folder
+npm install @salza80/openclaw-aws
+npx openclaw-aws --help
 ```
 
 ## Quick Start
 
 ```bash
-# Initialize your bot with interactive prompts
-# This will generate a config file
-npx openclaw-aws init
+# Initialize. If the folder doesn't exist, it is created.
+# If .env/.env.example are missing, they are created with API key placeholders.
+openclaw-aws init my-openclaw-bot
+
+# Move into the folder (only needed if you created a new folder)
+cd my-openclaw-bot
+
+# Fill in the API key in .env (replace ---yourkey--- for your selected provider)
+$EDITOR .env
 
 # Deploy. -- That's it!
-npx openclaw-aws deploy
+openclaw-aws deploy
 
 # Wait for deploy to finish. View the status of your bot
-npx openclaw-aws status
+openclaw-aws status
 ```
 
 If you installed locally, prefix commands with `npx openclaw-aws`.
@@ -91,17 +94,28 @@ openclaw-aws --help
 
 ### `openclaw-aws init`
 
-Interactive setup wizard to create a config.
+Interactive setup wizard to create a config and local env templates.
+
+Behavior:
+
+- Supports `openclaw-aws init [folder]`
+- Creates the folder if it does not exist
+- Creates `.env.example` and `.env` if missing
+- Does not overwrite `.env` if it already exists
+- Prompts before overwriting an existing config with the same deployment name
 
 **Example:**
 
 ```bash
 openclaw-aws init
+openclaw-aws init my-bot-folder
 ```
 
 ### `openclaw-aws deploy`
 
 Deploy infrastructure to AWS.
+
+`deploy` validates that your selected API key is set and not left as a placeholder (for example `---yourkey---`).
 
 **Example:**
 
@@ -237,6 +251,7 @@ openclaw-aws use my-bot
 
 Configuration is created with the `init` command, and stored per config in `.openclaw-aws/configs/<name>.json`.
 The current selection is stored in `.openclaw-aws/current.json`.
+`init` also creates `.env.example` and `.env` (if missing), with API key placeholders like `---yourkey---`.
 
 **Example configuration:**
 

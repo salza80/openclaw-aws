@@ -22,6 +22,7 @@ import {
   getApiKeyEnvVar,
   getApiKeyParamName,
   getGatewayTokenParamName,
+  isApiKeyConfigured,
   resolveApiKey,
 } from '../utils/api-keys.js';
 import crypto from 'crypto';
@@ -147,7 +148,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
           const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
           const apiKey = resolveApiKey(apiProvider);
-          if (!apiKey) {
+          if (!isApiKeyConfigured(apiKey)) {
             missingKeys.push({ name, envVar: apiKeyEnvVar });
             continue;
           }
@@ -162,6 +163,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
               .join(', ')}`,
             [
               'Set them in your shell or .env before deploying:',
+              'Unset values or placeholders like ---yourkey--- are treated as missing.',
               ...missingKeys.map((item) => `  ${item.name}: ${item.envVar}=your-api-key`),
             ],
           );
@@ -325,10 +327,11 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
       const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
       const apiKey = resolveApiKey(apiProvider);
-      if (!apiKey) {
+      if (!isApiKeyConfigured(apiKey)) {
         throw new AWSError(`Missing API key: ${apiKeyEnvVar}`, [
           `Set it in your shell: export ${apiKeyEnvVar}=your-api-key`,
           `Or add it to .env in your current directory: ${apiKeyEnvVar}=your-api-key`,
+          'Placeholder values like ---yourkey--- are not valid.',
           'Then rerun: openclaw-aws deploy',
         ]);
       }

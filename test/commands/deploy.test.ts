@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { CommandModule } from 'yargs';
 import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
@@ -49,9 +49,11 @@ vi.mock('../../src/cli/utils/aws-validation.js', () => ({
 
 const resolveApiKeyMock = vi.hoisted(() => vi.fn());
 const getApiKeyEnvVarMock = vi.hoisted(() => vi.fn(() => 'TEST_KEY'));
+const isApiKeyConfiguredMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/cli/utils/api-keys.js', () => ({
   resolveApiKey: resolveApiKeyMock,
   getApiKeyEnvVar: getApiKeyEnvVarMock,
+  isApiKeyConfigured: isApiKeyConfiguredMock,
   getApiKeyParamName: vi.fn(() => 'param'),
   getGatewayTokenParamName: vi.fn(() => 'param-token'),
 }));
@@ -96,6 +98,10 @@ const handleErrorMock = vi.mocked(handleError);
 describe('deploy command', () => {
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
+  beforeEach(() => {
+    isApiKeyConfiguredMock.mockImplementation((value) => Boolean(value) && value !== '---yourkey---');
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
   });
@@ -128,6 +134,7 @@ describe('deploy command', () => {
   it('calls handleError when API key is missing', async () => {
     getStackStatusMock.mockRejectedValue(new Error('not found'));
     resolveApiKeyMock.mockReturnValue(undefined);
+    isApiKeyConfiguredMock.mockReturnValue(false);
 
     const handler = (deployCommand as CommandModule).handler!;
     const args: DeployHandlerArgs = { _: [], $0: 'openclaw-aws' };
@@ -142,6 +149,7 @@ describe('deploy command', () => {
   it('deploys when stack missing and autoApprove is true', async () => {
     getStackStatusMock.mockRejectedValue(new Error('not found'));
     resolveApiKeyMock.mockReturnValue('secret');
+    isApiKeyConfiguredMock.mockReturnValue(true);
     execaMock.mockResolvedValue({});
 
     const handler = (deployCommand as CommandModule).handler!;
@@ -162,6 +170,7 @@ describe('deploy command', () => {
     listConfigNamesMock.mockReturnValue(['alpha']);
     getStackStatusMock.mockRejectedValue(new Error('not found'));
     resolveApiKeyMock.mockReturnValue('secret');
+    isApiKeyConfiguredMock.mockReturnValue(true);
     promptsMock.mockResolvedValue({ confirmText: 'DEPLOY ALL' });
     execaMock.mockResolvedValue({});
 
@@ -171,5 +180,20 @@ describe('deploy command', () => {
 
     expect(promptsMock).toHaveBeenCalled();
     expect(execaMock).toHaveBeenCalled();
+  });
+
+  it('treats placeholder API key value as missing', async () => {
+    getStackStatusMock.mockRejectedValue(new Error('not found'));
+    resolveApiKeyMock.mockReturnValue('---yourkey---');
+    isApiKeyConfiguredMock.mockReturnValue(false);
+
+    const handler = (deployCommand as CommandModule).handler!;
+    const args: DeployHandlerArgs = { _: [], $0: 'openclaw-aws' };
+    await handler(args);
+
+    expect(handleErrorMock).toHaveBeenCalledTimes(1);
+    const [error] = handleErrorMock.mock.calls[0];
+    expect(error).toBeInstanceOf(AWSError);
+    expect((error as AWSError).message).toContain('Missing API key');
   });
 });
