@@ -34,4 +34,4 @@ export const API_PROVIDERS = [
 ] as const;
 
 // Minimum supported Node.js major version
-export const MIN_NODE_VERSION = 20;
+export const MIN_NODE_VERSION = 22;

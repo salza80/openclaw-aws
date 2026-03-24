@@ -1,11 +1,10 @@
 {
   "version": "1.0",
   "aws": {
-    "region": "us-east-1",
-    "profile": "default"
+    "region": "us-east-1"
   },
   "instance": {
-    "type": "t3.micro",
+    "type": "t3.small",
     "name": "openclaw-my-bot"
   },
   "network": {
