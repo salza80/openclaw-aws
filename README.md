@@ -7,20 +7,26 @@ OpenClaw AWS is a CLI that makes it simple to provision and manage OpenClaw bots
 ## Install
 
 ```bash
-# Recommended: local install in your bot folder
+# Recommended: install in your bot folder
 mkdir my-openclaw-bot
 cd my-openclaw-bot
 npm init -y
 npm install @salza80/openclaw-aws
+
+# Run the CLI with npx
 npx openclaw-aws --help
 
-# Alternative: run directly with npx (no install)
-npx @salza80/openclaw-aws --help
-
-# Alternative: install globally
+# Optional: install globally if you prefer not to use npx
 npm install -g @salza80/openclaw-aws
 openclaw-aws --help
 ```
+
+## Prerequisites
+
+- **Node.js 22+**
+- **AWS CLI v2 installed and authenticated** (SSO recommended)
+  - Install AWS CLI v2: [AWS CLI install guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
+  - Configure SSO: [AWS CLI SSO setup guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)
 
 ## Quick Start
 
@@ -29,24 +35,28 @@ openclaw-aws --help
 # This will generate a config file
 npx openclaw-aws init
 
-# Deploy. -- That's it!
+# Set the API key required by your selected provider
+# Default provider from init is Anthropic unless you choose another one
+export ANTHROPIC_API_KEY=your-api-key
+
+# Deploy
 npx openclaw-aws deploy
 
 # Wait for deploy to finish. View the status of your bot
 npx openclaw-aws status
 ```
 
-If you installed locally, prefix commands with `npx openclaw-aws`.
+The examples below use the recommended local-install workflow with `npx openclaw-aws`.
 
 To access your bot:
 
 ```bash
 # Open the dashboard to view in your browser (port forwarded via secure SSM - not public access)
-openclaw-aws dashboard
+npx openclaw-aws dashboard
 # Opens http://localhost:18789 in your browser - short delay before it works - refresh browser after 5 seconds
 
 # Or connect to the instance via SSM - for full terminal access
-openclaw-aws connect
+npx openclaw-aws connect
 ```
 
 See the OpenClaw docs for ongoing configuration and usage guidance for your bot: [OpenClaw Documentation](https://docs.openclaw.ai/)
@@ -55,37 +65,30 @@ Managing multiple bots / instances:
 
 ```bash
 # This will generate another config file
-openclaw-aws init
+npx openclaw-aws init
 # deploy it
-openclaw-aws deploy
+npx openclaw-aws deploy
 
 # List all bot configs
-openclaw-aws list
+npx openclaw-aws list
 
 # View status of the currently selected config
-openclaw-aws status
+npx openclaw-aws status
 # View status of all configs
-openclaw-aws status --all
+npx openclaw-aws status --all
 
 # See the currently selected config.
 # Commands default to this config.
-openclaw-aws current
+npx openclaw-aws current
 
 # Select another config
-openclaw-aws use <name>
+npx openclaw-aws use <name>
 
 # Run any command against a specific config or all configs with --name <name> or --all
 
 # get help with commands
-openclaw-aws --help
+npx openclaw-aws --help
 ```
-
-## Prerequisites
-
-- **Node.js 20+**
-- **AWS CLI v2 installed and authenticated** (SSO recommended)
-  - Install AWS CLI v2: [AWS CLI install guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
-  - Configure SSO: [AWS CLI SSO setup guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)
 
 ## Commands
 
@@ -96,7 +99,7 @@ Interactive setup wizard to create a config.
 **Example:**
 
 ```bash
-openclaw-aws init
+npx openclaw-aws init
 ```
 
 ### `openclaw-aws deploy`
@@ -106,9 +109,9 @@ Deploy infrastructure to AWS.
 **Example:**
 
 ```bash
-openclaw-aws deploy
-openclaw-aws deploy --name my-bot
-openclaw-aws deploy --all
+npx openclaw-aws deploy
+npx openclaw-aws deploy --name my-bot
+npx openclaw-aws deploy --all
 ```
 
 ### `openclaw-aws status`
@@ -118,8 +121,8 @@ Check deployment and instance status.
 **Example:**
 
 ```bash
-openclaw-aws status
-openclaw-aws status --all
+npx openclaw-aws status
+npx openclaw-aws status --all
 ```
 
 ### `openclaw-aws dashboard`
@@ -129,7 +132,7 @@ Forward port 18789 to access the OpenClaw dashboard locally.
 **Example:**
 
 ```bash
-openclaw-aws dashboard
+npx openclaw-aws dashboard
 ```
 
 ### `openclaw-aws connect`
@@ -139,7 +142,7 @@ Connect to your EC2 instance via SSM.
 **Example:**
 
 ```bash
-openclaw-aws connect
+npx openclaw-aws connect
 ```
 
 ### `openclaw-aws start`
@@ -149,7 +152,7 @@ Start a stopped instance.
 **Example:**
 
 ```bash
-openclaw-aws start
+npx openclaw-aws start
 ```
 
 ### `openclaw-aws stop`
@@ -159,7 +162,7 @@ Stop a running instance to save costs.
 **Example:**
 
 ```bash
-openclaw-aws stop
+npx openclaw-aws stop
 ```
 
 ### `openclaw-aws restart`
@@ -169,7 +172,7 @@ Reboot the instance.
 **Example:**
 
 ```bash
-openclaw-aws restart
+npx openclaw-aws restart
 ```
 
 ### `openclaw-aws outputs`
@@ -179,7 +182,20 @@ Show CloudFormation stack outputs.
 **Example:**
 
 ```bash
-openclaw-aws outputs --name my-bot
+npx openclaw-aws outputs --name my-bot
+```
+
+### `openclaw-aws logs`
+
+Fetch instance logs (cloud-init and OpenClaw services).
+
+**Example:**
+
+```bash
+npx openclaw-aws logs
+npx openclaw-aws logs --init
+npx openclaw-aws logs --service --tail 100
+npx openclaw-aws logs --service --follow
 ```
 
 ### `openclaw-aws destroy`
@@ -196,11 +212,11 @@ Delete all AWS resources.
 **Example:**
 
 ```bash
-openclaw-aws destroy --name my-bot
-openclaw-aws destroy --all
+npx openclaw-aws destroy --name my-bot
+npx openclaw-aws destroy --all
 
 # Force delete without confirmation
-openclaw-aws destroy --name my-bot --force
+npx openclaw-aws destroy --name my-bot --force
 ```
 
 ### `openclaw-aws list`
@@ -210,7 +226,7 @@ List configs.
 **Example:**
 
 ```bash
-openclaw-aws list
+npx openclaw-aws list
 ```
 
 ### `openclaw-aws current`
@@ -220,7 +236,7 @@ Show the current config.
 **Example:**
 
 ```bash
-openclaw-aws current
+npx openclaw-aws current
 ```
 
 ### `openclaw-aws use`
@@ -230,7 +246,7 @@ Select a config.
 **Example:**
 
 ```bash
-openclaw-aws use my-bot
+npx openclaw-aws use my-bot
 ```
 
 ## Configuration
@@ -244,11 +260,10 @@ The current selection is stored in `.openclaw-aws/current.json`.
 {
   "version": "1.0",
   "aws": {
-    "region": "us-east-1",
-    "profile": "default"
+    "region": "us-east-1"
   },
   "instance": {
-    "type": "t3.micro",
+    "type": "t3.small",
     "name": "openclaw-my-bot"
   },
   "network": {
@@ -266,16 +281,18 @@ The current selection is stored in `.openclaw-aws/current.json`.
 }
 ```
 
+If you want to use a named AWS CLI profile, you can add an optional `aws.profile` field manually.
+
 ## Multiple Bots (Configs)
 
 To manage multiple bots, create one config per bot and switch between them:
 
 ```bash
-openclaw-aws init --name bot-a
-openclaw-aws init --name bot-b
-openclaw-aws list
-openclaw-aws use bot-b
-openclaw-aws current
+npx openclaw-aws init --name bot-a
+npx openclaw-aws init --name bot-b
+npx openclaw-aws list
+npx openclaw-aws use bot-b
+npx openclaw-aws current
 ```
 
 ## Start/Stop (Cost Control)
@@ -283,8 +300,8 @@ openclaw-aws current
 Use `stop` to save costs when you don’t need the bot running, and `start` to resume.
 
 ```bash
-openclaw-aws stop --name my-bot
-openclaw-aws start --name my-bot
+npx openclaw-aws stop --name my-bot
+npx openclaw-aws start --name my-bot
 ```
 
 ## Benefits & Setup
@@ -298,7 +315,7 @@ openclaw-aws start --name my-bot
 
 The deployment creates:
 
-- **EC2 Instance** - Ubuntu 24.04 LTS, t3.micro (or your chosen type)
+- **EC2 Instance** - Ubuntu 24.04 LTS, t3.small by default (or your chosen type)
   - IMDSv2 enforced (SSRF protection)
   - Encrypted EBS volume (data at rest encryption)
   - Public IP assigned (required for outbound connectivity)
@@ -318,7 +335,7 @@ The deployment creates:
 Wait 2-3 minutes after deployment. Check status:
 
 ```bash
-openclaw-aws status
+npx openclaw-aws status
 ```
 
 ### "Config file not found"
@@ -326,9 +343,9 @@ openclaw-aws status
 Run the init command first:
 
 ```bash
-openclaw-aws init
-openclaw-aws list
-openclaw-aws use my-bot
+npx openclaw-aws init
+npx openclaw-aws list
+npx openclaw-aws use my-bot
 ```
 
 ### Deployment fails
@@ -344,13 +361,13 @@ aws sts get-caller-identity
 Ensure SSM plugin is installed and instance is ready:
 
 ```bash
-openclaw-aws status
+npx openclaw-aws status
 ```
 
 Restart instance if the gateway or SSM has crashed:
 
 ```bash
-openclaw-aws restart
+npx openclaw-aws restart
 ```
 
 ## Development
@@ -364,7 +381,7 @@ For developers contributing to openclaw-aws:
 git clone https://github.com/salza80/openclaw-aws.git
 cd openclaw-aws
 
-# 2. Use Node 20+
+# 2. Use Node 22+
 nvm use
 
 # 3. Install dependencies
@@ -386,7 +403,7 @@ npm run watch
 
 ### Requirements for Development
 
-- **Node.js 20+** (required by AWS SDK v3)
+- **Node.js 22+**
 - **AWS CLI** with configured credentials
 - **AWS account** with CDK bootstrapped
 - All dependencies install automatically via `npm install`
