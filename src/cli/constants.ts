@@ -33,5 +33,9 @@ export const API_PROVIDERS = [
   { title: 'Opencode Zen', value: 'opencode-zen-api-key', description: 'Opencode Zen API' },
 ] as const;
 
-// Minimum supported Node.js major version
-export const MIN_NODE_VERSION = 22;
+// Local CLI requirement, including the development tooling.
+export const MIN_NODE_VERSION = '22.13.0';
+
+// Keep the deployed runtime compatible with the selected OpenClaw release.
+export const OPENCLAW_NODE_VERSION = '24.22.2';
+export const OPENCLAW_VERSION = '2026.10.9';

@@ -25,7 +25,7 @@ export async function getInstanceIdFromStack(stackName: string, region: string):
     return instanceIdOutput.OutputValue;
   } catch (error) {
     if (error instanceof Error && error.name === 'ValidationError') {
-      throw new Error(`Stack '${stackName}' not found in region '${region}'`);
+      throw new Error(`Stack '${stackName}' not found in region '${region}'`, { cause: error });
     }
     throw error;
   } finally {
@@ -215,7 +215,7 @@ export async function getStackStatus(stackName: string, region: string): Promise
     return status;
   } catch (error) {
     if (error instanceof Error && error.name === 'ValidationError') {
-      throw new Error(`Stack '${stackName}' not found in region '${region}'`);
+      throw new Error(`Stack '${stackName}' not found in region '${region}'`, { cause: error });
     }
     throw error;
   } finally {
@@ -244,7 +244,7 @@ export async function getStackOutputs(
     return result;
   } catch (error) {
     if (error instanceof Error && error.name === 'ValidationError') {
-      throw new Error(`Stack '${stackName}' not found in region '${region}'`);
+      throw new Error(`Stack '${stackName}' not found in region '${region}'`, { cause: error });
     }
     throw error;
   } finally {

@@ -298,14 +298,16 @@ export async function validateStackExists(stackName: string, region: string): Pr
 
 export function validateNodeVersion(): void {
   const nodeVersion = process.version;
-  const majorVersion = parseInt(nodeVersion.split('.')[0].substring(1));
+  const current = nodeVersion.substring(1).split('.').map(Number);
+  const minimum = MIN_NODE_VERSION.split('.').map(Number);
+  const firstDifference = current.findIndex((part, index) => part !== minimum[index]);
 
-  if (majorVersion < MIN_NODE_VERSION) {
+  if (firstDifference !== -1 && current[firstDifference] < minimum[firstDifference]) {
     throw new ValidationError(
       `Node.js version ${nodeVersion} is not supported. Requires Node.js ${MIN_NODE_VERSION} or higher.`,
       [
         `Install Node.js ${MIN_NODE_VERSION} or higher from https://nodejs.org/`,
-        'Or use nvm: nvm install 22 && nvm use 22',
+        'Or use nvm in this project: nvm install && nvm use',
       ],
     );
   }
