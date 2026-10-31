@@ -175,11 +175,24 @@ describe('aws-validation utils', () => {
     await expect(validateStackExists('stack', 'us-east-1')).resolves.toBe(false);
   });
 
-  it('validateNodeVersion throws on old Node', () => {
+  it.each(['v10.0.0', 'v22.0.0', 'v22.12.9'])('rejects unsupported Node %s', (version) => {
     const original = process.version;
-    Object.defineProperty(process, 'version', { value: 'v10.0.0', configurable: true });
-    expect(() => validateNodeVersion()).toThrow(ValidationError);
-    Object.defineProperty(process, 'version', { value: original, configurable: true });
+    try {
+      Object.defineProperty(process, 'version', { value: version, configurable: true });
+      expect(() => validateNodeVersion()).toThrow(ValidationError);
+    } finally {
+      Object.defineProperty(process, 'version', { value: original, configurable: true });
+    }
+  });
+
+  it.each(['v22.13.0', 'v22.20.0', 'v24.22.2'])('accepts supported Node %s', (version) => {
+    const original = process.version;
+    try {
+      Object.defineProperty(process, 'version', { value: version, configurable: true });
+      expect(() => validateNodeVersion()).not.toThrow();
+    } finally {
+      Object.defineProperty(process, 'version', { value: original, configurable: true });
+    }
   });
 
   it('validateSSMPlugin throws when missing', async () => {

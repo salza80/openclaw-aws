@@ -12,7 +12,7 @@ import {
 } from '../utils/validation.js';
 import { handleError, ValidationError } from '../utils/errors.js';
 import type { OpenClawConfig, Provider } from '../types/index.js';
-import { API_PROVIDERS } from '../constants.js';
+import { API_PROVIDERS, OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../constants.js';
 
 interface InitArgs {
   name?: string;
@@ -240,7 +240,8 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       console.log(`  ${chalk.bold('Instance:')} ${chalk.cyan(config.instance.type)}`);
       console.log(`  ${chalk.bold('Name:')} ${chalk.cyan(config.instance.name)}`);
       console.log(`  ${chalk.bold('AMI:')} ${chalk.cyan('Ubuntu 24.04 LTS')}`);
-      console.log(`  ${chalk.bold('Node.js:')} ${chalk.cyan('22 (hardcoded)')}`);
+      console.log(`  ${chalk.bold('Node.js:')} ${chalk.cyan(OPENCLAW_NODE_VERSION)}`);
+      console.log(`  ${chalk.bold('OpenClaw:')} ${chalk.cyan(OPENCLAW_VERSION)}`);
       console.log(`  ${chalk.bold('Stack:')} ${chalk.cyan(config.stack.name)}`);
       console.log(
         `  ${chalk.bold('API Provider:')} ${chalk.cyan(config.openclaw?.apiProvider || 'anthropic')}`,

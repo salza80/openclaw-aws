@@ -15,10 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -30,12 +30,12 @@ jobs:
         run: npm test
 
       - name: Create release PR or publish
-        uses: changesets/action@v1
+        uses: changesets/action@v2.1.2
         with:
-          version: npm run version
-          publish: npm run release
-          title: 'Release: @salza80/openclaw-aws'
-          commit: 'chore: release'
+          version-script: npm run version
+          publish-script: npm run release
+          pr-title: 'Release: @salza80/openclaw-aws'
+          commit-message: 'chore: release'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

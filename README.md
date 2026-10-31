@@ -21,9 +21,14 @@ npm install -g @salza80/openclaw-aws
 openclaw-aws --help
 ```
 
+Use `@salza80/openclaw-aws` only when installing the package. The CLI command itself is `openclaw-aws`.
+
+- Local install: `npx openclaw-aws <command>`
+- Global install: `openclaw-aws <command>`
+
 ## Prerequisites
 
-- **Node.js 22+**
+- **Node.js 22.13+** for the local CLI (Node.js 24.22.2 recommended)
 - **AWS CLI v2 installed and authenticated** (SSO recommended)
   - Install AWS CLI v2: [AWS CLI install guide](https://docs.aws.amazon.com/cli/latest/userguide/install-cliv2.html)
   - Configure SSO: [AWS CLI SSO setup guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)
@@ -89,6 +94,22 @@ npx openclaw-aws use <name>
 # get help with commands
 npx openclaw-aws --help
 ```
+
+## OpenClaw version and existing deployments
+
+New deployments install **OpenClaw 2026.10.9** with **Node.js 24.22.2** on the EC2 instance. These versions are selected together because this OpenClaw release no longer supports Node.js 22. OpenClaw's install scripts are explicitly allowed during installation.
+
+Updating this CLI does not upgrade an existing instance. The `deploy` command skips stacks that already exist. To inspect an existing installation:
+
+```bash
+npx openclaw-aws connect --name my-bot
+
+# On the instance, as the ubuntu user:
+node --version
+openclaw --version
+```
+
+Back up your OpenClaw state before upgrading an existing installation, then follow the [OpenClaw update guide](https://docs.openclaw.ai/install/updating). When upgrading from Node.js 22, update Node first and refresh the gateway service so it uses the new runtime. Destroying a deployment deletes its instance data and is not an upgrade procedure.
 
 ## Commands
 
@@ -381,7 +402,8 @@ For developers contributing to openclaw-aws:
 git clone https://github.com/salza80/openclaw-aws.git
 cd openclaw-aws
 
-# 2. Use Node 22+
+# 2. Use the project's Node version
+nvm install
 nvm use
 
 # 3. Install dependencies
@@ -403,7 +425,7 @@ npm run watch
 
 ### Requirements for Development
 
-- **Node.js 22+**
+- **Node.js 24.22.2** via `.nvmrc` (the local CLI supports Node.js 22.13+)
 - **AWS CLI** with configured credentials
 - **AWS account** with CDK bootstrapped
 - All dependencies install automatically via `npm install`
