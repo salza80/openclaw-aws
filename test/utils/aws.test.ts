@@ -61,11 +61,46 @@ import {
   getStackStatus,
   getStackOutputs,
 } from '../../src/cli/utils/aws.js';
-import { AWSError } from '../../src/cli/utils/errors.js';
+import { AWSError, StackNotFoundError } from '../../src/cli/utils/errors.js';
 
 describe('aws utils', () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  const stackLookups = [
+    ['getStackStatus', getStackStatus],
+    ['getStackOutputs', getStackOutputs],
+    ['getInstanceIdFromStack', getInstanceIdFromStack],
+  ] as const;
+
+  it.each(stackLookups)('%s identifies a confirmed missing stack', async (_name, lookup) => {
+    const error = Object.assign(new Error('Stack with id stack does not exist'), {
+      name: 'ValidationError',
+    });
+    cfnSendMock.mockRejectedValue(error);
+
+    await expect(lookup('stack', 'us-east-1')).rejects.toMatchObject({
+      name: 'StackNotFoundError',
+      cause: error,
+    });
+  });
+
+  it.each(stackLookups)(
+    '%s preserves other CloudFormation validation errors',
+    async (_name, lookup) => {
+      const error = Object.assign(new Error('Invalid stack identifier'), {
+        name: 'ValidationError',
+      });
+      cfnSendMock.mockRejectedValue(error);
+
+      await expect(lookup('stack', 'us-east-1')).rejects.toBe(error);
+    },
+  );
+
+  it('getStackStatus identifies an empty stack response as missing', async () => {
+    cfnSendMock.mockResolvedValue({ Stacks: [] });
+    await expect(getStackStatus('stack', 'us-east-1')).rejects.toBeInstanceOf(StackNotFoundError);
   });
 
   it('getInstanceIdFromStack returns instance ID', async () => {

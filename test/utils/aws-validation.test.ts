@@ -82,12 +82,14 @@ import type { OpenClawConfig } from '../../src/cli/types/index.js';
 
 describe('aws-validation utils', () => {
   afterEach(() => {
+    applyAwsProfile();
+    vi.unstubAllEnvs();
     vi.clearAllMocks();
   });
 
   it('applyAwsProfile sets AWS env vars', () => {
-    delete process.env.AWS_PROFILE;
-    delete process.env.AWS_SDK_LOAD_CONFIG;
+    vi.stubEnv('AWS_PROFILE', undefined);
+    vi.stubEnv('AWS_SDK_LOAD_CONFIG', undefined);
     applyAwsProfile('dev');
     expect(process.env.AWS_PROFILE).toBe('dev');
     expect(process.env.AWS_SDK_LOAD_CONFIG).toBe('1');

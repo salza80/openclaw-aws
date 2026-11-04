@@ -7,7 +7,7 @@ import { logger } from '../utils/logger.js';
 import { getConfigPathByName } from '../utils/config.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
-import { handleError, AWSError } from '../utils/errors.js';
+import { handleError, AWSError, StackNotFoundError } from '../utils/errors.js';
 import { getCDKBinary } from '../utils/cdk.js';
 import {
   listConfigNames,
@@ -148,7 +148,11 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           try {
             await getStackStatus(config.stack.name, config.aws.region);
             spinner.succeed(`Stack found: ${config.stack.name}`);
-          } catch {
+          } catch (error) {
+            if (!(error instanceof StackNotFoundError)) {
+              spinner.fail('Could not verify stack status');
+              throw error;
+            }
             spinner.warn('Stack not found (may already be deleted)');
             stackExists = false;
           }
@@ -256,7 +260,11 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         const status = await getStackStatus(config.stack.name, config.aws.region);
         instanceId = status.instanceId;
         spinner.succeed(`Stack found: ${config.stack.name}`);
-      } catch {
+      } catch (error) {
+        if (!(error instanceof StackNotFoundError)) {
+          spinner.fail('Could not verify stack status');
+          throw error;
+        }
         spinner.warn('Stack not found (may already be deleted)');
         stackExists = false;
       }

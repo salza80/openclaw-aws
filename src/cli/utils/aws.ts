@@ -7,7 +7,15 @@ import {
 import { DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import type { DeploymentStatus } from '../types/index.js';
 import { createCloudFormationClient, createEc2Client, createSsmClient } from './aws-clients.js';
-import { AWSError, withRetry } from './errors.js';
+import { AWSError, StackNotFoundError, withRetry } from './errors.js';
+
+function isMissingStackResponse(error: unknown, stackName: string): boolean {
+  return (
+    error instanceof Error &&
+    error.name === 'ValidationError' &&
+    error.message === `Stack with id ${stackName} does not exist`
+  );
+}
 
 export async function getInstanceIdFromStack(stackName: string, region: string): Promise<string> {
   const client = createCloudFormationClient(region);
@@ -24,8 +32,8 @@ export async function getInstanceIdFromStack(stackName: string, region: string):
 
     return instanceIdOutput.OutputValue;
   } catch (error) {
-    if (error instanceof Error && error.name === 'ValidationError') {
-      throw new Error(`Stack '${stackName}' not found in region '${region}'`, { cause: error });
+    if (isMissingStackResponse(error, stackName)) {
+      throw new StackNotFoundError(stackName, region, { cause: error });
     }
     throw error;
   } finally {
@@ -175,7 +183,7 @@ export async function getStackStatus(stackName: string, region: string): Promise
     const stack = response.Stacks?.[0];
 
     if (!stack) {
-      throw new Error(`Stack '${stackName}' not found`);
+      throw new StackNotFoundError(stackName, region);
     }
 
     const status: DeploymentStatus = {
@@ -214,8 +222,8 @@ export async function getStackStatus(stackName: string, region: string): Promise
 
     return status;
   } catch (error) {
-    if (error instanceof Error && error.name === 'ValidationError') {
-      throw new Error(`Stack '${stackName}' not found in region '${region}'`, { cause: error });
+    if (isMissingStackResponse(error, stackName)) {
+      throw new StackNotFoundError(stackName, region, { cause: error });
     }
     throw error;
   } finally {
@@ -243,8 +251,8 @@ export async function getStackOutputs(
 
     return result;
   } catch (error) {
-    if (error instanceof Error && error.name === 'ValidationError') {
-      throw new Error(`Stack '${stackName}' not found in region '${region}'`, { cause: error });
+    if (isMissingStackResponse(error, stackName)) {
+      throw new StackNotFoundError(stackName, region, { cause: error });
     }
     throw error;
   } finally {
