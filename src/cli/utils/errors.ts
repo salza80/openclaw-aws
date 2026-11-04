@@ -9,6 +9,13 @@ import {
   ssmSuggestions,
 } from './suggestions.js';
 
+export class StackNotFoundError extends Error {
+  constructor(stackName: string, region: string, options?: ErrorOptions) {
+    super(`Stack '${stackName}' not found in region '${region}'`, options);
+    this.name = 'StackNotFoundError';
+  }
+}
+
 export class CLIError extends Error {
   constructor(
     message: string,

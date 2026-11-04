@@ -86,7 +86,7 @@ vi.mock('../../src/cli/utils/errors.js', async () => {
   });
 });
 
-import { AWSError, handleError } from '../../src/cli/utils/errors.js';
+import { AWSError, StackNotFoundError, handleError } from '../../src/cli/utils/errors.js';
 import deployCommand from '../../src/cli/commands/deploy.js';
 
 type DeployHandler = NonNullable<(typeof deployCommand)['handler']>;
@@ -126,7 +126,9 @@ describe('deploy command', () => {
   });
 
   it('calls handleError when API key is missing', async () => {
-    getStackStatusMock.mockRejectedValue(new Error('not found'));
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
     resolveApiKeyMock.mockReturnValue(undefined);
 
     const handler = (deployCommand as CommandModule).handler!;
@@ -140,7 +142,9 @@ describe('deploy command', () => {
   });
 
   it('deploys when stack missing and autoApprove is true', async () => {
-    getStackStatusMock.mockRejectedValue(new Error('not found'));
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
     resolveApiKeyMock.mockReturnValue('secret');
     execaMock.mockResolvedValue({});
 
@@ -160,7 +164,9 @@ describe('deploy command', () => {
 
   it('deploys all configs when confirmed', async () => {
     listConfigNamesMock.mockReturnValue(['alpha']);
-    getStackStatusMock.mockRejectedValue(new Error('not found'));
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
     resolveApiKeyMock.mockReturnValue('secret');
     promptsMock.mockResolvedValue({ confirmText: 'DEPLOY ALL' });
     execaMock.mockResolvedValue({});

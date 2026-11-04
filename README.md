@@ -223,6 +223,8 @@ npx openclaw-aws logs --service --follow
 
 Delete all AWS resources.
 
+If the stack lookup fails because of permissions, credentials, or connectivity, destruction stops without deleting stored secrets or local configs. Cleanup of orphaned secrets only proceeds when CloudFormation confirms the stack is missing.
+
 **Options:**
 
 - `--name <name>` - Config name
@@ -303,6 +305,15 @@ The current selection is stored in `.openclaw-aws/current.json`.
 ```
 
 If you want to use a named AWS CLI profile, you can add an optional `aws.profile` field manually.
+Each config uses its own profile. A config without `aws.profile` uses the original shell profile or default AWS credential chain, including during `--all` operations.
+
+### CloudWatch Logs
+
+For new deployments, `features.cloudWatchLogs: true` installs and starts the CloudWatch agent. Logs are sent to `/openclaw/<stack-name>` with 30-day retention and separate streams per instance for bootstrap output, cloud-init diagnostics, and the OpenClaw gateway. The gateway writes its file log to `/home/ubuntu/.openclaw/logs/gateway.log`.
+
+The instance can write only to its deployment's log group. The log group is deleted when the stack is destroyed. CloudWatch ingestion and storage incur AWS charges; set `features.cloudWatchLogs` to `false` to disable collection.
+
+Use `openclaw-aws outputs` to see `LogGroupName`. Updating this CLI does not install the agent on existing instances, because `deploy` skips existing stacks.
 
 ## Multiple Bots (Configs)
 
@@ -343,6 +354,7 @@ The deployment creates:
 - **Security Group** - Zero inbound rules (SSM access only, no SSH)
 - **IAM Role** - Least-privilege with SSM access
 - **VPC** - Uses default VPC by default (option to create new VPC)
+- **CloudWatch Logs** (optional) - Collects bootstrap and gateway logs with 30-day retention
 
 ## Security
 

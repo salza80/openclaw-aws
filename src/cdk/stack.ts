@@ -1,4 +1,4 @@
-import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib';
+import { Stack, StackProps, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import {
   Instance,
@@ -15,6 +15,7 @@ import {
   IVpc,
 } from 'aws-cdk-lib/aws-ec2';
 import { Role, ServicePrincipal, ManagedPolicy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
@@ -33,6 +34,15 @@ export class OpenClawStack extends Stack {
 
     const { config, apiProvider, apiKeyParamName, gatewayTokenParamName } = props;
     const gatewayPort = 18789;
+    const gatewayLogPath = '/home/ubuntu/.openclaw/logs/gateway.log';
+    const logGroupName = `/openclaw/${this.stackName}`;
+    const logGroup = config.enableCloudWatchLogs
+      ? new LogGroup(this, 'OpenClawLogs', {
+          logGroupName,
+          retention: RetentionDays.ONE_MONTH,
+          removalPolicy: RemovalPolicy.DESTROY,
+        })
+      : undefined;
 
     // VPC Configuration - Use default or create new based on config
     let vpc: IVpc;
@@ -64,20 +74,16 @@ export class OpenClawStack extends Stack {
       allowAllOutbound: true,
     });
 
-    // IAM role for SSM and optionally CloudWatch
+    // IAM role for SSM; log permissions are scoped to this deployment's log group.
     const managedPolicies = [
       ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
     ];
-
-    // Conditionally add CloudWatch policy if enabled
-    if (config.enableCloudWatchLogs) {
-      managedPolicies.push(ManagedPolicy.fromAwsManagedPolicyName('CloudWatchAgentServerPolicy'));
-    }
 
     const role = new Role(this, 'OpenClawEc2Role', {
       assumedBy: new ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies,
     });
+    const logGrant = logGroup?.grantWrite(role);
 
     const apiKeyParamArn = Stack.of(this).formatArn({
       service: 'ssm',
@@ -108,6 +114,9 @@ export class OpenClawStack extends Stack {
     // Set appropriate environment variable based on API provider
     const apiKeyEnvVar = apiProvider.toUpperCase().replace(/-/g, '_');
     const authChoiceFlag = apiProvider === 'anthropic-api-key' ? 'apiKey' : apiProvider;
+    const gatewayConfigFilter =
+      'if (.gateway | type) == "object" then .gateway.auth.token = $token else . + {gateway:{auth:{token:$token}}} end' +
+      (logGroup ? ` | .logging.file = "${gatewayLogPath}"` : '');
 
     userData.addCommands(
       '#!/bin/bash',
@@ -146,6 +155,36 @@ export class OpenClawStack extends Stack {
       '  /tmp/aws/install || /tmp/aws/install --update',
       'fi',
       '',
+      ...(logGroup
+        ? [
+            '# Install and start log collection before onboarding so failures are captured',
+            `curl -fsSL --retry 3 https://amazoncloudwatch-agent-${Stack.of(this).region}.s3.${Stack.of(this).region}.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -o /tmp/amazon-cloudwatch-agent.deb`,
+            'dpkg -i /tmp/amazon-cloudwatch-agent.deb',
+            "cat > /opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-agent.json << 'CLOUDWATCH_CONFIG'",
+            JSON.stringify({
+              agent: { region: Stack.of(this).region },
+              logs: {
+                logs_collected: {
+                  files: {
+                    collect_list: [
+                      { file_path: '/var/log/cloud-init-output.log', stream: 'bootstrap' },
+                      { file_path: '/var/log/cloud-init.log', stream: 'cloud-init' },
+                      { file_path: gatewayLogPath, stream: 'gateway' },
+                    ].map(({ file_path, stream }) => ({
+                      file_path,
+                      log_group_name: logGroupName,
+                      log_stream_name: `{instance_id}/${stream}`,
+                    })),
+                  },
+                },
+              },
+            }),
+            'CLOUDWATCH_CONFIG',
+            'systemctl enable amazon-cloudwatch-agent',
+            '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-agent.json',
+            '',
+          ]
+        : []),
       '# Load API key from SSM Parameter Store',
       `export AWS_REGION="${Stack.of(this).region}"`,
       `export AWS_DEFAULT_REGION="${Stack.of(this).region}"`,
@@ -254,11 +293,12 @@ export class OpenClawStack extends Stack {
       'export XDG_RUNTIME_DIR=/run/user/1000',
       'export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
       '',
+      ...(logGroup ? ['mkdir -p /home/ubuntu/.openclaw/logs'] : []),
       'config_path="/home/ubuntu/.openclaw/openclaw.json"',
       'if [ -f "$config_path" ]; then',
       '    # Update gateway token safely via jq',
       '    tmp_config="$(mktemp)"',
-      '    if jq --arg token "$GATEWAY_TOKEN" \'if (.gateway | type) == "object" then .gateway.auth.token = $token else . + {gateway:{auth:{token:$token}}} end\' "$config_path" > "$tmp_config"; then',
+      `    if jq --arg token "$GATEWAY_TOKEN" '${gatewayConfigFilter}' "$config_path" > "$tmp_config"; then`,
       '        mv "$tmp_config" "$config_path"',
       '        echo "Configured gateway with authentication token"',
       '    else',
@@ -321,6 +361,7 @@ export class OpenClawStack extends Stack {
         },
       ],
     });
+    logGrant?.applyBefore(instance);
 
     // Add tags for easy identification
     instance.instance.addPropertyOverride('Tags', [
@@ -330,6 +371,13 @@ export class OpenClawStack extends Stack {
     ]);
 
     // Outputs
+    if (logGroup) {
+      new CfnOutput(this, 'LogGroupName', {
+        value: logGroup.logGroupName,
+        description: 'CloudWatch log group for bootstrap and OpenClaw logs (30-day retention)',
+      });
+    }
+
     new CfnOutput(this, 'InstanceId', {
       value: instance.instanceId,
       description: 'EC2 Instance ID',

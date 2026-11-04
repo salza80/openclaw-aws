@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from '../types/index.js';
 import { resolveConfig } from './config-store.js';
 import { applyAwsProfile, requireAwsCredentials } from './aws-validation.js';
+import { getAwsProfileEnvironment } from './aws-profile.js';
 
 export interface CommandContext {
   name: string;
@@ -36,12 +37,9 @@ export async function buildCommandContext(
 export function buildAwsEnv(config: OpenClawConfig): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {
     ...process.env,
+    ...getAwsProfileEnvironment(config.aws.profile),
     AWS_REGION: config.aws.region,
   };
-
-  if (config.aws.profile) {
-    env.AWS_PROFILE = config.aws.profile;
-  }
 
   return env;
 }

@@ -3,7 +3,13 @@ import { execa } from 'execa';
 import ora from 'ora';
 import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
-import { handleError, AWSError, withRetry, isRetryableError } from '../utils/errors.js';
+import {
+  handleError,
+  AWSError,
+  StackNotFoundError,
+  withRetry,
+  isRetryableError,
+} from '../utils/errors.js';
 import { validatePreDeploy, validateNodeVersion } from '../utils/aws-validation.js';
 import { getCDKBinary } from '../utils/cdk.js';
 import { buildCommandContext } from '../utils/context.js';
@@ -139,7 +145,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
             alreadyDeployed.push({ name, status: status.stackStatus });
             continue;
           } catch (error) {
-            if (!(error instanceof Error && error.message.includes('not found'))) {
+            if (!(error instanceof StackNotFoundError)) {
               throw error;
             }
           }
@@ -315,7 +321,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
         return;
       } catch (error) {
         statusSpinner.stop();
-        if (!(error instanceof Error && error.message.includes('not found'))) {
+        if (!(error instanceof StackNotFoundError)) {
           throw error;
         }
       }

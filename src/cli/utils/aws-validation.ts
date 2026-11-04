@@ -8,17 +8,14 @@ import { ValidationError, AWSError, withRetry } from './errors.js';
 import { awsCredentialSuggestions } from './suggestions.js';
 import type { OpenClawConfig } from '../types/index.js';
 import { MIN_NODE_VERSION } from '../constants.js';
+import { applyAwsProfile } from './aws-profile.js';
+
+export { applyAwsProfile } from './aws-profile.js';
 
 export interface AWSCredentials {
   account: string;
   userId: string;
   arn: string;
-}
-
-export function applyAwsProfile(profile?: string): void {
-  if (!profile) return;
-  process.env.AWS_PROFILE = profile;
-  process.env.AWS_SDK_LOAD_CONFIG = '1';
 }
 
 export async function requireAwsCredentials(config: OpenClawConfig): Promise<AWSCredentials> {

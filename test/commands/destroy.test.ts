@@ -85,7 +85,7 @@ vi.mock('../../src/cli/utils/errors.js', async () => {
   return createErrorsModuleMock({ handleError: vi.fn() });
 });
 
-import { handleError } from '../../src/cli/utils/errors.js';
+import { handleError, StackNotFoundError } from '../../src/cli/utils/errors.js';
 import destroyCommand from '../../src/cli/commands/destroy.js';
 
 type DestroyHandler = NonNullable<(typeof destroyCommand)['handler']>;
@@ -95,10 +95,13 @@ const handleErrorMock = vi.mocked(handleError);
 describe('destroy command', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it('skips destruction when stack is missing', async () => {
-    getStackStatusMock.mockRejectedValue(new Error('stack not found'));
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
     promptsMock.mockResolvedValue({ deleteConfig: false });
 
     const handler = (destroyCommand as CommandModule).handler!;
@@ -109,6 +112,35 @@ describe('destroy command', () => {
     expect(handleErrorMock).not.toHaveBeenCalled();
     expect(sendMock).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    { all: false, message: 'Access denied' },
+    { all: false, message: 'Network timeout' },
+    { all: false, message: 'AWS credentials not found' },
+    { all: true, message: 'Access denied' },
+    { all: true, message: 'Network timeout' },
+    { all: true, message: 'AWS credentials not found' },
+  ])(
+    'preserves secrets and configs on lookup error: $message (all=$all)',
+    async ({ all, message }) => {
+      const error = new Error(message);
+      getStackStatusMock.mockRejectedValue(error);
+      listConfigNamesMock.mockReturnValue(['alpha']);
+      promptsMock.mockResolvedValue({ confirmText: 'DESTROY ALL' });
+      const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+
+      const handler = (destroyCommand as CommandModule).handler!;
+      const args: DestroyHandlerArgs = { all, deleteConfig: true, _: [], $0: 'openclaw-aws' };
+      await handler(args);
+
+      expect(handleErrorMock).toHaveBeenCalledWith(error);
+      expect(execaMock).not.toHaveBeenCalled();
+      expect(sendMock).not.toHaveBeenCalled();
+      expect(unlinkSpy).not.toHaveBeenCalled();
+      expect(clearCurrentNameMock).not.toHaveBeenCalled();
+      expect(setCurrentNameMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('destroys stack when force is true', async () => {
     getStackStatusMock.mockResolvedValue({ instanceId: 'i-123', stackStatus: 'CREATE_COMPLETE' });
@@ -168,7 +200,9 @@ describe('destroy command', () => {
   it('deletes config files in all mode when deleteConfig is true', async () => {
     listConfigNamesMock.mockReturnValue(['alpha']);
     promptsMock.mockResolvedValue({ confirmText: 'DESTROY ALL' });
-    getStackStatusMock.mockRejectedValue(new Error('not found'));
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
 
     const existsSpy = vi.spyOn(fs, 'existsSync').mockReturnValue(true);
     const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
