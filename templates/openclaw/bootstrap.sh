@@ -14,6 +14,7 @@ WORK_DIR=''
 INSTALL_DIR=''
 INSTANCE_ID=''
 SETUP_MARKER=/tmp/openclaw-setup-complete
+DIAGNOSTIC_ROOT=/var/log/openclaw-bootstrap
 trap 'on_exit $?' EXIT
 
 phase() {
@@ -45,6 +46,99 @@ signal_result() {
   return 1
 }
 
+retain_failure_diagnostics() {
+  local node="${NODE_BIN:-}" directory
+  [[ -n "$WORK_DIR" && -d "$WORK_DIR" && -x "$node" ]] || return 0
+  if ! "$node" - "$WORK_DIR" "$DIAGNOSTIC_ROOT" "$PHASE" "${STATE_DIR:-/home/ubuntu/.openclaw}" > "$WORK_DIR/diagnostic-directory" 2>/dev/null <<'DIAGNOSTICS_JS'; then
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { randomBytes } = require('node:crypto');
+  const { createRequire } = require('node:module');
+  const [work, root, phase, state] = process.argv.slice(2);
+  const names = ['onboard.json', 'onboard.err', 'health.json', 'health.err'];
+  const maxSource = 1024 * 1024, maxFile = 64 * 1024;
+  const read = (file) => {
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile() || stat.size > maxSource) return null;
+      return fs.readFileSync(fd, 'utf8');
+    } finally { fs.closeSync(fd); }
+  };
+  const files = names.filter(name => fs.existsSync(path.join(work, name)));
+  if (!files.length) process.exit(0);
+  const secrets = new Set();
+  const remember = value => {
+    if (typeof value !== 'string' || !value) return;
+    secrets.add(value);
+    secrets.add(JSON.stringify(value).slice(1, -1));
+    secrets.add(encodeURIComponent(value));
+  };
+  let redactionReady = true;
+  for (const name of ['api-key.json', 'gateway-token.json']) {
+    const file = path.join(work, name);
+    if (fs.existsSync(file)) {
+      try { remember(JSON.parse(read(file)).Parameter.Value); }
+      catch { redactionReady = false; }
+    }
+  }
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/token|password|secret|api_?key|credential/i.test(key)) remember(value);
+  }
+  const envPath = path.join(state, '.env');
+  if (fs.existsSync(envPath)) {
+    try {
+      const packagePath = path.join(path.dirname(path.dirname(process.execPath)), 'lib/node_modules/openclaw/package.json');
+      const dotenv = createRequire(packagePath)('dotenv');
+      for (const value of Object.values(dotenv.parse(read(envPath)))) remember(value);
+    } catch { redactionReady = false; }
+  }
+  const literals = [...secrets].sort((a, b) => b.length - a.length);
+  const redact = text => {
+    for (const secret of literals) text = text.split(secret).join('[REDACTED]');
+    return text.replace(/\b(Bearer|Basic)\s+[^\s"'<>]+/gi, '$1 [REDACTED]')
+      .replace(/((?:api[-_]?key|token|password|secret|authorization|cookie)\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;&}]+)/gi, '$1[REDACTED]');
+  };
+  const sanitize = value => {
+    if (Array.isArray(value)) return value.map(sanitize);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) =>
+    [redact(key), /token|password|secret|api[-_]?key|authorization|credential|cookie/i.test(key) ? '[REDACTED]' : sanitize(item)]));
+    return typeof value === 'string' ? redact(value) : value;
+  };
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const rootStat = fs.lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || rootStat.uid !== process.getuid()) throw Error('Unsafe diagnostics root');
+  fs.chmodSync(root, 0o700);
+  const previous = fs.readdirSync(root).filter(name => {
+    if (!/^failure-\d{13}-[a-f0-9]{8}$/.test(name)) return false;
+    const stat = fs.lstatSync(path.join(root, name));
+    return stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === process.getuid();
+  }).sort().reverse();
+  for (const name of previous.slice(2)) fs.rmSync(path.join(root, name), { recursive: true });
+  const directory = path.join(root, `failure-${Date.now()}-${randomBytes(4).toString('hex')}`);
+  fs.mkdirSync(directory, { mode: 0o700 });
+  for (const name of files) {
+    const raw = read(path.join(work, name));
+    let content = '[content omitted: credential redaction unavailable]\n';
+    if (redactionReady) {
+      content = '[content omitted: diagnostic exceeds 1 MiB]\n';
+      if (raw !== null) {
+        try { content = JSON.stringify(sanitize(JSON.parse(raw)), null, 2) + '\n'; }
+        catch { content = redact(raw); }
+      }
+    }
+    fs.writeFileSync(path.join(directory, name), Buffer.from(content).subarray(0, maxFile), { mode: 0o600, flag: 'wx' });
+  }
+  fs.writeFileSync(path.join(directory, 'metadata.json'), JSON.stringify({ phase, redactionReady, maxFileBytes: maxFile }) + '\n', { mode: 0o600, flag: 'wx' });
+  process.stdout.write(directory);
+DIAGNOSTICS_JS
+    printf 'OPENCLAW_BOOTSTRAP warning: private diagnostics unavailable\n' >&2
+    return 1
+  fi
+  directory="$(cat "$WORK_DIR/diagnostic-directory")"
+  [[ -z "$directory" ]] || printf 'OPENCLAW_BOOTSTRAP diagnostics=%s\n' "$directory" >&2
+}
+
 on_exit() {
   local original_code="$1" result_code="$1"
   trap - EXIT
@@ -54,12 +148,15 @@ on_exit() {
       touch "$SETUP_MARKER" 2>/dev/null || printf 'OPENCLAW_BOOTSTRAP warning: completion marker unavailable\n' >&2
       printf 'OPENCLAW_BOOTSTRAP READY\n'
     else
+      PHASE=signal
       printf 'OPENCLAW_BOOTSTRAP FAILED phase=signal\n' >&2
       result_code=1
+      retain_failure_diagnostics || true
     fi
   else
     [[ "$result_code" -ne 0 ]] || result_code=1
     printf 'OPENCLAW_BOOTSTRAP FAILED phase=%s exit=%s\n' "$PHASE" "$result_code" >&2
+    retain_failure_diagnostics || true
     signal_result FAILURE || printf 'OPENCLAW_BOOTSTRAP failure signal unavailable\n' >&2
   fi
   [[ -z "$WORK_DIR" ]] || rm -rf -- "$WORK_DIR"
