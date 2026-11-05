@@ -92,3 +92,25 @@ export function getCDKAppCommand(appPath: string): string {
   // argument. A shell builtin prefix keeps both executable/path quotes intact.
   return `${process.platform === 'win32' ? 'call' : 'exec'} ${quote(process.execPath)} ${quote(appPath)}`;
 }
+
+/** Isolate CDK assemblies and user/project settings for concurrent deployments. */
+export async function withCDKWorkspace<T>(
+  environment: Record<string, string | undefined>,
+  operation: (options: { cwd: string; env: Record<string, string | undefined> }) => Promise<T>,
+): Promise<T> {
+  const { tmpdir } = await import('node:os');
+  const directory = fs.mkdtempSync(path.join(tmpdir(), 'openclaw-aws-cdk-'));
+  try {
+    return await operation({
+      cwd: directory,
+      env: {
+        ...environment,
+        HOME: directory,
+        USERPROFILE: directory,
+        CDK_HOME: path.join(directory, '.cdk'),
+      },
+    });
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+}

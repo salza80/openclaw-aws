@@ -71,7 +71,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
 
     const toDeploy: Array<{
       name: string;
-      config: Awaited<ReturnType<typeof buildCommandContext>>['config'];
+      context: Awaited<ReturnType<typeof buildCommandContext>>;
       apiProvider: Provider;
       apiKey: string;
     }> = [];
@@ -102,7 +102,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
         continue;
       }
 
-      toDeploy.push({ name, config, apiProvider, apiKey });
+      toDeploy.push({ name, context: ctx, apiProvider, apiKey });
     }
 
     if (missingKeys.length > 0) {
@@ -142,7 +142,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
     }
 
     for (const target of toDeploy) {
-      const ctx = await buildCommandContext({ name: target.name });
+      const ctx = target.context;
       const config = ctx.config;
 
       logger.title('OpenClaw AWS - Deploy');

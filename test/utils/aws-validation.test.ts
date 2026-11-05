@@ -245,6 +245,11 @@ describe('aws-validation utils', () => {
   });
 
   it('runCDKBootstrap calls execa with cdk bootstrap', async () => {
+    stsSendMock.mockResolvedValue({
+      Account: '123456789012',
+      UserId: 'user',
+      Arn: 'arn:aws:iam::123456789012:user/test',
+    });
     execaMock.mockResolvedValue({});
     await runCDKBootstrap('123456789012', 'us-east-1', 'dev');
     expect(execaMock).toHaveBeenCalledTimes(1);
@@ -257,9 +262,8 @@ describe('aws-validation utils', () => {
       'aws://123456789012/us-east-1',
     ]);
     expect(options).toEqual(expect.objectContaining({ stdio: 'inherit' }));
-    expect(options).toEqual(
-      expect.objectContaining({ env: expect.objectContaining({ AWS_PROFILE: 'dev' }) }),
-    );
+    expect(options.env.AWS_PROFILE).toBeUndefined();
+    expect(options.env.AWS_ACCESS_KEY_ID).toBe('TEST');
   });
 
   it('runCDKBootstrap throws AWSError on failure', async () => {

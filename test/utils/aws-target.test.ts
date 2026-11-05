@@ -26,6 +26,8 @@ beforeEach(() => {
   vi.stubEnv('AWS_DEFAULT_PROFILE', undefined);
   vi.stubEnv('AWS_ACCESS_KEY_ID', undefined);
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', undefined);
+  vi.stubEnv('AWS_SESSION_TOKEN', undefined);
+  vi.stubEnv('AWS_CREDENTIAL_EXPIRATION', undefined);
   mocks.identify.mockResolvedValue(identity);
 });
 afterEach(() => {
@@ -36,6 +38,8 @@ afterEach(() => {
 describe('explicit AWS targets', () => {
   it('isolates overlapping profiles without changing the caller and shares SDK/child identity', async () => {
     vi.stubEnv('AWS_PROFILE', 'caller');
+    vi.stubEnv('CDK_DEFAULT_ACCOUNT', 'wrong-inherited-account');
+    vi.stubEnv('CDK_DEFAULT_REGION', 'wrong-inherited-region');
     mocks.provider.mockImplementation(
       ({ profile }) =>
         async () =>
@@ -54,6 +58,8 @@ describe('explicit AWS targets', () => {
       expect(child.AWS_SESSION_TOKEN).toBe(sdk.sessionToken);
       expect(child.AWS_PROFILE).toBeUndefined();
       expect(child.AWS_REGION).toBe(target.region);
+      expect(child.CDK_DEFAULT_ACCOUNT).toBe(target.account);
+      expect(child.CDK_DEFAULT_REGION).toBe(target.region);
       client.destroy();
     }
     expect((await alpha.credentials()).accessKeyId).toBe('alpha');
@@ -89,6 +95,16 @@ describe('explicit AWS targets', () => {
         .accessKeyId,
     ).toBe('profile');
   });
+  it('requires known expiration before using temporary environment credentials for a long child operation', async () => {
+    vi.stubEnv('AWS_ACCESS_KEY_ID', 'temporary');
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'private');
+    vi.stubEnv('AWS_SESSION_TOKEN', 'temporary-session');
+    vi.stubEnv('AWS_CREDENTIAL_EXPIRATION', undefined);
+    const target = await resolveAwsTarget({ region: 'eu-central-1' });
+    await expect(target.environment(30 * 60_000)).rejects.toThrow('no known expiration');
+    expect(mocks.export).not.toHaveBeenCalled();
+  });
+
   it('refreshes through the original provider and checks identity before exposing credentials', async () => {
     const provider = vi
       .fn()
@@ -101,6 +117,61 @@ describe('explicit AWS targets', () => {
     expect(provider).toHaveBeenLastCalledWith({ forceRefresh: true });
     expect(mocks.identify).toHaveBeenCalledTimes(2);
   });
+  it('also rejects an unknown lifetime returned during refresh', async () => {
+    mocks.provider.mockReturnValue(
+      vi.fn().mockResolvedValueOnce(credential('old', 90_000)).mockResolvedValue({
+        accessKeyId: 'new',
+        secretAccessKey: 'private',
+        sessionToken: 'temporary',
+      }),
+    );
+    const target = await resolveAwsTarget({ region: 'eu-central-1' });
+    await expect(target.environment(30 * 60_000)).rejects.toThrow('no known expiration');
+  });
+
+  it('allows renewed AssumeRole sessions for the same stable IAM role principal', async () => {
+    mocks.identify
+      .mockResolvedValueOnce({
+        ...identity,
+        Arn: 'arn:aws:sts::123456789012:assumed-role/role/initial',
+        UserId: 'AROAEXAMPLE:initial',
+      })
+      .mockResolvedValue({
+        ...identity,
+        Arn: 'arn:aws:sts::123456789012:assumed-role/role/refreshed',
+        UserId: 'AROAEXAMPLE:refreshed',
+      });
+    mocks.provider.mockReturnValue(
+      vi.fn().mockResolvedValueOnce(credential('old', 90_000)).mockResolvedValue(credential('new')),
+    );
+    const target = await resolveAwsTarget({ region: 'eu-central-1' });
+    expect((await target.environment(30 * 60_000)).AWS_ACCESS_KEY_ID).toBe('new');
+  });
+
+  it.each([
+    {
+      Arn: 'arn:aws:sts::123456789012:assumed-role/other/refreshed',
+      UserId: 'AROAEXAMPLE:refreshed',
+    },
+    {
+      Arn: 'arn:aws:sts::123456789012:assumed-role/role/refreshed',
+      UserId: 'AROBEXAMPLE:refreshed',
+    },
+  ])('rejects a changed role ARN or unique role ID during refresh', async (changed) => {
+    mocks.identify
+      .mockResolvedValueOnce({
+        ...identity,
+        Arn: 'arn:aws:sts::123456789012:assumed-role/role/initial',
+        UserId: 'AROAEXAMPLE:initial',
+      })
+      .mockResolvedValue({ ...identity, ...changed });
+    mocks.provider.mockReturnValue(
+      vi.fn().mockResolvedValueOnce(credential('old', 90_000)).mockResolvedValue(credential('new')),
+    );
+    const target = await resolveAwsTarget({ region: 'eu-central-1' });
+    await expect(target.environment(30 * 60_000)).rejects.toThrow('identity changed');
+  });
+
   it('fails closed when a refreshed source changes identity', async () => {
     mocks.provider.mockReturnValue(
       vi.fn().mockResolvedValueOnce(credential('old', 90_000)).mockResolvedValue(credential('new')),

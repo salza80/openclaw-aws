@@ -39,6 +39,18 @@ async function identify(region: string, credentials: Credentials) {
   }
 }
 
+// AssumeRole refreshes can change the session suffix while retaining the IAM
+// principal. Compare its stable role ID as well as ARN, never just the role name.
+// https://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html
+function principalIdentity(identity: { arn: string; userId: string }): string {
+  let { arn, userId } = identity;
+  if (/^arn:[^:]+:sts::[0-9]{12}:assumed-role\/.+\/[^/]+$/.test(arn) && userId.indexOf(':') > 0) {
+    arn = arn.slice(0, arn.lastIndexOf('/'));
+    userId = userId.slice(0, userId.indexOf(':'));
+  }
+  return JSON.stringify([arn, userId]);
+}
+
 export async function resolveAwsTarget(options: {
   region: string;
   profile?: string;
@@ -119,15 +131,29 @@ export async function resolveAwsTarget(options: {
   const identity = await identify(region, current);
   let refresh: Promise<Credentials> | undefined;
   const getCredentials = async (minimumValidityMs = 60_000): Promise<Credentials> => {
-    const valid = (credentials: Credentials) =>
-      !credentials.expiration ||
-      (Number.isFinite(credentials.expiration.getTime()) &&
-        credentials.expiration.getTime() - Date.now() > minimumValidityMs);
+    const valid = (credentials: Credentials) => {
+      if (minimumValidityMs > 60_000 && credentials.sessionToken && !credentials.expiration) {
+        throw new AWSError(
+          'Temporary AWS credentials have no known expiration for this operation',
+          [
+            'Use an SSO/refreshable profile, or supply the actual AWS_CREDENTIAL_EXPIRATION timestamp with temporary environment credentials',
+          ],
+        );
+      }
+      return (
+        !credentials.expiration ||
+        (Number.isFinite(credentials.expiration.getTime()) &&
+          credentials.expiration.getTime() - Date.now() > minimumValidityMs)
+      );
+    };
     if (valid(current)) return current;
     refresh ??= (async () => {
       const next = await load(true);
       const nextIdentity = await identify(region, next);
-      if (nextIdentity.account !== identity.account || nextIdentity.arn !== identity.arn) {
+      if (
+        nextIdentity.account !== identity.account ||
+        principalIdentity(nextIdentity) !== principalIdentity(identity)
+      ) {
         throw new AWSError(
           'AWS identity changed during this operation; retry with the intended profile',
         );
@@ -158,6 +184,8 @@ export async function resolveAwsTarget(options: {
         ...environment,
         AWS_REGION: region,
         AWS_DEFAULT_REGION: region,
+        CDK_DEFAULT_ACCOUNT: identity.account,
+        CDK_DEFAULT_REGION: region,
         AWS_ACCESS_KEY_ID: credentials.accessKeyId,
         AWS_SECRET_ACCESS_KEY: credentials.secretAccessKey,
         AWS_SESSION_TOKEN: credentials.sessionToken,

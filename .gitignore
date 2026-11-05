@@ -10,3 +10,5 @@ cdk.out
 #build
 dist
 coverage
+# Local deployment configuration, outputs, identity records and operation locks
+.openclaw-aws/

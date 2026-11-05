@@ -43,6 +43,8 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
 vi.mock('../../src/cli/utils/cdk.js', () => ({
   getCDKBinary: vi.fn(() => 'cdk'),
   getCDKAppCommand: vi.fn((value: string) => `node ${value}`),
+  withCDKWorkspace: async (env: object, operation: (value: object) => Promise<unknown>) =>
+    operation({ env, cwd: process.cwd() }),
 }));
 
 const listConfigNamesMock = vi.hoisted(() => vi.fn());

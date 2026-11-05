@@ -45,6 +45,8 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
 vi.mock('../../src/cli/utils/cdk.js', () => ({
   getCDKBinary: vi.fn(() => 'cdk'),
   getCDKAppCommand: vi.fn((value: string) => `node ${value}`),
+  withCDKWorkspace: async (env: object, operation: (value: object) => Promise<unknown>) =>
+    operation({ env, cwd: process.cwd() }),
 }));
 
 vi.mock('../../src/cli/utils/aws-validation.js', () => ({
@@ -110,8 +112,48 @@ describe('deploy command', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    execaMock.mockReset();
     waitForSSMMock.mockResolvedValue(true);
     buildCommandContextMock.mockImplementation(async () => makeCommandContext());
+  });
+
+  it('redacts resolved role credentials from deployment failures without relying on global environment values', async () => {
+    const role = {
+      AWS_ACCESS_KEY_ID: 'resolved-access-key',
+      AWS_SECRET_ACCESS_KEY: 'resolved-secret-key',
+      AWS_SESSION_TOKEN: 'resolved-session-token',
+    };
+    buildCommandContextMock.mockResolvedValue(
+      makeCommandContext({ target: { ...testTarget, environment: async () => role } }),
+    );
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
+    resolveApiKeyMock.mockReturnValue('private-provider-key');
+    execaMock.mockImplementation(async (_binary, args) => {
+      if (args[0] === '--version') return {};
+      throw new Error(Object.values(role).join(' '));
+    });
+    await deployCommand.handler?.({ autoApprove: true, _: [], $0: 'openclaw-aws' });
+    const failure = handleErrorMock.mock.calls[0][0] as Error;
+    for (const value of Object.values(role)) expect(failure.message).not.toContain(value);
+    expect(failure.message).toContain('[REDACTED]');
+  });
+
+  it('keeps the planned batch context through approval instead of selecting edited targets again', async () => {
+    listConfigNamesMock.mockReturnValue(['alpha']);
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
+    resolveApiKeyMock.mockReturnValue('private-key');
+    promptsMock.mockImplementation(async () => {
+      buildCommandContextMock.mockRejectedValue(new Error('Configuration changed after approval'));
+      return { confirmText: 'DEPLOY ALL' };
+    });
+    await deployCommand.handler?.({ all: true, _: [], $0: 'openclaw-aws' });
+    expect(buildCommandContextMock).toHaveBeenCalledTimes(1);
+    expect(execaMock.mock.calls.some(([, args]) => args[0] === 'deploy')).toBe(true);
+    expect(handleErrorMock).not.toHaveBeenCalled();
   });
 
   it('returns early when deploying all but no configs exist', async () => {

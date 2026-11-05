@@ -69,6 +69,12 @@ describe('deployment identity and native observations', () => {
     recordDeploymentState(ctx, status);
     expect(() => assertDeploymentTarget(ctx, status)).not.toThrow();
     expect(() =>
+      assertDeploymentTarget({
+        ...ctx,
+        config: { ...ctx.config, aws: { region: 'eu-central-1' } },
+      }),
+    ).toThrow('region does not match');
+    expect(() =>
       assertDeploymentTarget({ ...ctx, target: { ...ctx.target, account: '999999999999' } }),
     ).toThrow('differs');
     expect(() =>

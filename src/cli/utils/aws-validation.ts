@@ -219,30 +219,30 @@ export async function runCDKBootstrap(
   profile?: string,
 ): Promise<void> {
   const { execa } = await import('execa');
-  const { getCDKBinary } = await import('./cdk.js');
+  const { getCDKBinary, withCDKWorkspace } = await import('./cdk.js');
 
   const cdkBinary = getCDKBinary();
-  const envQualifier = `aws://${account}/${awsRegion(region)}`;
-
+  const target = typeof region === 'string' ? await resolveAwsTarget({ region, profile }) : region;
+  if (target.account !== account)
+    throw new AWSError('CDK bootstrap account differs from the selected AWS target');
+  const envQualifier = `aws://${account}/${target.region}`;
   const env: Record<string, string | undefined> = {
-    ...(typeof region === 'string' ? process.env : await region.environment(30 * 60_000)),
-    AWS_REGION: awsRegion(region),
+    ...(await target.environment(30 * 60_000)),
     CDK_DISABLE_VERSION_CHECK: 'true',
     CDK_DISABLE_CLI_TELEMETRY: '1',
     CI: 'true',
   };
 
-  if (profile && typeof region === 'string') {
-    env.AWS_PROFILE = profile;
-  }
-
   try {
-    await execa(cdkBinary, ['bootstrap', '--no-notices', '--no-version-reporting', envQualifier], {
-      env,
-      stdio: 'inherit', // Show CDK output to user
-      extendEnv: false,
-      timeout: 25 * 60_000,
-    });
+    await withCDKWorkspace(env, async (workspace) =>
+      execa(cdkBinary, ['bootstrap', '--no-notices', '--no-version-reporting', envQualifier], {
+        env: workspace.env,
+        cwd: workspace.cwd,
+        stdio: 'inherit', // Show CDK output to user
+        extendEnv: false,
+        timeout: 25 * 60_000,
+      }),
+    );
   } catch {
     throw new AWSError('Failed to bootstrap CDK', [
       `Tried: ${cdkBinary} bootstrap ${envQualifier}`,

@@ -34,6 +34,9 @@ export function loadDeploymentState(ctx: CommandContext): DeploymentState | unde
 }
 /** Check saved ownership before any targeted mutation or secret cleanup. */
 export function assertDeploymentTarget(ctx: CommandContext, status?: DeploymentStatus): void {
+  if (ctx.config.aws.region !== ctx.target.region) {
+    throw new AWSError('Configuration region does not match the selected AWS target');
+  }
   const saved = loadDeploymentState(ctx);
   if (!saved) return;
   if (

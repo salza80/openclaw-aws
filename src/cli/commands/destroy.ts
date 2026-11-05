@@ -11,7 +11,7 @@ import { getConfigPathByName } from '../utils/config.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError, StackNotFoundError } from '../utils/errors.js';
-import { getCDKBinary, getCDKAppCommand } from '../utils/cdk.js';
+import { getCDKBinary, getCDKAppCommand, withCDKWorkspace } from '../utils/cdk.js';
 import {
   listConfigNames,
   clearCurrentName,
@@ -141,7 +141,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         for (const name of names) {
           const ctx = await buildCommandContext({ name });
           await withDeploymentLock(ctx, async () => {
-            const config = ctx.config;
+            const config = structuredClone(ctx.config);
+            const snapshot = JSON.stringify(config);
             const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
 
             logger.title('OpenClaw AWS - Destroy');
@@ -174,6 +175,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
               ...(await ctx.target.environment(30 * 60_000)),
               OPENCLAW_CONFIG_NAME: ctx.name,
               OPENCLAW_CDK_OPERATION: 'destroy',
+              OPENCLAW_CONFIG_SNAPSHOT: snapshot,
               CDK_DISABLE_VERSION_CHECK: 'true',
               CDK_DISABLE_CLI_TELEMETRY: '1',
               CI: 'true',
@@ -181,23 +183,25 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
 
             try {
-              await execa(
-                cdkBinary,
-                [
-                  'destroy',
-                  config.stack.name,
-                  '--app',
-                  getCDKAppCommand(cdkAppPath),
-                  '--no-notices',
-                  '--no-version-reporting',
-                  '--force',
-                ],
-                {
-                  env,
-                  extendEnv: false,
-                  timeout: 25 * 60_000,
-                  cwd: process.cwd(),
-                },
+              await withCDKWorkspace(env, async (workspace) =>
+                execa(
+                  cdkBinary,
+                  [
+                    'destroy',
+                    config.stack.name,
+                    '--app',
+                    getCDKAppCommand(cdkAppPath),
+                    '--no-notices',
+                    '--no-version-reporting',
+                    '--force',
+                  ],
+                  {
+                    env: workspace.env,
+                    extendEnv: false,
+                    timeout: 25 * 60_000,
+                    cwd: workspace.cwd,
+                  },
+                ),
               );
 
               destroySpinner.succeed('Stack destroyed successfully');
@@ -255,7 +259,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       // Load configuration
       const ctx = await buildCommandContext({ name: argv.name });
       await withDeploymentLock(ctx, async () => {
-        const config = ctx.config;
+        const config = structuredClone(ctx.config);
+        const snapshot = JSON.stringify(config);
         const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
 
         logger.title('OpenClaw AWS - Destroy');
@@ -355,6 +360,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           ...(await ctx.target.environment(30 * 60_000)),
           OPENCLAW_CONFIG_NAME: ctx.name,
           OPENCLAW_CDK_OPERATION: 'destroy',
+          OPENCLAW_CONFIG_SNAPSHOT: snapshot,
           CDK_DISABLE_VERSION_CHECK: 'true',
           CDK_DISABLE_CLI_TELEMETRY: '1',
           CI: 'true',
@@ -364,23 +370,25 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
 
         try {
-          await execa(
-            cdkBinary,
-            [
-              'destroy',
-              config.stack.name,
-              '--app',
-              getCDKAppCommand(cdkAppPath),
-              '--no-notices',
-              '--no-version-reporting',
-              '--force',
-            ],
-            {
-              env,
-              extendEnv: false,
-              timeout: 25 * 60_000,
-              cwd: process.cwd(),
-            },
+          await withCDKWorkspace(env, async (workspace) =>
+            execa(
+              cdkBinary,
+              [
+                'destroy',
+                config.stack.name,
+                '--app',
+                getCDKAppCommand(cdkAppPath),
+                '--no-notices',
+                '--no-version-reporting',
+                '--force',
+              ],
+              {
+                env: workspace.env,
+                extendEnv: false,
+                timeout: 25 * 60_000,
+                cwd: workspace.cwd,
+              },
+            ),
           );
 
           destroySpinner.succeed('Stack destroyed successfully');
