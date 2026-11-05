@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 
 const stsSendMock = vi.hoisted(() => vi.fn());
 const ec2SendMock = vi.hoisted(() => vi.fn());
+const ec2DestroyMock = vi.hoisted(() => vi.fn());
+const ec2ClientConfigMock = vi.hoisted(() => vi.fn());
 const cfnSendMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@aws-sdk/client-sts', () => ({
@@ -19,10 +21,19 @@ vi.mock('@aws-sdk/client-sts', () => ({
 
 vi.mock('@aws-sdk/client-ec2', () => ({
   EC2Client: class {
+    constructor(config: Record<string, unknown>) {
+      ec2ClientConfigMock(config);
+    }
     send = ec2SendMock;
-    destroy() {}
+    destroy = ec2DestroyMock;
   },
   DescribeRegionsCommand: class {
+    input: Record<string, unknown>;
+    constructor(input: Record<string, unknown>) {
+      this.input = input;
+    }
+  },
+  DescribeInstanceTypesCommand: class {
     input: Record<string, unknown>;
     constructor(input: Record<string, unknown>) {
       this.input = input;
@@ -68,6 +79,7 @@ import {
   applyAwsProfile,
   validateAWSCredentials,
   validateAWSRegion,
+  validateInstanceCapabilities,
   getCDKBootstrapVersion,
   checkCDKBootstrap,
   runCDKBootstrap,
@@ -79,6 +91,24 @@ import {
 } from '../../src/cli/utils/aws-validation.js';
 import { AWSError, ValidationError } from '../../src/cli/utils/errors.js';
 import type { OpenClawConfig } from '../../src/cli/types/index.js';
+
+function instanceMetadata(instanceType = 't3.small', memoryMiB = 2048, architectures = ['x86_64']) {
+  return {
+    InstanceType: instanceType,
+    MemoryInfo: { SizeInMiB: memoryMiB },
+    ProcessorInfo: { SupportedArchitectures: architectures },
+  };
+}
+
+const deploymentConfig: OpenClawConfig = {
+  version: '1.0',
+  aws: { region: 'us-east-1' },
+  network: { useDefaultVpc: true },
+  instance: { name: 'openclaw-alpha', type: 't3.small' },
+  features: { cloudWatchLogs: true },
+  stack: { name: 'OpenclawStack-alpha' },
+  openclaw: { apiProvider: 'anthropic-api-key' },
+};
 
 describe('aws-validation utils', () => {
   afterEach(() => {
@@ -120,6 +150,84 @@ describe('aws-validation utils', () => {
     ec2SendMock.mockRejectedValue(new Error('boom'));
     await expect(validateAWSRegion('moon-1')).rejects.toBeInstanceOf(ValidationError);
   });
+
+  it.each([
+    ['t3a.small', 2048],
+    ['t3.medium', 4096],
+    ['t8i.small', 2048],
+  ])('accepts AWS-confirmed x86_64 %s with %s MiB', async (instanceType, memoryMiB) => {
+    ec2SendMock.mockResolvedValue({ InstanceTypes: [instanceMetadata(instanceType, memoryMiB)] });
+    await expect(
+      validateInstanceCapabilities(instanceType, 'eu-central-1'),
+    ).resolves.toBeUndefined();
+    expect(ec2ClientConfigMock).toHaveBeenCalledWith({ region: 'eu-central-1' });
+    expect(ec2SendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ input: { InstanceTypes: [instanceType] } }),
+    );
+    expect(ec2DestroyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects malformed instance types before creating an EC2 client', async () => {
+    await expect(validateInstanceCapabilities('bad.type', 'us-east-1')).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(ec2ClientConfigMock).not.toHaveBeenCalled();
+    expect(ec2SendMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['t4g.small', 2048, ['arm64'], 'does not support x86_64'],
+    ['t3.nano', 512, ['x86_64'], 'at least 2048 MiB'],
+    ['t3a.micro', 1024, ['x86_64'], 'at least 2048 MiB'],
+  ])('rejects unsupported %s capacity', async (instanceType, memoryMiB, architectures, message) => {
+    ec2SendMock.mockResolvedValue({
+      InstanceTypes: [instanceMetadata(instanceType, memoryMiB, architectures)],
+    });
+    await expect(validateInstanceCapabilities(instanceType, 'us-east-1')).rejects.toThrow(message);
+    expect(ec2DestroyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['absent instance metadata', {}],
+    ['empty instance metadata', { InstanceTypes: [] }],
+    ['different instance type', { InstanceTypes: [instanceMetadata('t3.medium')] }],
+    ['duplicate instance metadata', { InstanceTypes: [instanceMetadata(), instanceMetadata()] }],
+    ['missing memory', { InstanceTypes: [{ ...instanceMetadata(), MemoryInfo: undefined }] }],
+    [
+      'missing architecture',
+      { InstanceTypes: [{ ...instanceMetadata(), ProcessorInfo: undefined }] },
+    ],
+    ['empty architecture', { InstanceTypes: [instanceMetadata('t3.small', 1024, [])] }],
+    ['invalid memory', { InstanceTypes: [instanceMetadata('t3.small', Number.NaN)] }],
+  ])('fails closed for %s', async (_description, response) => {
+    ec2SendMock.mockResolvedValue(response);
+    await expect(validateInstanceCapabilities('t3.small', 'us-east-1')).rejects.toBeInstanceOf(
+      ValidationError,
+    );
+    expect(ec2DestroyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['UnauthorizedOperation', 'TimeoutError'])(
+    'preserves actionable AWS %s failures and destroys the EC2 client',
+    async (name) => {
+      const original = Object.assign(new Error('EC2 lookup failed'), { name });
+      ec2SendMock.mockRejectedValue(original);
+      const failure = await validateInstanceCapabilities('t3.small', 'eu-central-1').catch(
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(AWSError);
+      expect(failure).toMatchObject({
+        cause: original,
+        message: expect.stringContaining(`${name}: EC2 lookup failed`),
+        suggestions: expect.arrayContaining([
+          expect.stringContaining('ec2:DescribeInstanceTypes'),
+          expect.stringContaining('connectivity'),
+        ]),
+      });
+      expect((failure as Error).message).not.toContain('Invalid AWS region');
+      expect(ec2DestroyMock).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('getCDKBootstrapVersion parses BootstrapVersion output', async () => {
     cfnSendMock.mockResolvedValue({
@@ -208,22 +316,14 @@ describe('aws-validation utils', () => {
       UserId: 'user',
       Arn: 'arn:aws:iam::123456789012:user/test',
     });
-    ec2SendMock.mockResolvedValue({});
+    ec2SendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValue({ InstanceTypes: [instanceMetadata()] });
     cfnSendMock.mockResolvedValue({
       Stacks: [{ Outputs: [{ OutputKey: 'BootstrapVersion', OutputValue: '45' }] }],
     });
 
-    const config: OpenClawConfig = {
-      version: '1.0',
-      aws: { region: 'us-east-1' },
-      network: { useDefaultVpc: true },
-      instance: { name: 'openclaw-alpha', type: 't3.micro' },
-      features: { cloudWatchLogs: true },
-      stack: { name: 'OpenclawStack-alpha' },
-      openclaw: { apiProvider: 'anthropic-api-key' },
-    };
-
-    await expect(validatePreDeploy(config)).resolves.toBeUndefined();
+    await expect(validatePreDeploy(deploymentConfig)).resolves.toBeUndefined();
   });
 
   it('validatePreDeploy throws when bootstrap required and user declines', async () => {
@@ -232,20 +332,45 @@ describe('aws-validation utils', () => {
       UserId: 'user',
       Arn: 'arn:aws:iam::123456789012:user/test',
     });
-    ec2SendMock.mockResolvedValue({});
+    ec2SendMock
+      .mockResolvedValueOnce({})
+      .mockResolvedValue({ InstanceTypes: [instanceMetadata()] });
     cfnSendMock.mockResolvedValue({ Stacks: [{ Outputs: [] }] });
     promptsMock.mockResolvedValue({ runBootstrap: false });
 
-    const config: OpenClawConfig = {
-      version: '1.0',
-      aws: { region: 'us-east-1' },
-      network: { useDefaultVpc: true },
-      instance: { name: 'openclaw-alpha', type: 't3.micro' },
-      features: { cloudWatchLogs: true },
-      stack: { name: 'OpenclawStack-alpha' },
-      openclaw: { apiProvider: 'anthropic-api-key' },
-    };
+    await expect(validatePreDeploy(deploymentConfig)).rejects.toBeInstanceOf(ValidationError);
+  });
 
-    await expect(validatePreDeploy(config)).rejects.toBeInstanceOf(ValidationError);
+  it.each([
+    ['ARM', instanceMetadata('t3.small', 2048, ['arm64'])],
+    ['512 MiB', instanceMetadata('t3.small', 512)],
+    ['missing metadata', { InstanceType: 't3.small' }],
+  ])('rejects %s before checking or running CDK bootstrap', async (_description, metadata) => {
+    stsSendMock.mockResolvedValue({ Account: '123456789012', UserId: 'user', Arn: 'test' });
+    ec2SendMock.mockResolvedValueOnce({}).mockResolvedValue({ InstanceTypes: [metadata] });
+    cfnSendMock.mockResolvedValue({ Stacks: [] });
+    promptsMock.mockResolvedValue({ runBootstrap: true });
+
+    await expect(validatePreDeploy(deploymentConfig)).rejects.toBeInstanceOf(ValidationError);
+    expect(cfnSendMock).not.toHaveBeenCalled();
+    expect(promptsMock).not.toHaveBeenCalled();
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(ec2DestroyMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops before CDK bootstrap when the capability lookup fails', async () => {
+    stsSendMock.mockResolvedValue({ Account: '123456789012', UserId: 'user', Arn: 'test' });
+    const original = Object.assign(new Error('EC2 access denied'), {
+      name: 'UnauthorizedOperation',
+    });
+    ec2SendMock.mockResolvedValueOnce({}).mockRejectedValue(original);
+    cfnSendMock.mockResolvedValue({ Stacks: [] });
+    promptsMock.mockResolvedValue({ runBootstrap: true });
+
+    await expect(validatePreDeploy(deploymentConfig)).rejects.toMatchObject({ cause: original });
+    expect(cfnSendMock).not.toHaveBeenCalled();
+    expect(promptsMock).not.toHaveBeenCalled();
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(ec2DestroyMock).toHaveBeenCalledTimes(2);
   });
 });

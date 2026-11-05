@@ -22,6 +22,23 @@ phase() {
   printf 'OPENCLAW_BOOTSTRAP phase=%s\n' "$PHASE"
 }
 
+configure_swap() {
+  local swap_file="$1" fstab="$2" settings="$3"
+  [[ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -le 2097152 ]] || return 0
+  [[ -z "$(swapon --show=NAME --noheadings)" ]] || return 0
+  if [[ -e "$swap_file" || -L "$swap_file" ]]; then
+    printf 'ERROR: inactive OpenClaw swap file already exists; inspect it before retrying\n' >&2
+    return 1
+  fi
+  fallocate -l 2G "$swap_file"
+  chmod 600 "$swap_file"
+  mkswap "$swap_file"
+  swapon "$swap_file"
+  printf '%s none swap sw 0 0\n' "$swap_file" >> "$fstab"
+  printf 'vm.swappiness=10\n' > "$settings"
+  sysctl -w vm.swappiness=10
+}
+
 signal_result() {
   local status="$1" attempt imds_token
   command -v aws >/dev/null 2>&1 || return 1
@@ -182,8 +199,7 @@ write_dotenv_entry() {
     printf 'ERROR: credential must be a nonempty single-line value\n' >&2
     return 1
   fi
-  # dotenv preserves literal backslashes inside single quotes and backticks.
-  # Choosing an absent delimiter avoids silently changing a credential's bytes.
+  # Preserve credential bytes with an absent quote delimiter.
   if [[ "$value" != *"'"* ]]; then
     printf "%s='%s'\n" "$name" "$value"
   elif [[ "$value" != *'`'* ]]; then
@@ -249,6 +265,8 @@ fi
 
 @@CLOUDWATCH_SETUP@@
 
+phase memory
+configure_swap /swapfile.openclaw /etc/fstab /etc/sysctl.d/99-openclaw-swap.conf
 phase installer
 OPENCLAW_VERSION=@@OPENCLAW_VERSION@@
 NODE_VERSION=@@NODE_VERSION@@
@@ -258,8 +276,7 @@ NODE_BIN="$STATE_DIR/tools/node/bin/node"
 UBUNTU_UID="$(id -u ubuntu)"
 install -d -o ubuntu -g ubuntu -m 700 "$STATE_DIR" "$STATE_DIR/logs"
 INSTALL_DIR="$(mktemp -d /home/ubuntu/.openclaw-installer.XXXXXX)"
-# Both files are from the exact v2026.11.1 commit. Source entrypoints require
-# the sibling policy; the mutable website installer is intentionally avoided.
+# Immutable installer and required policy helper.
 INSTALLER_BASE=https://raw.githubusercontent.com/openclaw/openclaw/4ffdd2047d192dd65554de3c8c46c0e0197c6e2a/scripts
 download "$INSTALLER_BASE/install-cli.sh" "$INSTALL_DIR/install-cli.sh"
 download "$INSTALLER_BASE/install-policy.sh" "$INSTALL_DIR/install-policy.sh"
@@ -290,7 +307,7 @@ as_ubuntu systemctl --user show-environment >/dev/null
 
 if [[ -e "$STATE_DIR/openclaw.json" ]]; then
   phase preserve-state
-  # Reruns retain the existing config, credentials, sessions and workspace.
+  # Preserve existing native state.
   as_ubuntu "$OPENCLAW_BIN" gateway install --force
 else
   phase secrets
@@ -324,7 +341,6 @@ for attempt in {1..30}; do
 done
 as_ubuntu systemctl --user is-active --quiet openclaw-gateway.service
 phase readiness
-# This is an authenticated health RPC, without a paid model inference probe.
-# A zero exit status with status=starting is not a ready health snapshot.
+# Authenticated readiness RPC; no inference.
 wait_for_health
 BOOTSTRAP_READY=1

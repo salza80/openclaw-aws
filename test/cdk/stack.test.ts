@@ -33,7 +33,7 @@ function resolveString(value: unknown): string {
   throw new Error(`Unexpected string intrinsic: ${JSON.stringify(value)}`);
 }
 
-function bootstrap(enableCloudWatchLogs = false) {
+function bootstrap(enableCloudWatchLogs = false, instanceType = 't3.small') {
   vi.spyOn(MachineImage, 'lookup').mockReturnValue(
     MachineImage.genericLinux({ 'us-east-1': 'ami-0123456789abcdef0' }),
   );
@@ -46,7 +46,7 @@ function bootstrap(enableCloudWatchLogs = false) {
     config: {
       projectName: 'test',
       instanceName: 'test',
-      instanceType: { class: 'T3', size: 'SMALL' },
+      instanceType,
       enableCloudWatchLogs,
       useDefaultVpc: false,
     },
@@ -67,6 +67,11 @@ function actions(statement: { Action: string | string[] }): string[] {
 }
 
 describe('EC2 bootstrap', () => {
+  it('preserves valid AWS type names beyond the bundled CDK instance-class enum', () => {
+    const { instance } = bootstrap(false, 't8i.small');
+    expect(instance.Properties.InstanceType).toBe('t8i.small');
+  });
+
   it('waits for a signal from this instance without changing existing resource identities', () => {
     const { template, instanceId, instance, userData, script } = bootstrap();
     expect(instanceId).toBe('OpenClawEc242967934');

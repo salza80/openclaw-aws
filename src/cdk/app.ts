@@ -34,20 +34,11 @@ const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key'; // Defa
 const apiKeyParamName = getApiKeyParamName(configName, apiProvider);
 const gatewayTokenParamName = getGatewayTokenParamName(configName);
 
-// Parse instance type
-function parseInstanceType(type: string): { class: string; size: string } {
-  const [family, size] = type.split('.');
-  return {
-    class: family.toUpperCase(),
-    size: size.toUpperCase(),
-  };
-}
-
 // Build stack config
 const stackConfig: StackConfig = {
   projectName: process.env.OPENCLAW_CONFIG_NAME ?? 'openclaw',
   instanceName: config.instance.name,
-  instanceType: parseInstanceType(config.instance.type),
+  instanceType: config.instance.type,
   enableCloudWatchLogs: config.features.cloudWatchLogs,
   useDefaultVpc: config.network.useDefaultVpc,
 };

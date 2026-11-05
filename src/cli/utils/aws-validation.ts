@@ -1,6 +1,11 @@
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
-import { EC2Client, DescribeRegionsCommand } from '@aws-sdk/client-ec2';
+import {
+  EC2Client,
+  DescribeRegionsCommand,
+  DescribeInstanceTypesCommand,
+  type _InstanceType,
+} from '@aws-sdk/client-ec2';
 import ora from 'ora';
 import prompts from 'prompts';
 import chalk from 'chalk';
@@ -70,6 +75,72 @@ export async function validateAWSRegion(region: string): Promise<boolean> {
       'Check available regions: aws ec2 describe-regions',
       'Common regions: us-east-1, us-west-2, eu-west-1',
     ]);
+  } finally {
+    client.destroy();
+  }
+}
+
+/** Verify new-host requirements against AWS metadata rather than a family whitelist. */
+export async function validateInstanceCapabilities(
+  instanceType: string,
+  region: string,
+): Promise<void> {
+  validateInstanceType(instanceType);
+  const client = new EC2Client({ region });
+  try {
+    let response;
+    try {
+      response = await client.send(
+        new DescribeInstanceTypesCommand({ InstanceTypes: [instanceType as _InstanceType] }),
+      );
+    } catch (error) {
+      const details = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      const failure = new AWSError(
+        `Unable to verify EC2 instance type '${instanceType}' in '${region}': ${details}`,
+        [
+          'Allow ec2:DescribeInstanceTypes for the deployment credentials',
+          'Check the instance type, AWS credentials, and connectivity to the regional EC2 API',
+        ],
+      );
+      failure.cause = error;
+      throw failure;
+    }
+
+    const matches = response.InstanceTypes?.filter((item) => item.InstanceType === instanceType);
+    if (matches?.length !== 1) {
+      throw new ValidationError(
+        `AWS did not return unambiguous metadata for EC2 instance type '${instanceType}' in '${region}'`,
+        ['Choose an instance type available in this AWS region and retry'],
+      );
+    }
+
+    const memoryMiB = matches[0].MemoryInfo?.SizeInMiB;
+    const architectures = matches[0].ProcessorInfo?.SupportedArchitectures;
+    if (
+      !Number.isSafeInteger(memoryMiB) ||
+      !memoryMiB ||
+      memoryMiB <= 0 ||
+      !architectures?.length
+    ) {
+      throw new ValidationError(
+        `AWS returned incomplete memory or architecture metadata for EC2 instance type '${instanceType}'`,
+        ['Retry the EC2 instance type lookup before creating deployment resources'],
+      );
+    }
+    if (!architectures.includes('x86_64')) {
+      throw new ValidationError(
+        `EC2 instance type '${instanceType}' does not support x86_64 (${architectures.join(', ')})`,
+        ['Choose an x86_64 instance type; the Ubuntu AMI and bootstrap packages require x86_64'],
+      );
+    }
+    if (memoryMiB < 2048) {
+      throw new ValidationError(
+        `EC2 instance type '${instanceType}' has ${memoryMiB} MiB RAM; the supported AWS installation requires at least 2048 MiB (2 GiB)`,
+        [
+          'Choose at least 2 GiB RAM; the 1 GiB benchmark did not pass the complete management checks',
+        ],
+      );
+    }
   } finally {
     client.destroy();
   }
@@ -181,7 +252,12 @@ export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
     await validateAWSRegion(config.aws.region);
     spinner.succeed(`AWS region validated (${config.aws.region})`);
 
-    // 3. Check CDK bootstrap
+    // 3. Reject unsupported hosts before CDK bootstrap can create any resources.
+    spinner.start('Validating EC2 instance capabilities...');
+    await validateInstanceCapabilities(config.instance.type, config.aws.region);
+    spinner.succeed('EC2 instance capabilities validated');
+
+    // 4. Check CDK bootstrap
     spinner.start('Checking CDK bootstrap...');
     const bootstrapStatus = await checkCDKBootstrap(credentials.account, config.aws.region);
 
@@ -257,11 +333,6 @@ export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
     } else {
       spinner.succeed(`CDK bootstrap verified (v${bootstrapStatus.version})`);
     }
-
-    // 4. Validate instance type format
-    spinner.start('Validating configuration...');
-    validateInstanceType(config.instance.type);
-    spinner.succeed('Configuration validated');
   } catch (error) {
     spinner.fail('Validation failed');
     throw error;

@@ -3,8 +3,6 @@ import { Construct } from 'constructs';
 import {
   Instance,
   InstanceType,
-  InstanceClass,
-  InstanceSize,
   MachineImage,
   BlockDeviceVolume,
   EbsDeviceVolumeType,
@@ -134,14 +132,10 @@ export class OpenClawStack extends Stack {
     // UserData script - simplified without Tailscale
     const userData = UserData.forLinux();
 
-    // Parse instance type from config
-    const instanceClass = InstanceClass[config.instanceType.class as keyof typeof InstanceClass];
-    const instanceSize = InstanceSize[config.instanceType.size as keyof typeof InstanceSize];
-
     // EC2 instance
     const instance = new Instance(this, 'OpenClawEc2', {
       vpc,
-      instanceType: InstanceType.of(instanceClass, instanceSize),
+      instanceType: new InstanceType(config.instanceType),
       machineImage: ami,
       securityGroup: sg,
       role,

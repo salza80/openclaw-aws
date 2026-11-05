@@ -33,10 +33,7 @@ export interface OpenClawConfig {
 export interface StackConfig {
   projectName: string;
   instanceName: string;
-  instanceType: {
-    class: string;
-    size: string;
-  };
+  instanceType: string;
   enableCloudWatchLogs: boolean;
   useDefaultVpc: boolean;
 }
