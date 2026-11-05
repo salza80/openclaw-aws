@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { CommandModule } from 'yargs';
-import { makeCommandContext } from '../helpers/fixtures/command-context.js';
+import { makeCommandContext, testTarget } from '../helpers/fixtures/command-context.js';
 
 const execaMock = vi.hoisted(() => vi.fn());
 
@@ -88,7 +88,8 @@ describe('connect command', () => {
       ],
       {
         stdio: 'inherit',
-        env: expect.objectContaining({ AWS_PROFILE: 'test' }),
+        extendEnv: false,
+        env: expect.objectContaining({ AWS_ACCESS_KEY_ID: 'TEST' }),
       },
     );
   });
@@ -103,7 +104,7 @@ describe('connect command', () => {
     const args: ConnectHandlerArgs = { _: [], $0: 'openclaw-aws' };
     await handler(args);
 
-    expect(waitForSSMMock).toHaveBeenCalledWith('i-123', 'us-east-1', 180000, 10000);
+    expect(waitForSSMMock).toHaveBeenCalledWith('i-123', testTarget, 180000, 10000);
     expect(execaMock).toHaveBeenCalledTimes(1);
   });
 

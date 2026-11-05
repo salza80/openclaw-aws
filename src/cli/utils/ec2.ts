@@ -1,3 +1,4 @@
+import type { AwsLocation } from '../../aws/target.js';
 import {
   StopInstancesCommand,
   StartInstancesCommand,
@@ -7,7 +8,7 @@ import {
 import { withRetry, AWSError } from './errors.js';
 import { createEc2Client } from './aws-clients.js';
 
-export async function stopInstance(instanceId: string, region: string): Promise<void> {
+export async function stopInstance(instanceId: string, region: AwsLocation): Promise<void> {
   const client = createEc2Client(region);
   const command = new StopInstancesCommand({
     InstanceIds: [instanceId],
@@ -25,7 +26,7 @@ export async function stopInstance(instanceId: string, region: string): Promise<
   }
 }
 
-export async function startInstance(instanceId: string, region: string): Promise<void> {
+export async function startInstance(instanceId: string, region: AwsLocation): Promise<void> {
   const client = createEc2Client(region);
   const command = new StartInstancesCommand({
     InstanceIds: [instanceId],
@@ -46,7 +47,7 @@ export async function startInstance(instanceId: string, region: string): Promise
   }
 }
 
-export async function rebootInstance(instanceId: string, region: string): Promise<void> {
+export async function rebootInstance(instanceId: string, region: AwsLocation): Promise<void> {
   const client = createEc2Client(region);
   const command = new RebootInstancesCommand({
     InstanceIds: [instanceId],
@@ -69,7 +70,7 @@ export async function rebootInstance(instanceId: string, region: string): Promis
 
 export async function getInstanceState(
   instanceId: string,
-  region: string,
+  region: AwsLocation,
 ): Promise<string | undefined> {
   const client = createEc2Client(region);
 
@@ -77,8 +78,6 @@ export async function getInstanceState(
     const response = await client.send(new DescribeInstancesCommand({ InstanceIds: [instanceId] }));
 
     return response.Reservations?.[0]?.Instances?.[0]?.State?.Name;
-  } catch {
-    return undefined;
   } finally {
     client.destroy();
   }
@@ -86,7 +85,7 @@ export async function getInstanceState(
 
 export async function waitForInstanceState(
   instanceId: string,
-  region: string,
+  region: AwsLocation,
   desiredState: 'running' | 'stopped',
   maxWaitTime: number = 180000, // 3 minutes
 ): Promise<boolean> {
@@ -95,24 +94,19 @@ export async function waitForInstanceState(
     const startTime = Date.now();
 
     while (Date.now() - startTime < maxWaitTime) {
-      try {
-        const response = await client.send(
-          new DescribeInstancesCommand({ InstanceIds: [instanceId] }),
-        );
+      const response = await client.send(
+        new DescribeInstancesCommand({ InstanceIds: [instanceId] }),
+      );
 
-        const instance = response.Reservations?.[0]?.Instances?.[0];
-        const currentState = instance?.State?.Name;
+      const instance = response.Reservations?.[0]?.Instances?.[0];
+      const currentState = instance?.State?.Name;
 
-        if (currentState === desiredState) {
-          return true;
-        }
-
-        // Wait 5 seconds before checking again
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-      } catch {
-        // Continue waiting
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+      if (currentState === desiredState) {
+        return true;
       }
+
+      // Wait 5 seconds before checking again
+      await new Promise((resolve) => setTimeout(resolve, 5000));
     }
 
     return false;

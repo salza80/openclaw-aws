@@ -27,6 +27,7 @@ import { renderOpenClawBootstrap } from '../openclaw/install.js';
 export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
   apiProvider: Provider;
+  model?: string;
   apiKeyParamName: string;
   gatewayTokenParamName: string;
   useDefaultVpc: boolean;
@@ -163,6 +164,7 @@ export class OpenClawStack extends Stack {
         stackId: this.stackId,
         logicalResourceId: this.getLogicalId(instance.instance),
         apiProvider,
+        model: props.model,
         apiKeyParamName,
         gatewayTokenParamName,
         logGroupName: logGroup ? logGroupName : undefined,
@@ -204,6 +206,11 @@ export class OpenClawStack extends Stack {
     new CfnOutput(this, 'GatewayPort', {
       value: gatewayPort.toString(),
       description: 'OpenClaw Gateway Port',
+    });
+
+    new CfnOutput(this, 'DeploymentId', {
+      value: this.stackId,
+      description: 'Stable CloudFormation deployment identity',
     });
 
     new CfnOutput(this, 'SSMConnectCommand', {

@@ -1,3 +1,6 @@
+import { observeRuntime, recordDeploymentState } from '../../operations/state.js';
+import type { CommandContext } from '../utils/context.js';
+import type { DeploymentStatus } from '../types/index.js';
 import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -39,6 +42,7 @@ export function formatGatewayStatus(running: boolean, error?: string): string {
 interface StatusArgs {
   name?: string;
   all?: boolean;
+  runtime?: boolean;
 }
 
 export const statusCommand: CommandModule<{}, StatusArgs> = {
@@ -51,6 +55,11 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
         type: 'boolean',
         describe: 'Show status for all configs',
         default: false,
+      })
+      .option('runtime', {
+        type: 'boolean',
+        default: false,
+        describe: 'Read and record native runtime version/model and show drift',
       })
       .option('name', {
         type: 'string',
@@ -74,10 +83,11 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
           const config = ctx.config;
           const spinner = ora(`Checking ${name}...`).start();
           try {
-            const status = await withRetry(
-              () => getStackStatus(config.stack.name, config.aws.region),
-              { maxAttempts: 2, operationName: 'get stack status' },
-            );
+            const status = await withRetry(() => getStackStatus(config.stack.name, ctx.target), {
+              maxAttempts: 2,
+              operationName: 'get stack status',
+            });
+            await inspectRuntime(ctx, status, argv.runtime);
             spinner.succeed(`${name}: ${status.stackStatus}`);
             const stackDisplay = formatStackStatus(status.stackStatus);
             const instanceDisplay = status.instanceStatus
@@ -89,13 +99,10 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
 
             let gatewayDisplay = chalk.gray('unknown');
             if (status.instanceStatus === 'running' && status.instanceId) {
-              const detailedSSM = await getSSMStatus(status.instanceId, config.aws.region);
+              const detailedSSM = await getSSMStatus(status.instanceId, ctx.target);
               if (detailedSSM.status === 'Online') {
                 try {
-                  const gatewayStatus = await checkGatewayStatus(
-                    status.instanceId,
-                    config.aws.region,
-                  );
+                  const gatewayStatus = await checkGatewayStatus(status.instanceId, ctx.target);
                   gatewayDisplay = formatGatewayStatus(gatewayStatus.running, gatewayStatus.error);
                 } catch {
                   gatewayDisplay = chalk.yellow('⚠ Unknown');
@@ -150,10 +157,11 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
       const spinner = ora('Checking status...').start();
 
       try {
-        const status = await withRetry(() => getStackStatus(config.stack.name, config.aws.region), {
+        const status = await withRetry(() => getStackStatus(config.stack.name, ctx.target), {
           maxAttempts: 2,
           operationName: 'get stack status',
         });
+        await inspectRuntime(ctx, status, argv.runtime);
         spinner.succeed('Status retrieved');
 
         // Display status
@@ -189,7 +197,7 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
             let ssmDisplay = '';
             if (status.ssmStatus === 'ready') {
               // Double-check with detailed status
-              const detailedSSM = await getSSMStatus(status.instanceId!, config.aws.region);
+              const detailedSSM = await getSSMStatus(status.instanceId!, ctx.target);
               if (detailedSSM.status === 'Online') {
                 ssmDisplay = chalk.green('✓ Ready (Online)');
               } else if (detailedSSM.status === 'ConnectionLost') {
@@ -213,10 +221,10 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
           console.log('\n' + chalk.bold('OpenClaw Gateway:'));
 
           // Check if SSM is online before checking gateway
-          const detailedSSM = await getSSMStatus(status.instanceId, config.aws.region);
+          const detailedSSM = await getSSMStatus(status.instanceId, ctx.target);
           if (detailedSSM.status === 'Online') {
             try {
-              const gatewayStatus = await checkGatewayStatus(status.instanceId, config.aws.region);
+              const gatewayStatus = await checkGatewayStatus(status.instanceId, ctx.target);
               if (gatewayStatus.running) {
                 console.log(chalk.bold('Status:'), chalk.green('✓ Running'));
               } else {
@@ -276,3 +284,27 @@ export const statusCommand: CommandModule<{}, StatusArgs> = {
 };
 
 export default statusCommand;
+
+async function inspectRuntime(
+  ctx: CommandContext,
+  status: DeploymentStatus,
+  requested = false,
+): Promise<void> {
+  if (!status.stackId) return;
+  const observed =
+    requested && status.instanceId && status.instanceStatus === 'running'
+      ? await observeRuntime(ctx, status.instanceId)
+      : undefined;
+  const state = recordDeploymentState(ctx, status, { observed });
+  if (observed) {
+    console.log(`Native OpenClaw: ${observed.version}; model: ${observed.model}`);
+    if (
+      observed.version !== state.desired.version ||
+      (state.desired.model && state.desired.model !== observed.model)
+    ) {
+      console.log(
+        'Native runtime differs from the recorded desired settings. No settings were changed.',
+      );
+    }
+  }
+}

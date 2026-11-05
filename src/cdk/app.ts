@@ -43,7 +43,7 @@ const stackConfig: StackConfig = {
   useDefaultVpc: config.network.useDefaultVpc,
 };
 
-// Get configuration from environment (no model/sandbox in config anymore)
+// Gateway networking remains fixed for this installation.
 // Gateway port is fixed in the stack (18789)
 
 // Create CDK app
@@ -53,6 +53,7 @@ const app = new cdk.App({ builtinCloudFormationValidation: !destroyOnly });
 const stackProps: OpenClawStackProps = {
   config: stackConfig,
   apiProvider,
+  model: config.openclaw?.model,
   cloudflareAccountId: config.openclaw?.cloudflare?.accountId,
   cloudflareGatewayId: config.openclaw?.cloudflare?.gatewayId,
   apiKeyParamName,

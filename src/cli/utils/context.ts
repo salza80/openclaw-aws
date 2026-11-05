@@ -1,18 +1,18 @@
+import { assertDeploymentTarget } from '../../operations/state.js';
 import type { OpenClawConfig } from '../types/index.js';
 import { resolveConfig } from './config-store.js';
-import { applyAwsProfile, requireAwsCredentials } from './aws-validation.js';
-import { getAwsProfileEnvironment } from './aws-profile.js';
+import { resolveAwsTarget, type AwsTarget } from '../../aws/target.js';
 
 export interface CommandContext {
   name: string;
   config: OpenClawConfig;
   configPath: string;
+  target: AwsTarget;
   awsEnv: Record<string, string | undefined>;
 }
 
 export interface CommandContextOptions {
   name?: string;
-  requireCredentials?: boolean;
 }
 
 export async function buildCommandContext(
@@ -20,26 +20,15 @@ export async function buildCommandContext(
 ): Promise<CommandContext> {
   const { name, config, configPath } = resolveConfig({ name: options.name });
 
-  if (options.requireCredentials !== false) {
-    await requireAwsCredentials(config);
-  } else {
-    applyAwsProfile(config.aws.profile);
-  }
+  const target = await resolveAwsTarget(config.aws);
 
-  return {
+  const context = {
     name,
     config,
     configPath,
-    awsEnv: buildAwsEnv(config),
+    target,
+    awsEnv: await target.environment(),
   };
-}
-
-export function buildAwsEnv(config: OpenClawConfig): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = {
-    ...process.env,
-    ...getAwsProfileEnvironment(config.aws.profile),
-    AWS_REGION: config.aws.region,
-  };
-
-  return env;
+  assertDeploymentTarget(context);
+  return context;
 }

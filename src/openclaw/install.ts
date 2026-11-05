@@ -7,6 +7,7 @@ export interface OpenClawBootstrapOptions {
   stackId: string;
   logicalResourceId: string;
   apiProvider: Provider;
+  model?: string;
   apiKeyParamName: string;
   gatewayTokenParamName: string;
   logGroupName?: string;
@@ -101,6 +102,9 @@ systemctl enable amazon-cloudwatch-agent
     GATEWAY_TOKEN_PARAM_NAME: shellQuote(options.gatewayTokenParamName),
     PROVIDER_ENV: shellQuote(setup.envVar),
     AUTH_ARGS: authArgs.map(shellQuote).join(' '),
+    MODEL_SETUP: options.model
+      ? `as_ubuntu "$OPENCLAW_BIN" models set ${shellQuote(options.model)} > "$WORK_DIR/model.json" 2> "$WORK_DIR/model.err"`
+      : '',
     OPENCLAW_VERSION: shellQuote(OPENCLAW_VERSION),
     NODE_VERSION: shellQuote(OPENCLAW_NODE_VERSION),
     CLOUDWATCH_SETUP: cloudWatchSetup,

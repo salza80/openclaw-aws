@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
+vi.mock('@aws-sdk/credential-provider-node', () => ({
+  defaultProvider: () => async () => ({ accessKeyId: 'TEST', secretAccessKey: 'TEST' }),
+}));
+
 const stsSendMock = vi.hoisted(() => vi.fn());
 const ec2SendMock = vi.hoisted(() => vi.fn());
 const ec2DestroyMock = vi.hoisted(() => vi.fn());
@@ -76,7 +80,6 @@ vi.mock('./cdk.js', () => ({
 }));
 
 import {
-  applyAwsProfile,
   validateAWSCredentials,
   validateAWSRegion,
   validateInstanceCapabilities,
@@ -112,17 +115,8 @@ const deploymentConfig: OpenClawConfig = {
 
 describe('aws-validation utils', () => {
   afterEach(() => {
-    applyAwsProfile();
     vi.unstubAllEnvs();
     vi.clearAllMocks();
-  });
-
-  it('applyAwsProfile sets AWS env vars', () => {
-    vi.stubEnv('AWS_PROFILE', undefined);
-    vi.stubEnv('AWS_SDK_LOAD_CONFIG', undefined);
-    applyAwsProfile('dev');
-    expect(process.env.AWS_PROFILE).toBe('dev');
-    expect(process.env.AWS_SDK_LOAD_CONFIG).toBe('1');
   });
 
   it('validateAWSCredentials returns credentials', async () => {
@@ -147,7 +141,7 @@ describe('aws-validation utils', () => {
   });
 
   it('validateAWSRegion throws ValidationError on failure', async () => {
-    ec2SendMock.mockRejectedValue(new Error('boom'));
+    ec2SendMock.mockRejectedValue(Object.assign(new Error('boom'), { name: 'InvalidRegion' }));
     await expect(validateAWSRegion('moon-1')).rejects.toBeInstanceOf(ValidationError);
   });
 
@@ -281,7 +275,9 @@ describe('aws-validation utils', () => {
   it('validateStackExists returns true/false', async () => {
     cfnSendMock.mockResolvedValueOnce({});
     await expect(validateStackExists('stack', 'us-east-1')).resolves.toBe(true);
-    cfnSendMock.mockRejectedValueOnce(new Error('nope'));
+    cfnSendMock.mockRejectedValueOnce(
+      Object.assign(new Error('Stack with id stack does not exist'), { name: 'ValidationError' }),
+    );
     await expect(validateStackExists('stack', 'us-east-1')).resolves.toBe(false);
   });
 

@@ -1,5 +1,20 @@
+import type { AwsTarget } from '../../../src/aws/target.js';
 import type { OpenClawConfig } from '../../../src/cli/types/index.js';
 import type { CommandContext } from '../../../src/cli/utils/context.js';
+
+export const testTarget: AwsTarget = Object.freeze({
+  region: 'us-east-1',
+  profile: 'test',
+  account: '123456789012',
+  arn: 'arn:test',
+  userId: 'test',
+  credentials: async () => ({ accessKeyId: 'TEST', secretAccessKey: 'TEST' }),
+  environment: async () => ({
+    AWS_REGION: 'us-east-1',
+    AWS_ACCESS_KEY_ID: 'TEST',
+    AWS_SECRET_ACCESS_KEY: 'TEST',
+  }),
+});
 
 const baseConfig: OpenClawConfig = {
   version: '1.0',
@@ -14,6 +29,7 @@ const baseConfig: OpenClawConfig = {
 export function makeCommandContext(overrides: Partial<CommandContext> = {}): CommandContext {
   const configOverrides = (overrides.config ?? {}) as Partial<OpenClawConfig>;
   return {
+    target: testTarget,
     name: 'alpha',
     configPath: '/tmp/alpha.json',
     config: {

@@ -1,16 +1,14 @@
+import { openclawJson } from '../../openclaw/commands.js';
+import { awsRegion, type AwsLocation } from '../../aws/target.js';
 import {
   DescribeStacksCommand,
   DescribeStackResourcesCommand,
 } from '@aws-sdk/client-cloudformation';
-import {
-  DescribeInstanceInformationCommand,
-  SendCommandCommand,
-  GetCommandInvocationCommand,
-} from '@aws-sdk/client-ssm';
+import { DescribeInstanceInformationCommand } from '@aws-sdk/client-ssm';
 import { DescribeInstancesCommand } from '@aws-sdk/client-ec2';
 import type { DeploymentStatus } from '../types/index.js';
 import { createCloudFormationClient, createEc2Client, createSsmClient } from './aws-clients.js';
-import { AWSError, StackNotFoundError, withRetry } from './errors.js';
+import { StackNotFoundError, withRetry, isRetryableError } from './errors.js';
 
 function isMissingStackResponse(error: unknown, stackName: string): boolean {
   return (
@@ -20,7 +18,10 @@ function isMissingStackResponse(error: unknown, stackName: string): boolean {
   );
 }
 
-export async function getInstanceIdFromStack(stackName: string, region: string): Promise<string> {
+export async function getInstanceIdFromStack(
+  stackName: string,
+  region: AwsLocation,
+): Promise<string> {
   const client = createCloudFormationClient(region);
   const command = new DescribeStacksCommand({ StackName: stackName });
 
@@ -58,7 +59,7 @@ export async function getInstanceIdFromStack(stackName: string, region: string):
     return instanceIds[0];
   } catch (error) {
     if (isMissingStackResponse(error, stackName)) {
-      throw new StackNotFoundError(stackName, region, { cause: error });
+      throw new StackNotFoundError(stackName, awsRegion(region), { cause: error });
     }
     throw error;
   } finally {
@@ -66,21 +67,15 @@ export async function getInstanceIdFromStack(stackName: string, region: string):
   }
 }
 
-export async function resolveInstanceId(stackName: string, region: string): Promise<string> {
-  try {
-    return await withRetry(() => getInstanceIdFromStack(stackName, region), {
-      maxAttempts: 2,
-      operationName: 'get instance ID',
-    });
-  } catch {
-    throw new AWSError('Could not find instance', [
-      'Run: openclaw-aws deploy (to create instance)',
-      'Run: openclaw-aws status (to check deployment)',
-    ]);
-  }
+export async function resolveInstanceId(stackName: string, region: AwsLocation): Promise<string> {
+  return withRetry(() => getInstanceIdFromStack(stackName, region), {
+    maxAttempts: 2,
+    operationName: 'get instance ID',
+    shouldRetry: isRetryableError,
+  });
 }
 
-export async function checkSSMStatus(instanceId: string, region: string): Promise<boolean> {
+export async function checkSSMStatus(instanceId: string, region: AwsLocation): Promise<boolean> {
   const client = createSsmClient(region);
   const command = new DescribeInstanceInformationCommand({
     Filters: [{ Key: 'InstanceIds', Values: [instanceId] }],
@@ -93,8 +88,6 @@ export async function checkSSMStatus(instanceId: string, region: string): Promis
     // Only return true if explicitly Online
     // ConnectionLost, Inactive, or missing instance all return false
     return instance?.PingStatus === 'Online';
-  } catch {
-    return false;
   } finally {
     client.destroy();
   }
@@ -102,7 +95,7 @@ export async function checkSSMStatus(instanceId: string, region: string): Promis
 
 export async function getSSMStatus(
   instanceId: string,
-  region: string,
+  region: AwsLocation,
 ): Promise<{ status: string; lastPing?: string }> {
   const client = createSsmClient(region);
   const command = new DescribeInstanceInformationCommand({
@@ -121,8 +114,6 @@ export async function getSSMStatus(
       status: instance.PingStatus || 'unknown',
       lastPing: instance.LastPingDateTime?.toISOString(),
     };
-  } catch {
-    return { status: 'error' };
   } finally {
     client.destroy();
   }
@@ -130,59 +121,24 @@ export async function getSSMStatus(
 
 export async function checkGatewayStatus(
   instanceId: string,
-  region: string,
+  region: AwsLocation,
 ): Promise<{ running: boolean; error?: string }> {
-  const client = createSsmClient(region);
-
   try {
-    // Send command to check if openclaw gateway service is running
-    const sendCommand = new SendCommandCommand({
-      InstanceIds: [instanceId],
-      DocumentName: 'AWS-RunShellScript',
-      Parameters: {
-        commands: [
-          'sudo -u ubuntu bash -c "export XDG_RUNTIME_DIR=/run/user/1000; export DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus; systemctl --user is-active openclaw-gateway.service"',
-        ],
-      },
-      TimeoutSeconds: 30,
-    });
-
-    const sendResponse = await client.send(sendCommand);
-    const commandId = sendResponse.Command?.CommandId;
-
-    if (!commandId) {
-      return { running: false, error: 'Failed to send command' };
-    }
-
-    // Wait a bit for command to execute
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    // Get command result
-    const getResult = new GetCommandInvocationCommand({
-      CommandId: commandId,
-      InstanceId: instanceId,
-    });
-
-    const resultResponse = await client.send(getResult);
-    const output = resultResponse.StandardOutputContent?.trim();
-
-    return {
-      running: output === 'active',
-      error: output !== 'active' ? resultResponse.StandardErrorContent : undefined,
-    };
+    const health = await openclawJson(instanceId, region, ['health'], { executionSeconds: 60 });
+    const running =
+      typeof health === 'object' && health !== null && 'ok' in health && health.ok === true;
+    return { running, error: running ? undefined : 'Native Gateway health did not report ok' };
   } catch (error) {
     return {
       running: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: error instanceof Error ? error.message : 'Health check failed',
     };
-  } finally {
-    client.destroy();
   }
 }
 
 export async function waitForSSM(
   instanceId: string,
-  region: string,
+  region: AwsLocation,
   maxWaitTime: number = 300000, // 5 minutes
   pollInterval: number = 5000, // 5 seconds
 ): Promise<boolean> {
@@ -199,7 +155,10 @@ export async function waitForSSM(
   return false;
 }
 
-export async function getStackStatus(stackName: string, region: string): Promise<DeploymentStatus> {
+export async function getStackStatus(
+  stackName: string,
+  region: AwsLocation,
+): Promise<DeploymentStatus> {
   const client = createCloudFormationClient(region);
   const command = new DescribeStacksCommand({ StackName: stackName });
 
@@ -208,10 +167,11 @@ export async function getStackStatus(stackName: string, region: string): Promise
     const stack = response.Stacks?.[0];
 
     if (!stack) {
-      throw new StackNotFoundError(stackName, region);
+      throw new StackNotFoundError(stackName, awsRegion(region));
     }
 
     const status: DeploymentStatus = {
+      stackId: stack.StackId,
       stackName: stack.StackName || stackName,
       stackStatus: stack.StackStatus || 'UNKNOWN',
     };
@@ -248,7 +208,7 @@ export async function getStackStatus(stackName: string, region: string): Promise
     return status;
   } catch (error) {
     if (isMissingStackResponse(error, stackName)) {
-      throw new StackNotFoundError(stackName, region, { cause: error });
+      throw new StackNotFoundError(stackName, awsRegion(region), { cause: error });
     }
     throw error;
   } finally {
@@ -258,7 +218,7 @@ export async function getStackStatus(stackName: string, region: string): Promise
 
 export async function getStackOutputs(
   stackName: string,
-  region: string,
+  region: AwsLocation,
 ): Promise<Record<string, string>> {
   const client = createCloudFormationClient(region);
   const command = new DescribeStacksCommand({ StackName: stackName });
@@ -277,7 +237,7 @@ export async function getStackOutputs(
     return result;
   } catch (error) {
     if (isMissingStackResponse(error, stackName)) {
-      throw new StackNotFoundError(stackName, region, { cause: error });
+      throw new StackNotFoundError(stackName, awsRegion(region), { cause: error });
     }
     throw error;
   } finally {

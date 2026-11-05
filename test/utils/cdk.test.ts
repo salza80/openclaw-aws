@@ -1,11 +1,30 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { getCDKBinary } from '../../src/cli/utils/cdk.js';
+const resolveDependency = vi.hoisted(() => vi.fn());
+vi.mock('node:module', () => ({
+  createRequire: () => ({ resolve: resolveDependency }),
+}));
+import { getCDKBinary, getCDKAppCommand } from '../../src/cli/utils/cdk.js';
 
 describe('getCDKBinary', () => {
+  beforeEach(() => {
+    resolveDependency.mockReset().mockImplementation(() => {
+      throw new Error('not installed');
+    });
+  });
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('finds a hoisted dependency instead of using an unrelated global CLI', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    resolveDependency.mockReturnValue('/consumer/node_modules/aws-cdk/package.json');
+    vi.spyOn(fs, 'existsSync').mockImplementation(
+      (p) => String(p) === '/consumer/node_modules/aws-cdk/bin/cdk',
+    );
+    expect(getCDKBinary()).toBe('/consumer/node_modules/aws-cdk/bin/cdk');
+    expect(resolveDependency).toHaveBeenCalledWith('aws-cdk/package.json');
   });
 
   it('returns cdk.cmd on Windows when present', () => {
@@ -60,4 +79,10 @@ describe('getCDKBinary', () => {
     platformSpy.mockRestore();
     existsSpy.mockRestore();
   });
+});
+
+it('quotes installed app paths containing spaces and shell metacharacters', () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  const command = getCDKAppCommand("/a folder/$(false)/it's/app.js");
+  expect(command).toContain('"/a folder/\\$(false)/it\'s/app.js"');
 });

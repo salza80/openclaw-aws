@@ -64,7 +64,11 @@ export function loadConfigByName(name: string): OpenClawConfig {
   return config;
 }
 
-export function saveConfigByName(config: OpenClawConfig, name: string): void {
+export function saveConfigByName(
+  config: OpenClawConfig,
+  name: string,
+  options: { overwrite?: boolean } = {},
+): void {
   // Validate before saving
   validateConfig(config);
 
@@ -76,7 +80,10 @@ export function saveConfigByName(config: OpenClawConfig, name: string): void {
     fs.mkdirSync(configDir, { recursive: true });
   }
 
-  fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+  fs.writeFileSync(configFile, JSON.stringify(config, null, 2), {
+    flag: options.overwrite === false ? 'wx' : 'w',
+    mode: 0o600,
+  });
 }
 
 export function configExistsByName(name: string): boolean {

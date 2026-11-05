@@ -1,3 +1,4 @@
+import type { AwsLocation } from '../../aws/target.js';
 import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -5,8 +6,8 @@ import { logger } from '../utils/logger.js';
 import { buildCommandContext } from '../utils/context.js';
 import { resolveInstanceId, checkSSMStatus } from '../utils/aws.js';
 import { handleError, AWSError } from '../utils/errors.js';
-import { createSsmClient } from '../utils/aws-clients.js';
-import { SendCommandCommand, GetCommandInvocationCommand } from '@aws-sdk/client-ssm';
+import { executeSsm } from '../../aws/ssm.js';
+import { asUbuntu } from '../../openclaw/commands.js';
 
 interface LogsArgs {
   name?: string;
@@ -33,73 +34,21 @@ function buildInitCommands(tail: number): string[] {
 }
 
 function buildServiceCommands(tail: number): string[] {
-  const env =
-    'XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus';
   const commands: string[] = [];
-  commands.push('echo "== openclaw-gateway.service =="');
-  commands.push(
-    `sudo -u ubuntu ${env} journalctl --user -u openclaw-gateway.service -n ${tail} --no-pager || echo "(no logs)"`,
-  );
-  commands.push('echo ""');
-  commands.push('echo "== openclaw-daemon.service =="');
-  commands.push(
-    `sudo -u ubuntu ${env} journalctl --user -u openclaw-daemon.service -n ${tail} --no-pager || echo "(no logs)"`,
-  );
-  commands.push('echo ""');
+  for (const service of ['openclaw-gateway.service', 'openclaw-daemon.service']) {
+    commands.push(`echo "== ${service} =="`);
+    commands.push(asUbuntu(`journalctl --user -u ${service} -n ${tail} --no-pager`));
+  }
   return commands;
 }
 
 async function runSsmCommand(
   instanceId: string,
-  region: string,
+  region: AwsLocation,
   commands: string[],
   timeoutSeconds: number = 30,
 ): Promise<{ stdout: string; stderr: string }> {
-  const client = createSsmClient(region);
-  try {
-    const send = await client.send(
-      new SendCommandCommand({
-        InstanceIds: [instanceId],
-        DocumentName: 'AWS-RunShellScript',
-        Parameters: { commands },
-        TimeoutSeconds: timeoutSeconds,
-      }),
-    );
-
-    const commandId = send.Command?.CommandId;
-    if (!commandId) {
-      throw new AWSError('Failed to send SSM command', [
-        'Check instance status: openclaw-aws status',
-        'Try again in a few minutes',
-      ]);
-    }
-
-    const start = Date.now();
-    while (Date.now() - start < timeoutSeconds * 1000) {
-      const result = await client.send(
-        new GetCommandInvocationCommand({
-          CommandId: commandId,
-          InstanceId: instanceId,
-        }),
-      );
-
-      if (result.Status && ['Success', 'Failed', 'Cancelled', 'TimedOut'].includes(result.Status)) {
-        return {
-          stdout: result.StandardOutputContent?.trim() ?? '',
-          stderr: result.StandardErrorContent?.trim() ?? '',
-        };
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-
-    throw new AWSError('Timed out waiting for logs', [
-      'Try again with a smaller --tail value',
-      'Check instance health: openclaw-aws status',
-    ]);
-  } finally {
-    client.destroy();
-  }
+  return executeSsm(instanceId, region, commands, { executionSeconds: timeoutSeconds });
 }
 
 export const logsCommand: CommandModule<{}, LogsArgs> = {
@@ -147,7 +96,7 @@ export const logsCommand: CommandModule<{}, LogsArgs> = {
       const spinner = ora('Finding instance...').start();
       let instanceId: string;
       try {
-        instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
+        instanceId = await resolveInstanceId(config.stack.name, ctx.target);
         spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
       } catch (error) {
         spinner.fail('Instance not found');
@@ -155,7 +104,7 @@ export const logsCommand: CommandModule<{}, LogsArgs> = {
       }
 
       spinner.start('Checking SSM connectivity...');
-      const isReady = await checkSSMStatus(instanceId, config.aws.region);
+      const isReady = await checkSSMStatus(instanceId, ctx.target);
       if (!isReady) {
         spinner.fail('Instance not ready');
         throw new AWSError('Instance not ready for SSM log retrieval', [
@@ -171,7 +120,7 @@ export const logsCommand: CommandModule<{}, LogsArgs> = {
       ];
 
       const printOnce = async () => {
-        const result = await runSsmCommand(instanceId, config.aws.region, commands, 60);
+        const result = await runSsmCommand(instanceId, ctx.target, commands, 60);
         if (result.stdout) console.log(result.stdout);
         if (result.stderr) console.log(chalk.yellow(result.stderr));
       };

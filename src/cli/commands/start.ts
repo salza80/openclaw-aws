@@ -32,10 +32,10 @@ export const startCommand: CommandModule<{}, StartArgs> = {
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      const instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
+      const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
       spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
 
-      const currentState = await getInstanceState(instanceId, config.aws.region);
+      const currentState = await getInstanceState(instanceId, ctx.target);
       if (currentState === 'running') {
         logger.info('Instance is already running');
         console.log('\n' + chalk.bold('Next steps:'));
@@ -48,10 +48,10 @@ export const startCommand: CommandModule<{}, StartArgs> = {
 
       // Start instance
       spinner.start('Starting instance...');
-      await startInstance(instanceId, config.aws.region);
+      await startInstance(instanceId, ctx.target);
       spinner.text = 'Waiting for instance to start... (this may take 1-2 minutes)';
 
-      const didStart = await waitForInstanceState(instanceId, config.aws.region, 'running', 180000);
+      const didStart = await waitForInstanceState(instanceId, ctx.target, 'running', 180000);
 
       if (didStart) {
         spinner.succeed('Instance started successfully');
@@ -63,7 +63,7 @@ export const startCommand: CommandModule<{}, StartArgs> = {
         // Wait up to 2 minutes for SSM
         for (let i = 0; i < 24; i++) {
           // 24 * 5 seconds = 2 minutes
-          ssmReady = await checkSSMStatus(instanceId, config.aws.region);
+          ssmReady = await checkSSMStatus(instanceId, ctx.target);
           if (ssmReady) break;
           await new Promise((resolve) => setTimeout(resolve, 5000));
         }

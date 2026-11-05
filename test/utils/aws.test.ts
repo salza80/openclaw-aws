@@ -62,7 +62,7 @@ import {
   getStackStatus,
   getStackOutputs,
 } from '../../src/cli/utils/aws.js';
-import { AWSError, StackNotFoundError } from '../../src/cli/utils/errors.js';
+import { StackNotFoundError } from '../../src/cli/utils/errors.js';
 import {
   DescribeStacksCommand,
   DescribeStackResourcesCommand,
@@ -243,9 +243,10 @@ describe('aws utils', () => {
     expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
   });
 
-  it('resolveInstanceId throws AWSError when not found', async () => {
-    cfnSendMock.mockRejectedValue(new Error('no stack'));
-    await expect(resolveInstanceId('stack', 'us-east-1')).rejects.toBeInstanceOf(AWSError);
+  it('resolveInstanceId preserves AWS error identity', async () => {
+    const original = Object.assign(new Error('Access denied'), { name: 'AccessDenied' });
+    cfnSendMock.mockRejectedValue(original);
+    await expect(resolveInstanceId('stack', 'us-east-1')).rejects.toBe(original);
   });
 
   it('checkSSMStatus returns true when Online', async () => {
@@ -255,9 +256,10 @@ describe('aws utils', () => {
     await expect(checkSSMStatus('i-123', 'us-east-1')).resolves.toBe(true);
   });
 
-  it('checkSSMStatus returns false on error', async () => {
-    ssmSendMock.mockRejectedValue(new Error('fail'));
-    await expect(checkSSMStatus('i-123', 'us-east-1')).resolves.toBe(false);
+  it('checkSSMStatus preserves API failures instead of reporting an offline host', async () => {
+    const original = new Error('Access denied');
+    ssmSendMock.mockRejectedValue(original);
+    await expect(checkSSMStatus('i-123', 'us-east-1')).rejects.toBe(original);
   });
 
   it('getSSMStatus returns not-registered when missing', async () => {
@@ -275,9 +277,12 @@ describe('aws utils', () => {
   });
 
   it('checkGatewayStatus handles active output', async () => {
-    ssmSendMock
-      .mockResolvedValueOnce({ Command: { CommandId: 'cmd-1' } })
-      .mockResolvedValueOnce({ StandardOutputContent: 'active', StandardErrorContent: '' });
+    ssmSendMock.mockResolvedValueOnce({ Command: { CommandId: 'cmd-1' } }).mockResolvedValueOnce({
+      Status: 'Success',
+      ResponseCode: 0,
+      StandardOutputContent: '{"ok":true}',
+      StandardErrorContent: '',
+    });
 
     vi.useFakeTimers();
     const run = checkGatewayStatus('i-123', 'us-east-1');
@@ -293,7 +298,7 @@ describe('aws utils', () => {
     ssmSendMock.mockResolvedValue({ Command: {} });
     const result = await checkGatewayStatus('i-123', 'us-east-1');
     expect(result.running).toBe(false);
-    expect(result.error).toContain('Failed to send command');
+    expect(result.error).toContain('SSM did not return a command ID');
   });
 
   it('waitForSSM returns true when SSM becomes ready', async () => {

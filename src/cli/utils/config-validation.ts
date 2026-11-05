@@ -76,6 +76,14 @@ export function validateConfig(config: OpenClawConfig): void {
   }
 
   if (config.openclaw) {
+    if (
+      config.openclaw.model !== undefined &&
+      (typeof config.openclaw.model !== 'string' ||
+        config.openclaw.model.length > 256 ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/.test(config.openclaw.model))
+    ) {
+      errors.push('Invalid openclaw.model; use a native provider/model reference');
+    }
     if (!API_PROVIDERS.some(({ value }) => value === config.openclaw?.apiProvider)) {
       errors.push('Invalid openclaw.apiProvider');
     }

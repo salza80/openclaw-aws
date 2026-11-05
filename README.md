@@ -35,6 +35,20 @@ Use `@salza80/openclaw-aws` only when installing the package. The CLI command it
 
 ## Quick Start
 
+Create a named claw with one command after setting its provider credential:
+
+```bash
+export OPENROUTER_API_KEY=your-api-key
+npx openclaw-aws create personal --provider openrouter --region eu-central-1
+# Noninteractive: add --yes to approve provisioning and required CDK bootstrap.
+# Optional: --profile work --instance-type t3a.small --model openrouter/openai/gpt-4.1-nano
+npx openclaw-aws status --name personal --runtime
+```
+
+`create` accepts the providers listed by `--help`, including existing full names such as `openrouter-api-key`. It inherits region, profile, instance type and provider/model defaults from the current configuration; explicit options take precedence. A different provider does not inherit the previous provider's model. Missing credentials fail before provisioning; local names, existing AWS stacks and retained secret names are checked before saving the new configuration. Cancelling deployment leaves the configuration available for `deploy`. Fresh deployment never overwrites an existing SSM secret; inspect retained resources and explicitly clean up before retrying a failed creation.
+
+The existing two-step setup remains available:
+
 ```bash
 # Initialize your bot with interactive prompts
 # This will generate a config file
@@ -58,7 +72,7 @@ To access your bot:
 ```bash
 # Open the dashboard to view in your browser (port forwarded via secure SSM - not public access)
 npx openclaw-aws dashboard
-# Opens http://localhost:18789 in your browser - short delay before it works - refresh browser after 5 seconds
+# Selects a free local port and privately passes the token to your browser
 
 # Or connect to the instance via SSM - for full terminal access
 npx openclaw-aws connect
@@ -168,13 +182,17 @@ npx openclaw-aws status --all
 
 ### `openclaw-aws dashboard`
 
-Forward port 18789 to access the OpenClaw dashboard locally.
+Forward the native Gateway port 18789 through SSM to an automatically selected free local port. Multiple deployments can have simultaneous tunnels. Readiness comes from the child Session Manager listener after a successful native health check.
 
 **Example:**
 
 ```bash
-npx openclaw-aws dashboard
+npx openclaw-aws dashboard --name personal
+npx openclaw-aws dashboard --name research --local-port 19876
+npx openclaw-aws dashboard --no-open
 ```
+
+Tokens are omitted from terminal output by default and passed to the browser in a URL fragment. For an explicitly printed private authenticated URL, use `--show-token`; keep that output private. Requested ports that are occupied and child process failures produce an error.
 
 ### `openclaw-aws connect`
 
@@ -324,8 +342,9 @@ The current selection is stored in `.openclaw-aws/current.json`.
 }
 ```
 
-If you want to use a named AWS CLI profile, you can add an optional `aws.profile` field manually.
-Each config uses its own profile. A config without `aws.profile` uses the original shell profile or default AWS credential chain, including during `--all` operations.
+Select a named AWS profile with `init --profile work`, `create --profile work`, or the optional `aws.profile` configuration field. An explicit profile takes precedence over environment credentials. Without a selected profile, environment credentials are captured once; otherwise the shell profile or default profile is used. Operations resolve account and credentials independently without modifying the shell environment, including overlapping targets. SDK calls and CDK/AWS child processes receive the same identity. Expiring credentials refresh through the original source and are checked for identity changes. If an SSO login expired while the AWS CLI still holds a valid role credential, the CLI can export it privately for the shared context. Sign in again when credentials cannot cover a bounded CDK operation.
+
+`status --runtime` reads the native OpenClaw version and resolved default model without inference. `.openclaw-aws/deployments/<name>.json` records the CloudFormation identity and separates desired settings from observations. Differences are reported without changing native UI settings. Existing v1 configs remain readable; inspection does not migrate AWS resources. The context rejects changes to a saved account, region or stack name; destruction and inspection also check the saved CloudFormation identity. Shared mutations use `.openclaw-aws/locks/`; after a crashed process, verify no operation is active before removing its stale lock. See [repository guidance](AGENTS.md) for layer ownership.
 
 ### Cloudflare AI Gateway setup
 

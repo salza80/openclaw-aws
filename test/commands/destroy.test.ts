@@ -3,6 +3,8 @@ import fs from 'fs';
 import type { CommandModule } from 'yargs';
 import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
+vi.mock('../../src/operations/state.js', () => ({ assertDeploymentTarget: vi.fn() }));
+
 const execaMock = vi.hoisted(() => vi.fn());
 
 vi.mock('execa', () => ({
@@ -35,6 +37,7 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
 
 vi.mock('../../src/cli/utils/cdk.js', () => ({
   getCDKBinary: vi.fn(() => 'cdk'),
+  getCDKAppCommand: vi.fn((value: string) => `node ${value}`),
 }));
 
 const listConfigNamesMock = vi.hoisted(() => vi.fn());

@@ -1,3 +1,5 @@
+import { assertDeploymentTarget } from '../../operations/state.js';
+import type { AwsLocation } from '../../aws/target.js';
 import type { CommandModule } from 'yargs';
 import { execa } from 'execa';
 import ora from 'ora';
@@ -8,7 +10,7 @@ import { getConfigPathByName } from '../utils/config.js';
 import { buildCommandContext } from '../utils/context.js';
 import { getStackStatus } from '../utils/aws.js';
 import { handleError, AWSError, StackNotFoundError } from '../utils/errors.js';
-import { getCDKBinary } from '../utils/cdk.js';
+import { getCDKBinary, getCDKAppCommand } from '../utils/cdk.js';
 import {
   listConfigNames,
   clearCurrentName,
@@ -36,7 +38,7 @@ interface DestroyArgs {
 async function deleteApiKeyParam(
   configName: string,
   provider: Provider,
-  region: string,
+  region: AwsLocation,
 ): Promise<void> {
   const client = createSsmClient(region);
   const paramName = getApiKeyParamName(configName, provider);
@@ -53,7 +55,7 @@ async function deleteApiKeyParam(
   }
 }
 
-async function deleteGatewayTokenParam(configName: string, region: string): Promise<void> {
+async function deleteGatewayTokenParam(configName: string, region: AwsLocation): Promise<void> {
   const client = createSsmClient(region);
   const paramName = getGatewayTokenParamName(configName);
   try {
@@ -146,7 +148,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           let stackExists = true;
           const spinner = ora('Checking stack status...').start();
           try {
-            await getStackStatus(config.stack.name, config.aws.region);
+            const status = await getStackStatus(config.stack.name, ctx.target);
+            assertDeploymentTarget(ctx, status);
             spinner.succeed(`Stack found: ${config.stack.name}`);
           } catch (error) {
             if (!(error instanceof StackNotFoundError)) {
@@ -159,14 +162,14 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
           if (!stackExists) {
             logger.info('No resources to delete');
-            await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
-            await deleteGatewayTokenParam(ctx.name, config.aws.region);
+            await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+            await deleteGatewayTokenParam(ctx.name, ctx.target);
             console.log('');
             continue;
           }
 
           const env = {
-            ...ctx.awsEnv,
+            ...(await ctx.target.environment(30 * 60_000)),
             OPENCLAW_CONFIG_NAME: ctx.name,
             OPENCLAW_CDK_OPERATION: 'destroy',
             CDK_DISABLE_VERSION_CHECK: 'true',
@@ -182,13 +185,15 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
                 'destroy',
                 config.stack.name,
                 '--app',
-                `node ${cdkAppPath}`,
+                getCDKAppCommand(cdkAppPath),
                 '--no-notices',
                 '--no-version-reporting',
                 '--force',
               ],
               {
                 env,
+                extendEnv: false,
+                timeout: 25 * 60_000,
                 cwd: process.cwd(),
               },
             );
@@ -196,8 +201,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             destroySpinner.succeed('Stack destroyed successfully');
             logger.success('All resources removed');
             console.log('\nTotal cost: $0/month');
-            await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
-            await deleteGatewayTokenParam(ctx.name, config.aws.region);
+            await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+            await deleteGatewayTokenParam(ctx.name, ctx.target);
           } catch {
             destroySpinner.fail('Destruction failed');
             throw new AWSError('Stack destruction failed', [
@@ -258,7 +263,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
       const spinner = ora('Checking stack status...').start();
       try {
-        const status = await getStackStatus(config.stack.name, config.aws.region);
+        const status = await getStackStatus(config.stack.name, ctx.target);
+        assertDeploymentTarget(ctx, status);
         instanceId = status.instanceId;
         spinner.succeed(`Stack found: ${config.stack.name}`);
       } catch (error) {
@@ -275,8 +281,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         console.log('\n' + chalk.bold('Next steps:'));
         console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
         console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
-        await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
-        await deleteGatewayTokenParam(ctx.name, config.aws.region);
+        await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+        await deleteGatewayTokenParam(ctx.name, ctx.target);
         if (argv.deleteConfig) {
           const configPath = getConfigPathByName(ctx.name);
           if (fs.existsSync(configPath)) {
@@ -342,7 +348,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
       // Set up environment
       const env = {
-        ...ctx.awsEnv,
+        ...(await ctx.target.environment(30 * 60_000)),
         OPENCLAW_CONFIG_NAME: ctx.name,
         OPENCLAW_CDK_OPERATION: 'destroy',
         CDK_DISABLE_VERSION_CHECK: 'true',
@@ -360,13 +366,15 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             'destroy',
             config.stack.name,
             '--app',
-            `node ${cdkAppPath}`,
+            getCDKAppCommand(cdkAppPath),
             '--no-notices',
             '--no-version-reporting',
             '--force',
           ],
           {
             env,
+            extendEnv: false,
+            timeout: 25 * 60_000,
             cwd: process.cwd(),
           },
         );
@@ -374,8 +382,8 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         destroySpinner.succeed('Stack destroyed successfully');
         logger.success('All resources removed');
         console.log('\nTotal cost: $0/month');
-        await deleteApiKeyParam(ctx.name, apiProvider, config.aws.region);
-        await deleteGatewayTokenParam(ctx.name, config.aws.region);
+        await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+        await deleteGatewayTokenParam(ctx.name, ctx.target);
 
         // Ask about config file
         if (argv.deleteConfig) {
