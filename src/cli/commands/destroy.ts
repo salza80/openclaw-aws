@@ -1,3 +1,4 @@
+import { withDeploymentLock } from '../../operations/lock.js';
 import { assertDeploymentTarget } from '../../operations/state.js';
 import type { AwsLocation } from '../../aws/target.js';
 import type { CommandModule } from 'yargs';
@@ -139,80 +140,82 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
         for (const name of names) {
           const ctx = await buildCommandContext({ name });
-          const config = ctx.config;
-          const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
+          await withDeploymentLock(ctx, async () => {
+            const config = ctx.config;
+            const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
 
-          logger.title('OpenClaw AWS - Destroy');
-          logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
+            logger.title('OpenClaw AWS - Destroy');
+            logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
 
-          let stackExists = true;
-          const spinner = ora('Checking stack status...').start();
-          try {
-            const status = await getStackStatus(config.stack.name, ctx.target);
-            assertDeploymentTarget(ctx, status);
-            spinner.succeed(`Stack found: ${config.stack.name}`);
-          } catch (error) {
-            if (!(error instanceof StackNotFoundError)) {
-              spinner.fail('Could not verify stack status');
-              throw error;
+            let stackExists = true;
+            const spinner = ora('Checking stack status...').start();
+            try {
+              const status = await getStackStatus(config.stack.name, ctx.target);
+              assertDeploymentTarget(ctx, status);
+              spinner.succeed(`Stack found: ${config.stack.name}`);
+            } catch (error) {
+              if (!(error instanceof StackNotFoundError)) {
+                spinner.fail('Could not verify stack status');
+                throw error;
+              }
+              spinner.warn('Stack not found (may already be deleted)');
+              stackExists = false;
             }
-            spinner.warn('Stack not found (may already be deleted)');
-            stackExists = false;
-          }
 
-          if (!stackExists) {
-            logger.info('No resources to delete');
-            await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-            await deleteGatewayTokenParam(ctx.name, ctx.target);
+            if (!stackExists) {
+              logger.info('No resources to delete');
+              await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+              await deleteGatewayTokenParam(ctx.name, ctx.target);
+              console.log('');
+              return;
+            }
+
+            const env = {
+              ...(await ctx.target.environment(30 * 60_000)),
+              OPENCLAW_CONFIG_NAME: ctx.name,
+              OPENCLAW_CDK_OPERATION: 'destroy',
+              CDK_DISABLE_VERSION_CHECK: 'true',
+              CDK_DISABLE_CLI_TELEMETRY: '1',
+              CI: 'true',
+            };
+            const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
+
+            try {
+              await execa(
+                cdkBinary,
+                [
+                  'destroy',
+                  config.stack.name,
+                  '--app',
+                  getCDKAppCommand(cdkAppPath),
+                  '--no-notices',
+                  '--no-version-reporting',
+                  '--force',
+                ],
+                {
+                  env,
+                  extendEnv: false,
+                  timeout: 25 * 60_000,
+                  cwd: process.cwd(),
+                },
+              );
+
+              destroySpinner.succeed('Stack destroyed successfully');
+              logger.success('Deployment stack removed');
+              console.log('\nRetained data and shared AWS resources may still incur charges.');
+              await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+              await deleteGatewayTokenParam(ctx.name, ctx.target);
+            } catch {
+              destroySpinner.fail('Destruction failed');
+              throw new AWSError('Stack destruction failed', [
+                'Check AWS Console CloudFormation page for details',
+                'Some resources may need manual cleanup',
+                'Try running destroy again after a few minutes',
+              ]);
+            }
+
             console.log('');
-            continue;
-          }
-
-          const env = {
-            ...(await ctx.target.environment(30 * 60_000)),
-            OPENCLAW_CONFIG_NAME: ctx.name,
-            OPENCLAW_CDK_OPERATION: 'destroy',
-            CDK_DISABLE_VERSION_CHECK: 'true',
-            CDK_DISABLE_CLI_TELEMETRY: '1',
-            CI: 'true',
-          };
-          const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
-
-          try {
-            await execa(
-              cdkBinary,
-              [
-                'destroy',
-                config.stack.name,
-                '--app',
-                getCDKAppCommand(cdkAppPath),
-                '--no-notices',
-                '--no-version-reporting',
-                '--force',
-              ],
-              {
-                env,
-                extendEnv: false,
-                timeout: 25 * 60_000,
-                cwd: process.cwd(),
-              },
-            );
-
-            destroySpinner.succeed('Stack destroyed successfully');
-            logger.success('All resources removed');
-            console.log('\nTotal cost: $0/month');
-            await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-            await deleteGatewayTokenParam(ctx.name, ctx.target);
-          } catch {
-            destroySpinner.fail('Destruction failed');
-            throw new AWSError('Stack destruction failed', [
-              'Check AWS Console CloudFormation page for details',
-              'Some resources may need manual cleanup',
-              'Try running destroy again after a few minutes',
-            ]);
-          }
-
-          console.log('');
+          });
         }
 
         if (argv.deleteConfig) {
@@ -251,54 +254,40 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
       // Load configuration
       const ctx = await buildCommandContext({ name: argv.name });
-      const config = ctx.config;
-      const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
+      await withDeploymentLock(ctx, async () => {
+        const config = ctx.config;
+        const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
 
-      logger.title('OpenClaw AWS - Destroy');
-      logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
+        logger.title('OpenClaw AWS - Destroy');
+        logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
 
-      // Try to get stack status
-      let stackExists = true;
-      let instanceId: string | undefined;
+        // Try to get stack status
+        let stackExists = true;
+        let instanceId: string | undefined;
 
-      const spinner = ora('Checking stack status...').start();
-      try {
-        const status = await getStackStatus(config.stack.name, ctx.target);
-        assertDeploymentTarget(ctx, status);
-        instanceId = status.instanceId;
-        spinner.succeed(`Stack found: ${config.stack.name}`);
-      } catch (error) {
-        if (!(error instanceof StackNotFoundError)) {
-          spinner.fail('Could not verify stack status');
-          throw error;
-        }
-        spinner.warn('Stack not found (may already be deleted)');
-        stackExists = false;
-      }
-
-      if (!stackExists) {
-        logger.info('No resources to delete');
-        console.log('\n' + chalk.bold('Next steps:'));
-        console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
-        console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
-        await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-        await deleteGatewayTokenParam(ctx.name, ctx.target);
-        if (argv.deleteConfig) {
-          const configPath = getConfigPathByName(ctx.name);
-          if (fs.existsSync(configPath)) {
-            fs.unlinkSync(configPath);
-            logger.success('Configuration file deleted');
+        const spinner = ora('Checking stack status...').start();
+        try {
+          const status = await getStackStatus(config.stack.name, ctx.target);
+          assertDeploymentTarget(ctx, status);
+          instanceId = status.instanceId;
+          spinner.succeed(`Stack found: ${config.stack.name}`);
+        } catch (error) {
+          if (!(error instanceof StackNotFoundError)) {
+            spinner.fail('Could not verify stack status');
+            throw error;
           }
-          updateCurrentAfterDeletion([ctx.name]);
-        } else {
-          const { deleteConfig } = await prompts({
-            type: 'confirm',
-            name: 'deleteConfig',
-            message: 'Delete configuration file?',
-            initial: false,
-          });
+          spinner.warn('Stack not found (may already be deleted)');
+          stackExists = false;
+        }
 
-          if (deleteConfig) {
+        if (!stackExists) {
+          logger.info('No resources to delete');
+          console.log('\n' + chalk.bold('Next steps:'));
+          console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
+          console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
+          await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+          await deleteGatewayTokenParam(ctx.name, ctx.target);
+          if (argv.deleteConfig) {
             const configPath = getConfigPathByName(ctx.name);
             if (fs.existsSync(configPath)) {
               fs.unlinkSync(configPath);
@@ -306,102 +295,102 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             }
             updateCurrentAfterDeletion([ctx.name]);
           } else {
-            logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
+            const { deleteConfig } = await prompts({
+              type: 'confirm',
+              name: 'deleteConfig',
+              message: 'Delete configuration file?',
+              initial: false,
+            });
+
+            if (deleteConfig) {
+              const configPath = getConfigPathByName(ctx.name);
+              if (fs.existsSync(configPath)) {
+                fs.unlinkSync(configPath);
+                logger.success('Configuration file deleted');
+              }
+              updateCurrentAfterDeletion([ctx.name]);
+            } else {
+              logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
+            }
           }
-        }
-        return;
-      }
-
-      // Show what will be deleted
-      console.log('\n' + chalk.red('⚠ WARNING:') + ' This will permanently delete:\n');
-      console.log(
-        chalk.red(
-          '  ✗ EC2 instance: ' + config.instance.name + (instanceId ? ` (${instanceId})` : ''),
-        ),
-      );
-      console.log(chalk.red('  ✗ All data on the instance'));
-      console.log(chalk.red('  ✗ Security group'));
-      console.log(chalk.red('  ✗ IAM role'));
-      console.log(chalk.red('  ✗ CloudFormation stack: ' + config.stack.name));
-      console.log('\n' + chalk.bold('This action CANNOT be undone!\n'));
-
-      // Confirmation
-      if (!argv.force) {
-        const { confirmText } = await prompts({
-          type: 'text',
-          name: 'confirmText',
-          message: 'Type "DELETE" to confirm:',
-          validate: (value) => value === 'DELETE' || 'You must type DELETE to confirm',
-        });
-
-        if (confirmText !== 'DELETE') {
-          logger.warn('Destruction cancelled');
           return;
         }
-      }
 
-      // Get CDK binary (local from node_modules or global fallback)
-      const cdkBinary = getCDKBinary();
-
-      // Get CDK app path
-      const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
-
-      // Set up environment
-      const env = {
-        ...(await ctx.target.environment(30 * 60_000)),
-        OPENCLAW_CONFIG_NAME: ctx.name,
-        OPENCLAW_CDK_OPERATION: 'destroy',
-        CDK_DISABLE_VERSION_CHECK: 'true',
-        CDK_DISABLE_CLI_TELEMETRY: '1',
-        CI: 'true',
-      };
-
-      // Destroy stack
-      const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
-
-      try {
-        await execa(
-          cdkBinary,
-          [
-            'destroy',
-            config.stack.name,
-            '--app',
-            getCDKAppCommand(cdkAppPath),
-            '--no-notices',
-            '--no-version-reporting',
-            '--force',
-          ],
-          {
-            env,
-            extendEnv: false,
-            timeout: 25 * 60_000,
-            cwd: process.cwd(),
-          },
+        // Show what will be deleted
+        console.log('\n' + chalk.red('⚠ WARNING:') + ' This will permanently delete:\n');
+        console.log(
+          chalk.red(
+            '  ✗ EC2 instance: ' + config.instance.name + (instanceId ? ` (${instanceId})` : ''),
+          ),
         );
+        console.log(chalk.red('  ✗ All data on the instance'));
+        console.log(chalk.red('  ✗ Security group'));
+        console.log(chalk.red('  ✗ IAM role'));
+        console.log(chalk.red('  ✗ CloudFormation stack: ' + config.stack.name));
+        console.log('\n' + chalk.bold('This action CANNOT be undone!\n'));
 
-        destroySpinner.succeed('Stack destroyed successfully');
-        logger.success('All resources removed');
-        console.log('\nTotal cost: $0/month');
-        await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-        await deleteGatewayTokenParam(ctx.name, ctx.target);
-
-        // Ask about config file
-        if (argv.deleteConfig) {
-          const configPath = getConfigPathByName(ctx.name);
-          if (fs.existsSync(configPath)) {
-            fs.unlinkSync(configPath);
-            logger.success('Configuration file deleted');
-          }
-          updateCurrentAfterDeletion([ctx.name]);
-        } else {
-          const { deleteConfig } = await prompts({
-            type: 'confirm',
-            name: 'deleteConfig',
-            message: 'Delete configuration file?',
-            initial: false,
+        // Confirmation
+        if (!argv.force) {
+          const { confirmText } = await prompts({
+            type: 'text',
+            name: 'confirmText',
+            message: 'Type "DELETE" to confirm:',
+            validate: (value) => value === 'DELETE' || 'You must type DELETE to confirm',
           });
 
-          if (deleteConfig) {
+          if (confirmText !== 'DELETE') {
+            logger.warn('Destruction cancelled');
+            return;
+          }
+        }
+
+        // Get CDK binary (local from node_modules or global fallback)
+        const cdkBinary = getCDKBinary();
+
+        // Get CDK app path
+        const cdkAppPath = path.resolve(__dirname, '../../cdk/app.js');
+
+        // Set up environment
+        const env = {
+          ...(await ctx.target.environment(30 * 60_000)),
+          OPENCLAW_CONFIG_NAME: ctx.name,
+          OPENCLAW_CDK_OPERATION: 'destroy',
+          CDK_DISABLE_VERSION_CHECK: 'true',
+          CDK_DISABLE_CLI_TELEMETRY: '1',
+          CI: 'true',
+        };
+
+        // Destroy stack
+        const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
+
+        try {
+          await execa(
+            cdkBinary,
+            [
+              'destroy',
+              config.stack.name,
+              '--app',
+              getCDKAppCommand(cdkAppPath),
+              '--no-notices',
+              '--no-version-reporting',
+              '--force',
+            ],
+            {
+              env,
+              extendEnv: false,
+              timeout: 25 * 60_000,
+              cwd: process.cwd(),
+            },
+          );
+
+          destroySpinner.succeed('Stack destroyed successfully');
+          logger.success('Deployment stack removed');
+          console.log('\nRetained data and shared AWS resources may still incur charges.');
+          await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+          await deleteGatewayTokenParam(ctx.name, ctx.target);
+
+          // Ask about config file
+          if (argv.deleteConfig) {
             const configPath = getConfigPathByName(ctx.name);
             if (fs.existsSync(configPath)) {
               fs.unlinkSync(configPath);
@@ -409,17 +398,33 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             }
             updateCurrentAfterDeletion([ctx.name]);
           } else {
-            logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
+            const { deleteConfig } = await prompts({
+              type: 'confirm',
+              name: 'deleteConfig',
+              message: 'Delete configuration file?',
+              initial: false,
+            });
+
+            if (deleteConfig) {
+              const configPath = getConfigPathByName(ctx.name);
+              if (fs.existsSync(configPath)) {
+                fs.unlinkSync(configPath);
+                logger.success('Configuration file deleted');
+              }
+              updateCurrentAfterDeletion([ctx.name]);
+            } else {
+              logger.info(`Configuration kept at ${getConfigPathByName(ctx.name)}`);
+            }
           }
+        } catch {
+          destroySpinner.fail('Destruction failed');
+          throw new AWSError('Stack destruction failed', [
+            'Check AWS Console CloudFormation page for details',
+            'Some resources may need manual cleanup',
+            'Try running destroy again after a few minutes',
+          ]);
         }
-      } catch {
-        destroySpinner.fail('Destruction failed');
-        throw new AWSError('Stack destruction failed', [
-          'Check AWS Console CloudFormation page for details',
-          'Some resources may need manual cleanup',
-          'Try running destroy again after a few minutes',
-        ]);
-      }
+      });
     } catch (error) {
       handleError(error);
     }
