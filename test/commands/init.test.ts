@@ -30,4 +30,20 @@ describe('init command', () => {
     expect(fs.existsSync(configPath)).toBe(true);
     expect(getCurrentName()).toBe('my-openclaw-bot');
   });
+  it('saves required noninteractive Cloudflare Gateway metadata', async () => {
+    await initCommand.handler?.({
+      yes: true,
+      name: 'cloudflare',
+      apiProvider: 'cloudflare-ai-gateway-api-key',
+      cloudflareAccountId: 'a'.repeat(32),
+      cloudflareGatewayId: 'my-gateway',
+      _: [],
+      $0: 'openclaw-aws',
+    });
+    const config = JSON.parse(fs.readFileSync(getConfigPathByName('cloudflare'), 'utf8'));
+    expect(config.openclaw.cloudflare).toEqual({
+      accountId: 'a'.repeat(32),
+      gatewayId: 'my-gateway',
+    });
+  });
 });

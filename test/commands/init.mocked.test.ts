@@ -134,6 +134,26 @@ describe('init command (mocked)', () => {
     expect(deployCommand.handler).not.toHaveBeenCalled();
   });
 
+  it('rejects noninteractive Cloudflare setup without both routing IDs before saving', async () => {
+    configExistsByNameMock.mockReturnValue(false);
+    const { default: initCommand } = await import('../../src/cli/commands/init.js');
+    await initCommand.handler?.({
+      yes: true,
+      name: 'cloudflare',
+      apiProvider: 'cloudflare-ai-gateway-api-key',
+      _: [],
+      $0: 'openclaw-aws',
+    });
+    expect(handleErrorMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining('openclaw.cloudflare.accountId'),
+      }),
+    );
+    expect(saveConfigByNameMock).not.toHaveBeenCalled();
+    expect(setCurrentNameMock).not.toHaveBeenCalled();
+    expect(deployCommand.handler).not.toHaveBeenCalled();
+  });
+
   it('calls deploy when deployNow is true', async () => {
     configExistsByNameMock.mockReturnValue(false);
     promptsMock

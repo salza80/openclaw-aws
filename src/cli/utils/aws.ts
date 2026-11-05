@@ -1,4 +1,7 @@
-import { DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
+import {
+  DescribeStacksCommand,
+  DescribeStackResourcesCommand,
+} from '@aws-sdk/client-cloudformation';
 import {
   DescribeInstanceInformationCommand,
   SendCommandCommand,
@@ -26,11 +29,33 @@ export async function getInstanceIdFromStack(stackName: string, region: string):
     const outputs = response.Stacks?.[0]?.Outputs || [];
 
     const instanceIdOutput = outputs.find((o) => o.OutputKey === 'InstanceId');
-    if (!instanceIdOutput?.OutputValue) {
-      throw new Error('Instance ID not found in stack outputs');
-    }
+    if (instanceIdOutput?.OutputValue) return instanceIdOutput.OutputValue;
 
-    return instanceIdOutput.OutputValue;
+    // Failed creations may retain the instance before CloudFormation publishes outputs.
+    const resources = await client.send(
+      new DescribeStackResourcesCommand({ StackName: stackName }),
+    );
+    const instanceIds = (resources.StackResources ?? [])
+      .filter(
+        (resource) =>
+          resource.ResourceType === 'AWS::EC2::Instance' &&
+          resource.ResourceStatus !== 'DELETE_COMPLETE',
+      )
+      .map((resource) => resource.PhysicalResourceId)
+      .filter(
+        (id): id is string => typeof id === 'string' && /^i-(?:[a-f0-9]{8}|[a-f0-9]{17})$/.test(id),
+      );
+    if (instanceIds.length === 0) {
+      throw new Error(
+        `Instance ID not found in stack '${stackName}' outputs or nondeleted EC2 resources`,
+      );
+    }
+    if (instanceIds.length !== 1) {
+      throw new Error(
+        `Multiple nondeleted EC2 instances found in stack '${stackName}'; cannot select an instance safely`,
+      );
+    }
+    return instanceIds[0];
   } catch (error) {
     if (isMissingStackResponse(error, stackName)) {
       throw new StackNotFoundError(stackName, region, { cause: error });

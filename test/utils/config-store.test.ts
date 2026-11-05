@@ -67,6 +67,15 @@ describe('config-store', () => {
     expect(getCurrentName()).toBe('solo');
   });
 
+  it('loads legacy Cloudflare configs without requiring new provisioning metadata', () => {
+    const legacy = {
+      ...validConfig,
+      openclaw: { apiProvider: 'cloudflare-ai-gateway-api-key' as const },
+    };
+    saveConfigByName(legacy, 'cloudflare');
+    expect(resolveConfig({ name: 'cloudflare' }).config).toEqual(legacy);
+  });
+
   it('throws when multiple configs exist and no current is set', () => {
     saveConfigByName(validConfig, 'alpha');
     saveConfigByName(validConfig, 'beta');

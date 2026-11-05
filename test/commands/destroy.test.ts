@@ -96,6 +96,7 @@ describe('destroy command', () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    buildCommandContextMock.mockImplementation(async () => makeCommandContext());
   });
 
   it('skips destruction when stack is missing', async () => {
@@ -166,6 +167,7 @@ describe('destroy command', () => {
       expect.objectContaining({
         env: expect.objectContaining({
           OPENCLAW_CONFIG_NAME: 'alpha',
+          OPENCLAW_CDK_OPERATION: 'destroy',
           CDK_DISABLE_VERSION_CHECK: 'true',
           CDK_DISABLE_CLI_TELEMETRY: '1',
           CI: 'true',
@@ -174,6 +176,32 @@ describe('destroy command', () => {
     );
     expect(sendMock).toHaveBeenCalledTimes(2);
   });
+
+  it.each([false, true])(
+    'uses the destroy assembly for a legacy Cloudflare config (all=%s)',
+    async (all) => {
+      const context = makeCommandContext();
+      context.config.openclaw = { apiProvider: 'cloudflare-ai-gateway-api-key' };
+      context.awsEnv.OPENCLAW_CDK_OPERATION = 'deploy';
+      buildCommandContextMock.mockResolvedValue(context);
+      listConfigNamesMock.mockReturnValue(['alpha']);
+      getStackStatusMock.mockResolvedValue({ instanceId: 'i-123', stackStatus: 'CREATE_COMPLETE' });
+      execaMock.mockResolvedValue({});
+      promptsMock.mockResolvedValue({ confirmText: 'DESTROY ALL', deleteConfig: false });
+
+      await destroyCommand.handler?.({ all, force: true, _: [], $0: 'openclaw-aws' });
+
+      expect(execaMock).toHaveBeenCalledWith(
+        'cdk',
+        expect.arrayContaining(['destroy', context.config.stack.name]),
+        expect.objectContaining({
+          env: expect.objectContaining({ OPENCLAW_CDK_OPERATION: 'destroy' }),
+        }),
+      );
+      expect(sendMock).toHaveBeenCalledTimes(2);
+      expect(handleErrorMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('all mode returns early when no configs exist', async () => {
     listConfigNamesMock.mockReturnValue([]);

@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
 import { saveConfigByName, configExistsByName } from '../utils/config.js';
 import { setCurrentName } from '../utils/config-store.js';
+import { validateProvisioningConfig } from '../utils/config-validation.js';
 import {
   validateProjectName,
   validateInstanceName,
@@ -20,6 +21,8 @@ interface InitArgs {
   instanceType?: string;
   yes?: boolean;
   apiProvider?: Provider;
+  cloudflareAccountId?: string;
+  cloudflareGatewayId?: string;
 }
 
 export const initCommand: CommandModule<{}, InitArgs> = {
@@ -44,6 +47,14 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         type: 'string',
         describe: 'API provider',
         choices: API_PROVIDERS.map((p) => p.value),
+      })
+      .option('cloudflare-account-id', {
+        type: 'string',
+        describe: 'Cloudflare account ID (required for Cloudflare AI Gateway)',
+      })
+      .option('cloudflare-gateway-id', {
+        type: 'string',
+        describe: 'Cloudflare AI Gateway identifier',
       })
       .option('yes', {
         type: 'boolean',
@@ -216,6 +227,28 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         }
       }
 
+      if (config.openclaw?.apiProvider === 'cloudflare-ai-gateway-api-key') {
+        let accountId = argv.cloudflareAccountId;
+        let gatewayId = argv.cloudflareGatewayId;
+        if (!argv.yes && (!accountId || !gatewayId)) {
+          const cloudflare = await prompts([
+            {
+              type: accountId ? null : 'text',
+              name: 'accountId',
+              message: 'Cloudflare account ID:',
+            },
+            {
+              type: gatewayId ? null : 'text',
+              name: 'gatewayId',
+              message: 'Cloudflare AI Gateway ID:',
+            },
+          ]);
+          accountId ??= cloudflare.accountId;
+          gatewayId ??= cloudflare.gatewayId;
+        }
+        config.openclaw.cloudflare = { accountId: accountId ?? '', gatewayId: gatewayId ?? '' };
+      }
+
       if (!deploymentName) {
         throw new Error('Deployment name is required');
       }
@@ -226,6 +259,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         return;
       }
 
+      validateProvisioningConfig(config);
       logger.info(`Creating deployment ${chalk.cyan(deploymentName)}`);
 
       // Save configuration

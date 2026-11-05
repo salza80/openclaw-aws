@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { validateConfig, validateConfigStructure } from '../../src/cli/utils/config-validation.js';
+import {
+  validateConfig,
+  validateConfigStructure,
+  validateProvisioningConfig,
+} from '../../src/cli/utils/config-validation.js';
 import { ValidationError } from '../../src/cli/utils/errors.js';
 
 const validConfig = {
@@ -145,5 +149,59 @@ describe('config-validation', () => {
       { ...validConfig, stack: { name: `A${'a'.repeat(128)}` } },
       'stack.name must be 128 characters or less',
     );
+  });
+  it('allows legacy Cloudflare configs for lifecycle operations', () => {
+    expect(() =>
+      validateConfig({
+        ...validConfig,
+        openclaw: { apiProvider: 'cloudflare-ai-gateway-api-key' },
+      }),
+    ).not.toThrow();
+  });
+
+  it.each([
+    undefined,
+    { accountId: '', gatewayId: '' },
+    { accountId: 'account', gatewayId: 'my-gateway' },
+    { accountId: 'a'.repeat(32), gatewayId: '' },
+    { accountId: 'a'.repeat(32), gatewayId: 'gateway/id' },
+  ])('requires valid Cloudflare metadata before provisioning: %j', (cloudflare) => {
+    expect(() =>
+      validateProvisioningConfig({
+        ...validConfig,
+        openclaw: { apiProvider: 'cloudflare-ai-gateway-api-key', cloudflare },
+      }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      validateProvisioningConfig({
+        ...validConfig,
+        openclaw: { apiProvider: 'cloudflare-ai-gateway-api-key', cloudflare },
+      }),
+    ).toThrow('openclaw.cloudflare.');
+  });
+
+  it('accepts complete Cloudflare routing metadata and providers that need none', () => {
+    expect(() =>
+      validateProvisioningConfig({
+        ...validConfig,
+        openclaw: {
+          apiProvider: 'cloudflare-ai-gateway-api-key',
+          cloudflare: { accountId: 'a'.repeat(32), gatewayId: 'my-gateway' },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateProvisioningConfig({
+        ...validConfig,
+        openclaw: { apiProvider: 'openrouter-api-key' },
+      }),
+    ).not.toThrow();
+    expect(() => validateProvisioningConfig(validConfig)).not.toThrow();
+  });
+
+  it('still enforces generic configuration validation before provisioning', () => {
+    expect(() =>
+      validateProvisioningConfig({ ...validConfig, stack: { name: '1-invalid' } }),
+    ).toThrow('stack.name must start');
   });
 });

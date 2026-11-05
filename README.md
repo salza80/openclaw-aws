@@ -97,7 +97,19 @@ npx openclaw-aws --help
 
 ## OpenClaw version and existing deployments
 
-New deployments install **OpenClaw 2026.10.9** with **Node.js 24.22.2** on the EC2 instance. These versions are selected together because this OpenClaw release no longer supports Node.js 22. OpenClaw's install scripts are explicitly allowed during installation.
+New deployments install **OpenClaw 2026.11.1** with **Node.js 24.22.2** on Ubuntu 24.04. The official private-prefix installer and its policy helper are fetched from an immutable upstream revision and checked against recorded SHA-256 hashes. The installer applies the supported npm lifecycle policy. Runtime files live under the ubuntu user's private OpenClaw prefix; no NVM, Homebrew, GCC, or Docker is installed by default.
+
+CloudFormation waits up to 20 minutes for bootstrap and authenticated Gateway health before reporting success. The CLI then confirms that the instance is reachable through SSM. An installation, onboarding, health, or readiness-signal failure fails deployment instead of reporting an unfinished Gateway as ready. Very early failures before AWS CLI installation can surface as the CloudFormation readiness timeout; inspect stack events and bootstrap diagnostics.
+
+Fresh deployments preserve failed resources instead of automatically rolling them back, so the instance and its diagnostics remain available for inspection. After investigating a failed deployment, run `openclaw-aws destroy --name <name>` to remove it. EC2, disk, public IPv4, and log charges can continue until cleanup completes.
+
+When onboarding or health output is available after a bootstrap failure, the instance retains redacted diagnostics under `/var/log/openclaw-bootstrap/` and prints that directory's path in cloud-init output. Inspect them through SSM with `sudo`; the directories are root-only and their files are private. Retention is limited to three failures and 64 KiB per output file. Temporary SSM credential responses and environment files are always removed. If credential redaction cannot be initialized, diagnostic contents are omitted. Failed readiness-signal delivery also retains available diagnostics; a successful bootstrap removes its temporary diagnostics.
+
+Provider keys and the Gateway token are retrieved from their existing SSM SecureString paths at runtime and persisted privately for native environment secret references. Their values are not embedded in UserData or onboarding command arguments. The SSM agent policy is bounded so its wildcard parameter-read grant cannot expose other deployments' parameters. Optional CloudWatch collection retains its existing scope and retention.
+
+Bootstrap refuses an existing `.env` without an OpenClaw config rather than overwriting partial credentials. Back up that file and complete onboarding manually or move it aside before explicitly retrying setup.
+
+Docker-based agent sandboxes are optional additional setup. Follow the [OpenClaw sandbox guide](https://docs.openclaw.ai/gateway/sandboxing) when enabling them; this CLI's default is a native Gateway installation.
 
 Updating this CLI does not upgrade an existing instance. The `deploy` command skips stacks that already exist. To inspect an existing installation:
 
@@ -307,6 +319,19 @@ The current selection is stored in `.openclaw-aws/current.json`.
 If you want to use a named AWS CLI profile, you can add an optional `aws.profile` field manually.
 Each config uses its own profile. A config without `aws.profile` uses the original shell profile or default AWS credential chain, including during `--all` operations.
 
+### Cloudflare AI Gateway setup
+
+This provider also requires a Cloudflare account ID and Gateway ID. Interactive setup asks for both. For noninteractive setup:
+
+```bash
+npx openclaw-aws init --name cloudflare --yes \
+  --api-provider cloudflare-ai-gateway-api-key \
+  --cloudflare-account-id <32-character-account-id> \
+  --cloudflare-gateway-id <gateway-id>
+```
+
+Existing configs can set `openclaw.cloudflare.accountId` and `openclaw.cloudflare.gatewayId` explicitly. Missing metadata is rejected before provisioning. Existing provider/config names and local API-key environment variables remain compatible; the bootstrap maps legacy Kimi Code, MiniMax, and OpenCode choices to the selected upstream release.
+
 ### CloudWatch Logs
 
 For new deployments, `features.cloudWatchLogs: true` installs and starts the CloudWatch agent. Logs are sent to `/openclaw/<stack-name>` with 30-day retention and separate streams per instance for bootstrap output, cloud-init diagnostics, and the OpenClaw gateway. The gateway writes its file log to `/home/ubuntu/.openclaw/logs/gateway.log`.
@@ -365,7 +390,7 @@ The deployment creates:
 
 ### Troubleshooting - Instance not appearing in SSM
 
-Wait 2-3 minutes after deployment. Check status:
+New deployments confirm SSM access before reporting success. For an older or restarted instance, check status:
 
 ```bash
 npx openclaw-aws status
