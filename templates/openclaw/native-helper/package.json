@@ -1,0 +1,14 @@
+{
+  "name": "openclaw-aws-native-helper",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "openclaw": "2026.11.1"
+  },
+  "overrides": {
+    "openclaw": {
+      "zod": "4.6.6",
+      "npm": "12.2.2"
+    }
+  }
+}
