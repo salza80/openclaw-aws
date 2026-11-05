@@ -34,8 +34,12 @@ vi.mock('../../src/cli/utils/config-store.js', () => ({
 }));
 
 const getStackStatusMock = vi.hoisted(() => vi.fn());
+const getInstanceIdMock = vi.hoisted(() => vi.fn(async () => 'i-test'));
+const waitForSSMMock = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('../../src/cli/utils/aws.js', () => ({
   getStackStatus: getStackStatusMock,
+  getInstanceIdFromStack: getInstanceIdMock,
+  waitForSSM: waitForSSMMock,
 }));
 
 vi.mock('../../src/cli/utils/cdk.js', () => ({
@@ -98,6 +102,7 @@ describe('deploy command', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    waitForSSMMock.mockResolvedValue(true);
   });
 
   it('returns early when deploying all but no configs exist', async () => {
@@ -178,4 +183,36 @@ describe('deploy command', () => {
     expect(promptsMock).toHaveBeenCalled();
     expect(execaMock).toHaveBeenCalled();
   });
+  it.each([false, true])(
+    'reports an existing stack when final SSM readiness fails (all=%s)',
+    async (all) => {
+      listConfigNamesMock.mockReturnValue(['alpha']);
+      getStackStatusMock.mockRejectedValue(
+        new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+      );
+      resolveApiKeyMock.mockReturnValue('secret');
+      execaMock.mockResolvedValue({});
+      promptsMock.mockResolvedValue({ confirmText: 'DEPLOY ALL' });
+      waitForSSMMock.mockResolvedValue(false);
+      const args: DeployHandlerArgs = { all, autoApprove: true, _: [], $0: 'openclaw-aws' };
+      await (deployCommand as CommandModule).handler!(args);
+      expect(handleErrorMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('was created but SSM connectivity was not confirmed'),
+        }),
+      );
+      expect(waitForSSMMock).toHaveBeenCalledWith('i-test', 'us-east-1');
+    },
+  );
+
+  it.each(['CREATE_IN_PROGRESS', 'ROLLBACK_COMPLETE', 'CREATE_FAILED'])(
+    'does not mutate an existing %s stack',
+    async (stackStatus) => {
+      getStackStatusMock.mockResolvedValue({ stackStatus });
+      await (deployCommand as CommandModule).handler!({ _: [], $0: 'openclaw-aws' });
+      expect(execaMock).not.toHaveBeenCalled();
+      expect(waitForSSMMock).not.toHaveBeenCalled();
+      expect(handleErrorMock).not.toHaveBeenCalled();
+    },
+  );
 });

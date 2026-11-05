@@ -58,6 +58,8 @@ const app = new cdk.App();
 const stackProps: OpenClawStackProps = {
   config: stackConfig,
   apiProvider,
+  cloudflareAccountId: config.openclaw?.cloudflare?.accountId,
+  cloudflareGatewayId: config.openclaw?.cloudflare?.gatewayId,
   apiKeyParamName,
   gatewayTokenParamName,
   useDefaultVpc: config.network.useDefaultVpc,

@@ -13,7 +13,7 @@ import {
 import { validatePreDeploy, validateNodeVersion } from '../utils/aws-validation.js';
 import { getCDKBinary } from '../utils/cdk.js';
 import { buildCommandContext } from '../utils/context.js';
-import { getStackStatus } from '../utils/aws.js';
+import { getStackStatus, getInstanceIdFromStack, waitForSSM } from '../utils/aws.js';
 import { resolveOutputsPath } from '../utils/config-store.js';
 import { listConfigNames } from '../utils/config-store.js';
 import path from 'path';
@@ -23,7 +23,7 @@ import prompts from 'prompts';
 import { config as loadEnv } from 'dotenv';
 import { PutParameterCommand } from '@aws-sdk/client-ssm';
 import { createSsmClient } from '../utils/aws-clients.js';
-import type { Provider } from '../types/index.js';
+import type { Provider, OpenClawConfig } from '../types/index.js';
 import {
   getApiKeyEnvVar,
   getApiKeyParamName,
@@ -90,6 +90,20 @@ async function storeGatewayToken(
   }
 
   return paramName;
+}
+
+async function confirmDeploymentAccess(config: OpenClawConfig): Promise<void> {
+  const instanceId = await getInstanceIdFromStack(config.stack.name, config.aws.region);
+  if (!(await waitForSSM(instanceId, config.aws.region))) {
+    throw new AWSError(
+      `Stack '${config.stack.name}' was created but SSM connectivity was not confirmed`,
+      [
+        `Inspect the existing stack and instance ${instanceId}; deployment outputs are retained`,
+        'Check the instance role, SSM agent, and outbound network access before retrying',
+        'Do not create a second deployment or rotate secrets to recover this instance',
+      ],
+    );
+  }
 }
 
 export const deployCommand: CommandModule<{}, DeployArgs> = {
@@ -249,7 +263,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
             CI: 'true',
           };
 
-          spinner.start('Deploying stack... (this may take 3-5 minutes)');
+          spinner.start('Installing and verifying OpenClaw... (this may take up to 20 minutes)');
           try {
             const outputsFile = resolveOutputsPath(ctx.name);
             await withRetry(
@@ -286,7 +300,9 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
               },
             );
 
-            spinner.succeed('Stack deployed successfully!');
+            spinner.start('Confirming SSM access...');
+            await confirmDeploymentAccess(config);
+            spinner.succeed('OpenClaw is ready and reachable through SSM');
           } catch (error) {
             spinner.fail('Deployment failed');
             throw error;
@@ -398,7 +414,7 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
       };
 
       // Deploy stack with retry logic
-      spinner.start('Deploying stack... (this may take 3-5 minutes)');
+      spinner.start('Installing and verifying OpenClaw... (this may take up to 20 minutes)');
 
       try {
         const outputsFile = resolveOutputsPath(ctx.name);
@@ -438,7 +454,9 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           },
         );
 
-        spinner.succeed('Stack deployed successfully!');
+        spinner.start('Confirming SSM access...');
+        await confirmDeploymentAccess(config);
+        spinner.succeed('OpenClaw is ready and reachable through SSM');
 
         // Read and display outputs
         if (fs.existsSync(outputsFile)) {
@@ -460,14 +478,14 @@ export const deployCommand: CommandModule<{}, DeployArgs> = {
           console.log(
             '  ' +
               chalk.cyan('1.') +
-              ' Wait approx 5-10 minutes for OpenClaw installation to complete and gateway to start',
+              ' OpenClaw installation and Gateway health have been verified',
           );
           console.log(
-            '  ' + chalk.cyan('3.') + ' Check status: ' + chalk.yellow('openclaw-aws status'),
+            '  ' + chalk.cyan('2.') + ' Check status: ' + chalk.yellow('openclaw-aws status'),
           );
           console.log(
             '  ' +
-              chalk.cyan('4.') +
+              chalk.cyan('3.') +
               ' Access dashboard: ' +
               chalk.yellow('openclaw-aws dashboard'),
           );

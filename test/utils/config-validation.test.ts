@@ -146,4 +146,22 @@ describe('config-validation', () => {
       'stack.name must be 128 characters or less',
     );
   });
+  it('requires Cloudflare metadata before provisioning but keeps other providers compatible', () => {
+    expectValidationError(
+      { ...validConfig, openclaw: { apiProvider: 'cloudflare-ai-gateway-api-key' } },
+      'openclaw.cloudflare.accountId',
+    );
+    expect(() =>
+      validateConfig({
+        ...validConfig,
+        openclaw: {
+          apiProvider: 'cloudflare-ai-gateway-api-key',
+          cloudflare: { accountId: 'a'.repeat(32), gatewayId: 'my-gateway' },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateConfig({ ...validConfig, openclaw: { apiProvider: 'openrouter-api-key' } }),
+    ).not.toThrow();
+  });
 });

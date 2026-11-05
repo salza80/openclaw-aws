@@ -26,6 +26,7 @@ export interface OpenClawConfig {
   };
   openclaw?: {
     apiProvider: Provider;
+    cloudflare?: { accountId: string; gatewayId: string };
   };
 }
 

@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from '../types/index.js';
 import { ValidationError } from './errors.js';
+import { API_PROVIDERS } from '../constants.js';
 
 export function validateConfig(config: OpenClawConfig): void {
   const errors: string[] = [];
@@ -71,6 +72,29 @@ export function validateConfig(config: OpenClawConfig): void {
       );
     } else if (config.stack.name.length > 128) {
       errors.push('stack.name must be 128 characters or less');
+    }
+  }
+
+  if (config.openclaw) {
+    if (!API_PROVIDERS.some(({ value }) => value === config.openclaw?.apiProvider)) {
+      errors.push('Invalid openclaw.apiProvider');
+    }
+    if (config.openclaw.apiProvider === 'cloudflare-ai-gateway-api-key') {
+      const cloudflare = config.openclaw.cloudflare;
+      if (
+        typeof cloudflare?.accountId !== 'string' ||
+        !/^[a-fA-F0-9]{32}$/.test(cloudflare.accountId)
+      ) {
+        errors.push(
+          'openclaw.cloudflare.accountId must be a Cloudflare account ID (32 hex characters)',
+        );
+      }
+      if (
+        typeof cloudflare?.gatewayId !== 'string' ||
+        !/^[a-zA-Z0-9_-]+$/.test(cloudflare.gatewayId)
+      ) {
+        errors.push('openclaw.cloudflare.gatewayId must be a nonempty gateway identifier');
+      }
     }
   }
 
