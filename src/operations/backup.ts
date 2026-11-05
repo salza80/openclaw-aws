@@ -208,12 +208,20 @@ export async function inspectBackup(
   const vault = await readRecoveryVault(target, uri);
   const store = recoveryStore(target, uri);
   try {
-    const result = await store.read(`receipts/${id}.json`, { signal: AbortSignal.timeout(30000) });
-    if (!result) throw new Error('No completed recovery point exists with this ID');
-    return parsedReceipt(result.value, target, vault, id);
+    return await readPoint(store, target, vault, id);
   } finally {
     store.close();
   }
+}
+async function readPoint(
+  store: ReturnType<typeof recoveryStore>,
+  target: AwsTarget,
+  vault: RecoveryVault,
+  id: string,
+) {
+  const result = await store.read(`receipts/${id}.json`, { signal: AbortSignal.timeout(30000) });
+  if (!result) throw new Error('No completed recovery point exists with this ID');
+  return parsedReceipt(result.value, target, vault, id);
 }
 
 /** Shared operation for CLI/UI/archive. The caller approves this concrete plan. */
@@ -423,8 +431,13 @@ export async function listBackups(target: AwsTarget, uri: string) {
   } finally {
     s3.destroy();
   }
-  const receipts = [];
-  for (const id of ids) receipts.push(await inspectBackup(target, vault.uri, id));
+  const receipts: BackupReceipt[] = [];
+  const store = recoveryStore(target, vault.uri);
+  try {
+    for (const id of ids) receipts.push(await readPoint(store, target, vault, id));
+  } finally {
+    store.close();
+  }
   const passphrase = receipts.length ? await recoveryPassphrase(target, vault) : '';
   const groups = new Map<string, BackupReceipt[]>();
   for (const point of receipts) {

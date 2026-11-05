@@ -233,6 +233,7 @@ describe('portable backup operations', () => {
     metadata.set(`receipts/${backupId}.json`, backupReceipt);
     mocks.helper.mockResolvedValueOnce({ backups: [{ key: backupCapture.capture.location.key }] });
     await expect(listBackups(target, backupVault.uri)).resolves.toHaveLength(1);
+    expect(mocks.readVault).toHaveBeenCalledTimes(1);
     mocks.helper.mockResolvedValueOnce({ backups: [] });
     await expect(listBackups(target, backupVault.uri)).rejects.toThrow('native catalog');
   });
