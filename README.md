@@ -123,6 +123,12 @@ openclaw --version
 
 Back up your OpenClaw state before upgrading an existing installation, then follow the [OpenClaw update guide](https://docs.openclaw.ai/install/updating). When upgrading from Node.js 22, update Node first and refresh the gateway service so it uses the new runtime. Destroying a deployment deletes its instance data and is not an upgrade procedure.
 
+## EC2 sizing
+
+The default is `t3.small` (2 GiB), which has passed installation and reboot checks for a basic Gateway. Before creating new deployment resources, the CLI checks AWS instance metadata for x86_64 support and at least OpenClaw's documented 1 GiB minimum. The complete deployment has not yet been verified on 1 GiB; 512 MiB nano and ARM instances are unsupported by this bootstrap. Existing configurations remain manageable without resizing their instances.
+
+See the [sizing report](https://github.com/salza80/openclaw-aws/blob/main/docs/ec2-sizing.md) for current Frankfurt compute prices, measured memory, additional charges and the minimum-size test plan. Instance prices vary by region; the setup menu does not quote a universal monthly cost.
+
 ## Commands
 
 ### `openclaw-aws init`
