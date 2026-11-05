@@ -125,7 +125,7 @@ Back up your OpenClaw state before upgrading an existing installation, then foll
 
 ## EC2 sizing
 
-The default is `t3.small` (2 GiB), which has passed installation and reboot checks for a basic Gateway. Before creating new deployment resources, the CLI checks AWS instance metadata for x86_64 support and at least OpenClaw's documented 1 GiB minimum. The complete deployment has not yet been verified on 1 GiB; 512 MiB nano and ARM instances are unsupported by this bootstrap. Existing configurations remain manageable without resizing their instances.
+The default is `t3.small` (2 GiB), which has passed installation and reboot checks for a basic Gateway. Before creating new deployment resources, the CLI checks AWS instance metadata for x86_64 support and at least this project's supported 2 GiB minimum. Although upstream documents a lower absolute minimum, our 1 GiB tests did not pass the complete management workload. Smaller and ARM instances are unsupported by this bootstrap. Existing configurations remain manageable without resizing their instances.
 
 Fresh hosts with 2 GiB RAM or less receive a private 2 GiB swapfile on their encrypted root disk, persisted across reboot with swappiness 10. Existing active swap is retained. An inactive file at the managed swap path stops setup for inspection rather than being overwritten. This does not modify already deployed hosts or establish that every 1 GiB workload is reliable.
 

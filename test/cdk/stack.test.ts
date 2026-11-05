@@ -68,8 +68,8 @@ function actions(statement: { Action: string | string[] }): string[] {
 
 describe('EC2 bootstrap', () => {
   it('preserves valid AWS type names beyond the bundled CDK instance-class enum', () => {
-    const { instance } = bootstrap(false, 't8i.micro');
-    expect(instance.Properties.InstanceType).toBe('t8i.micro');
+    const { instance } = bootstrap(false, 't8i.small');
+    expect(instance.Properties.InstanceType).toBe('t8i.small');
   });
 
   it('waits for a signal from this instance without changing existing resource identities', () => {

@@ -2,15 +2,25 @@
 
 This deployment currently installs Ubuntu 24.04 and native OpenClaw on **x86_64**. Graviton/ARM instances require a separate tested AMI and bootstrap path. A low advertised EC2 price does not establish that a size can run this installation.
 
-## Current evidence
+## Verified result
 
-On 5 November 2026, an isolated `t3.small` (2 GiB, 2 vCPU) passed fresh installation of OpenClaw 2026.11.1 with Node.js 24.22.2, authenticated Gateway health, native model status, private credential-reference checks, SSM/CloudWatch, and recovery after reboot. Its provider was OpenRouter; no model inference was sent.
+For this CLI, **2 GiB is the supported minimum**. In Frankfurt, **t3a.small is the cheapest verified x86 option** from the compared On-Demand sizes. The setup menu includes it; the portable default remains t3.small. Use 4 GiB or more for additional tools or team workloads; those workloads require their own capacity checks.
 
-The Gateway used approximately 1.0–1.1 GiB resident memory. Available host memory was about 365 MiB before reboot and 297 MiB afterward. The complete reboot verification took 361 seconds and required several retries. Filtered console checks did not establish an out-of-memory event. All test resources were deleted afterward.
+All three cases used OpenClaw 2026.11.1, Node.js 24.22.2, Ubuntu 24.04 amd64 AMI `ami-0c228cd2b65888e1b`, eu-central-1a, 30 GiB encrypted gp3, SSM-only access and CloudWatch, on 5 November 2026.
 
-This establishes a basic 2 GiB baseline. It does **not** establish reliable 1 GiB operation, sustained workloads, browser automation, or team capacity.
+| Case                         | Result                                                                                                                                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| t3a.micro, 1 GiB, no swap    | Reached readiness checks, but no authenticated readiness was established. Console confirmed a kernel OOM kill; a read-only SSM diagnostic timed out. Stopped after that evidence.                                                                                  |
+| t3a.micro, 1 GiB, 2 GiB swap | Bootstrap and authenticated health passed, with zero sampled kernel OOM kills. A routine configuration check failed with a 25-second command limit. The host had roughly 1 GiB swap occupied and load average around 8. It was not certified for reboot/model use. |
+| t3a.small, 2 GiB, 2 GiB swap | Passed installation, native commands, authenticated health, private credential/role checks, reboot recovery and one real OpenRouter response. Zero sampled kernel OOM kills. Entire case including cleanup: 699 seconds.                                           |
 
-The interactive menu currently starts at `t3.small`; 1 GiB sizes remain unverified and are absent from that menu. Before creating deployment resources, the CLI checks AWS instance metadata for x86_64 support and at least the documented 1 GiB minimum. This capability check does not certify a 1 GiB workload. Existing configurations remain usable for lifecycle operations. Issue [#21](https://github.com/salza80/openclaw-aws/issues/21) tracks the remaining runtime benchmark.
+The final 2 GiB case had about 546 MiB available RAM before reboot and 510 MiB afterward; Gateway RSS was approximately 0.86 and 1.19 GiB respectively. Swap persisted across reboot. The model test used GPT-4.1 Nano through OpenRouter with tools disabled and a 64-token output cap: 6,291 input tokens and 4 output tokens, matching the requested response. The agent command took about 40 seconds including CLI startup.
+
+This was a bounded basic-workload smoke, not a sustained load, browser, backup or team benchmark. The 1 GiB result does not prove that every possible tuned setup fails; it does not meet this project's certification. Component command deadlines differed (25 seconds for the 1 GiB probe and 60 seconds for the final comparison), so this is not a controlled latency ranking. The supported floor reflects the successfully verified complete deployment.
+
+All test stacks, instances, root volumes and temporary parameters were cleaned up. An independent final query found no active capacity-test instance. The original provider key was retained. No model request ran in either failed 1 GiB case.
+
+Before new provisioning, AWS metadata must establish x86_64 and at least 2 GiB. Existing configurations remain manageable without automatic resizing. Valid AWS type names do not depend on CDK's possibly stale family enum.
 
 ## Price comparison
 
@@ -23,7 +33,7 @@ The following Linux, shared-tenancy On-Demand compute prices were retrieved from
 | 2 GiB   | t3a.small     |   0.0216 | t4g.small                                      |   0.0192 |
 | 4 GiB   | t3a.medium    |   0.0432 | t4g.medium                                     |   0.0384 |
 
-The tested `t3.small` costs USD 0.024/hour for compute. At 730 hours, `t3a.micro` would cost about USD 7.88/month for compute alone. Its runtime suitability remains unverified.
+The tested `t3.small` costs USD 0.024/hour for compute. At 730 hours, `t3a.micro` would cost about USD 7.88/month for compute alone. It is not a supported size for this deployment.
 
 These prices exclude the 30 GiB EBS disk, public IPv4, CloudWatch, data transfer, surplus CPU credits, tax, and model usage. Spot prices and interruption behavior require a separate comparison. See [AWS On-Demand pricing](https://aws.amazon.com/ec2/pricing/on-demand/), [Price List API](https://docs.aws.amazon.com/aws-cost-management/latest/APIReference/API_pricing_GetProducts.html), and [instance specifications](https://docs.aws.amazon.com/ec2/latest/instancetypes/gp.html).
 
@@ -31,12 +41,8 @@ These prices exclude the 30 GiB EBS disk, public IPv4, CloudWatch, data transfer
 
 OpenClaw documents a 1 GiB absolute minimum and recommends more memory. Its [small-host guide](https://docs.openclaw.ai/install/raspberry-pi) recommends 4 GiB for that setup and a persistent 2 GiB swapfile on hosts with 2 GiB or less. This is guidance to test against, rather than evidence that our complete AWS installation works on 1 GiB. The 512 MiB nano sizes fall below the documented minimum.
 
-The planned isolated test sequence is:
+Fresh hosts with at most 2 GiB RAM receive a private 2 GiB swapfile on the encrypted root disk and persistent swappiness 10. Existing active swap is preserved; an inactive file at the managed path stops setup for inspection. Updating the CLI does not add swap to existing hosts automatically.
 
-1. Deploy the current packaged CLI on `t3a.micro` without additional tuning.
-2. If necessary, test a fresh 1 GiB deployment using a reviewed product implementation of the upstream swap/tuning guidance.
-3. Test `t3a.small` as the lower-cost 2 GiB reference.
+CPU-credit samples were collected during all cases. The untuned 1 GiB host exhausted its earned credits and accumulated surplus credits while failing readiness. Short startup samples do not establish steady-state CPU cost. Burstable-credit charges can reduce apparent savings; compare actual workloads rather than extrapolating these startup measurements to a month.
 
-Each case must exercise cold installation, service-user runtime discovery, authenticated health and native model commands while the Gateway runs, reboot recovery, and a bounded workload. A minimal real OpenRouter response is part of the proposed additional test scope. Measure resident/available memory, swap, kernel OOM evidence, command latency and CPU credits. Keep the verified minimum separate from recommended capacity for tools, backups and teams.
-
-Use one disposable deployment at a time, a bounded approved budget and deadline, and verified cleanup before the next case. The additional benchmark budget is pending; no smaller-size deployment has been tested yet. Record exact runtime/AMI/architecture, tuning and workload with the results. Existing installations must not be resized automatically.
+The tests used one disposable instance at a time within the approved three-deployment scope. A preliminary packaging invocation failed before any AWS stack/instance was created and is excluded from the hardware results.

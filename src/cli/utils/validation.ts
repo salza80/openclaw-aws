@@ -56,6 +56,11 @@ export const INSTANCE_TYPES = [
     description: 'Verified basic Gateway; limited memory headroom',
   },
   {
+    title: 't3a.small - 2 vCPU, 2 GB RAM (AMD)',
+    value: 't3a.small',
+    description: 'Verified lower-cost choice in Frankfurt; availability varies by region',
+  },
+  {
     title: 't3.medium - 2 vCPU, 4 GB RAM',
     value: 't3.medium',
     description: 'More headroom for agent tools',

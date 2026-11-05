@@ -92,7 +92,7 @@ import {
 import { AWSError, ValidationError } from '../../src/cli/utils/errors.js';
 import type { OpenClawConfig } from '../../src/cli/types/index.js';
 
-function instanceMetadata(instanceType = 't3.micro', memoryMiB = 1024, architectures = ['x86_64']) {
+function instanceMetadata(instanceType = 't3.small', memoryMiB = 2048, architectures = ['x86_64']) {
   return {
     InstanceType: instanceType,
     MemoryInfo: { SizeInMiB: memoryMiB },
@@ -104,7 +104,7 @@ const deploymentConfig: OpenClawConfig = {
   version: '1.0',
   aws: { region: 'us-east-1' },
   network: { useDefaultVpc: true },
-  instance: { name: 'openclaw-alpha', type: 't3.micro' },
+  instance: { name: 'openclaw-alpha', type: 't3.small' },
   features: { cloudWatchLogs: true },
   stack: { name: 'OpenclawStack-alpha' },
   openclaw: { apiProvider: 'anthropic-api-key' },
@@ -152,9 +152,9 @@ describe('aws-validation utils', () => {
   });
 
   it.each([
-    ['t3.micro', 1024],
-    ['t3.small', 2048],
-    ['t8i.micro', 1024],
+    ['t3a.small', 2048],
+    ['t3.medium', 4096],
+    ['t8i.small', 2048],
   ])('accepts AWS-confirmed x86_64 %s with %s MiB', async (instanceType, memoryMiB) => {
     ec2SendMock.mockResolvedValue({ InstanceTypes: [instanceMetadata(instanceType, memoryMiB)] });
     await expect(
@@ -177,7 +177,8 @@ describe('aws-validation utils', () => {
 
   it.each([
     ['t4g.small', 2048, ['arm64'], 'does not support x86_64'],
-    ['t3.nano', 512, ['x86_64'], 'at least 1024 MiB'],
+    ['t3.nano', 512, ['x86_64'], 'at least 2048 MiB'],
+    ['t3a.micro', 1024, ['x86_64'], 'at least 2048 MiB'],
   ])('rejects unsupported %s capacity', async (instanceType, memoryMiB, architectures, message) => {
     ec2SendMock.mockResolvedValue({
       InstanceTypes: [instanceMetadata(instanceType, memoryMiB, architectures)],
@@ -189,18 +190,18 @@ describe('aws-validation utils', () => {
   it.each([
     ['absent instance metadata', {}],
     ['empty instance metadata', { InstanceTypes: [] }],
-    ['different instance type', { InstanceTypes: [instanceMetadata('t3.small')] }],
+    ['different instance type', { InstanceTypes: [instanceMetadata('t3.medium')] }],
     ['duplicate instance metadata', { InstanceTypes: [instanceMetadata(), instanceMetadata()] }],
     ['missing memory', { InstanceTypes: [{ ...instanceMetadata(), MemoryInfo: undefined }] }],
     [
       'missing architecture',
       { InstanceTypes: [{ ...instanceMetadata(), ProcessorInfo: undefined }] },
     ],
-    ['empty architecture', { InstanceTypes: [instanceMetadata('t3.micro', 1024, [])] }],
-    ['invalid memory', { InstanceTypes: [instanceMetadata('t3.micro', Number.NaN)] }],
+    ['empty architecture', { InstanceTypes: [instanceMetadata('t3.small', 1024, [])] }],
+    ['invalid memory', { InstanceTypes: [instanceMetadata('t3.small', Number.NaN)] }],
   ])('fails closed for %s', async (_description, response) => {
     ec2SendMock.mockResolvedValue(response);
-    await expect(validateInstanceCapabilities('t3.micro', 'us-east-1')).rejects.toBeInstanceOf(
+    await expect(validateInstanceCapabilities('t3.small', 'us-east-1')).rejects.toBeInstanceOf(
       ValidationError,
     );
     expect(ec2DestroyMock).toHaveBeenCalledTimes(1);
@@ -211,7 +212,7 @@ describe('aws-validation utils', () => {
     async (name) => {
       const original = Object.assign(new Error('EC2 lookup failed'), { name });
       ec2SendMock.mockRejectedValue(original);
-      const failure = await validateInstanceCapabilities('t3.micro', 'eu-central-1').catch(
+      const failure = await validateInstanceCapabilities('t3.small', 'eu-central-1').catch(
         (error: unknown) => error,
       );
       expect(failure).toBeInstanceOf(AWSError);
@@ -341,9 +342,9 @@ describe('aws-validation utils', () => {
   });
 
   it.each([
-    ['ARM', instanceMetadata('t3.micro', 2048, ['arm64'])],
-    ['512 MiB', instanceMetadata('t3.micro', 512)],
-    ['missing metadata', { InstanceType: 't3.micro' }],
+    ['ARM', instanceMetadata('t3.small', 2048, ['arm64'])],
+    ['512 MiB', instanceMetadata('t3.small', 512)],
+    ['missing metadata', { InstanceType: 't3.small' }],
   ])('rejects %s before checking or running CDK bootstrap', async (_description, metadata) => {
     stsSendMock.mockResolvedValue({ Account: '123456789012', UserId: 'user', Arn: 'test' });
     ec2SendMock.mockResolvedValueOnce({}).mockResolvedValue({ InstanceTypes: [metadata] });

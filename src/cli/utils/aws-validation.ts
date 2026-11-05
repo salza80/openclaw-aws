@@ -133,10 +133,12 @@ export async function validateInstanceCapabilities(
         ['Choose an x86_64 instance type; the Ubuntu AMI and bootstrap packages require x86_64'],
       );
     }
-    if (memoryMiB < 1024) {
+    if (memoryMiB < 2048) {
       throw new ValidationError(
-        `EC2 instance type '${instanceType}' has ${memoryMiB} MiB RAM; OpenClaw requires at least 1024 MiB (1 GiB)`,
-        ['Choose an instance type with at least 1 GiB RAM; 2 GiB or more is recommended'],
+        `EC2 instance type '${instanceType}' has ${memoryMiB} MiB RAM; the supported AWS installation requires at least 2048 MiB (2 GiB)`,
+        [
+          'Choose at least 2 GiB RAM; the 1 GiB benchmark did not pass the complete management checks',
+        ],
       );
     }
   } finally {
