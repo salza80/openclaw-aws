@@ -26,9 +26,7 @@ vi.mock('../../src/cli/utils/logger.js', async () => {
 });
 
 vi.mock('../../src/cli/commands/deploy.js', () => ({
-  default: {
-    handler: vi.fn(),
-  },
+  deployConfigured: vi.fn(),
 }));
 
 vi.mock('../../src/cli/utils/errors.js', async () => {
@@ -38,7 +36,7 @@ vi.mock('../../src/cli/utils/errors.js', async () => {
 
 import { handleError, ValidationError } from '../../src/cli/utils/errors.js';
 import { logger } from '../../src/cli/utils/logger.js';
-import deployCommand from '../../src/cli/commands/deploy.js';
+import { deployConfigured } from '../../src/cli/commands/deploy.js';
 
 type InitHandler = NonNullable<
   (typeof import('../../src/cli/commands/init.js'))['default']['handler']
@@ -131,7 +129,7 @@ describe('init command (mocked)', () => {
 
     expect(saveConfigByNameMock).toHaveBeenCalledTimes(1);
     expect(setCurrentNameMock).toHaveBeenCalledWith('alpha');
-    expect(deployCommand.handler).not.toHaveBeenCalled();
+    expect(deployConfigured).not.toHaveBeenCalled();
   });
 
   it('rejects noninteractive Cloudflare setup without both routing IDs before saving', async () => {
@@ -151,7 +149,7 @@ describe('init command (mocked)', () => {
     );
     expect(saveConfigByNameMock).not.toHaveBeenCalled();
     expect(setCurrentNameMock).not.toHaveBeenCalled();
-    expect(deployCommand.handler).not.toHaveBeenCalled();
+    expect(deployConfigured).not.toHaveBeenCalled();
   });
 
   it('calls deploy when deployNow is true', async () => {
@@ -173,8 +171,6 @@ describe('init command (mocked)', () => {
     const args = { _: [], $0: 'openclaw-aws' } as InitHandlerArgs;
     await handler(args);
 
-    expect(deployCommand.handler).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'alpha', autoApprove: false }),
-    );
+    expect(deployConfigured).toHaveBeenCalledWith(expect.objectContaining({ name: 'alpha' }));
   });
 });

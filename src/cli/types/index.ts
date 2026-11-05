@@ -26,6 +26,7 @@ export interface OpenClawConfig {
   };
   openclaw?: {
     apiProvider: Provider;
+    model?: string;
     cloudflare?: { accountId: string; gatewayId: string };
   };
 }
@@ -39,6 +40,7 @@ export interface StackConfig {
 }
 
 export interface DeploymentStatus {
+  stackId?: string;
   stackName: string;
   stackStatus: string;
   instanceId?: string;

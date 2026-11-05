@@ -1,3 +1,4 @@
+import type { AwsLocation } from '../../aws/target.js';
 import { GetConsoleOutputCommand } from '@aws-sdk/client-ec2';
 import { withRetry } from './errors.js';
 import { createEc2Client } from './aws-clients.js';
@@ -12,7 +13,7 @@ export interface CloudInitStatus {
 
 export async function checkCloudInitStatus(
   instanceId: string,
-  region: string,
+  region: AwsLocation,
 ): Promise<CloudInitStatus> {
   const client = createEc2Client(region);
   const command = new GetConsoleOutputCommand({
@@ -82,7 +83,7 @@ export async function checkCloudInitStatus(
   }
 }
 
-export async function getConsoleOutput(instanceId: string, region: string): Promise<string> {
+export async function getConsoleOutput(instanceId: string, region: AwsLocation): Promise<string> {
   const client = createEc2Client(region);
   const command = new GetConsoleOutputCommand({
     InstanceId: instanceId,

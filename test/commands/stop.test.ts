@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { CommandModule } from 'yargs';
-import { makeCommandContext } from '../helpers/fixtures/command-context.js';
+import { makeCommandContext, testTarget } from '../helpers/fixtures/command-context.js';
 
 vi.mock('ora', async () => {
   const { createSpinnerMock } = await import('../helpers/mocks/spinner.js');
@@ -84,8 +84,8 @@ describe('stop command', () => {
     await handler(args);
 
     expect(promptsMock).not.toHaveBeenCalled();
-    expect(stopInstanceMock).toHaveBeenCalledWith('i-123', 'us-east-1');
-    expect(waitForInstanceStateMock).toHaveBeenCalledWith('i-123', 'us-east-1', 'stopped', 120000);
+    expect(stopInstanceMock).toHaveBeenCalledWith('i-123', testTarget);
+    expect(waitForInstanceStateMock).toHaveBeenCalledWith('i-123', testTarget, 'stopped', 120000);
     expect(handleErrorMock).not.toHaveBeenCalled();
   });
 });

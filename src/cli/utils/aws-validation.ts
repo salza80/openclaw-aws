@@ -1,3 +1,10 @@
+import {
+  resolveAwsTarget,
+  awsClientConfig,
+  awsRegion,
+  type AwsTarget,
+  type AwsLocation,
+} from '../../aws/target.js';
 import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
 import {
@@ -13,9 +20,6 @@ import { ValidationError, AWSError, withRetry } from './errors.js';
 import { awsCredentialSuggestions } from './suggestions.js';
 import type { OpenClawConfig } from '../types/index.js';
 import { MIN_NODE_VERSION } from '../constants.js';
-import { applyAwsProfile } from './aws-profile.js';
-
-export { applyAwsProfile } from './aws-profile.js';
 
 export interface AWSCredentials {
   account: string;
@@ -24,12 +28,12 @@ export interface AWSCredentials {
 }
 
 export async function requireAwsCredentials(config: OpenClawConfig): Promise<AWSCredentials> {
-  applyAwsProfile(config.aws.profile);
-  return validateAWSCredentials(config.aws.region);
+  const target = await resolveAwsTarget(config.aws);
+  return { account: target.account, arn: target.arn, userId: target.userId };
 }
 
-export async function validateAWSCredentials(region: string): Promise<AWSCredentials> {
-  const client = new STSClient({ region });
+export async function validateAWSCredentials(region: AwsLocation): Promise<AWSCredentials> {
+  const client = new STSClient(awsClientConfig(region));
   try {
     const command = new GetCallerIdentityCommand({});
 
@@ -61,17 +65,19 @@ export async function validateAWSCredentials(region: string): Promise<AWSCredent
   }
 }
 
-export async function validateAWSRegion(region: string): Promise<boolean> {
-  const client = new EC2Client({ region });
+export async function validateAWSRegion(region: AwsLocation): Promise<boolean> {
+  const client = new EC2Client(awsClientConfig(region));
   try {
     const command = new DescribeRegionsCommand({
-      RegionNames: [region],
+      RegionNames: [awsRegion(region)],
     });
 
     await client.send(command);
     return true;
-  } catch {
-    throw new ValidationError(`Invalid AWS region: ${region}`, [
+  } catch (error) {
+    if (!(error instanceof Error) || !['InvalidRegion', 'InvalidRegionName'].includes(error.name))
+      throw error;
+    throw new ValidationError(`Invalid AWS region: ${awsRegion(region)}`, [
       'Check available regions: aws ec2 describe-regions',
       'Common regions: us-east-1, us-west-2, eu-west-1',
     ]);
@@ -83,10 +89,10 @@ export async function validateAWSRegion(region: string): Promise<boolean> {
 /** Verify new-host requirements against AWS metadata rather than a family whitelist. */
 export async function validateInstanceCapabilities(
   instanceType: string,
-  region: string,
+  region: AwsLocation,
 ): Promise<void> {
   validateInstanceType(instanceType);
-  const client = new EC2Client({ region });
+  const client = new EC2Client(awsClientConfig(region));
   try {
     let response;
     try {
@@ -96,7 +102,7 @@ export async function validateInstanceCapabilities(
     } catch (error) {
       const details = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       const failure = new AWSError(
-        `Unable to verify EC2 instance type '${instanceType}' in '${region}': ${details}`,
+        `Unable to verify EC2 instance type '${instanceType}' in '${awsRegion(region)}': ${details}`,
         [
           'Allow ec2:DescribeInstanceTypes for the deployment credentials',
           'Check the instance type, AWS credentials, and connectivity to the regional EC2 API',
@@ -109,7 +115,7 @@ export async function validateInstanceCapabilities(
     const matches = response.InstanceTypes?.filter((item) => item.InstanceType === instanceType);
     if (matches?.length !== 1) {
       throw new ValidationError(
-        `AWS did not return unambiguous metadata for EC2 instance type '${instanceType}' in '${region}'`,
+        `AWS did not return unambiguous metadata for EC2 instance type '${instanceType}' in '${awsRegion(region)}'`,
         ['Choose an instance type available in this AWS region and retry'],
       );
     }
@@ -150,8 +156,8 @@ export async function validateInstanceCapabilities(
  * Get the current CDK bootstrap version from CloudFormation.
  * Returns the version number or null if not bootstrapped.
  */
-export async function getCDKBootstrapVersion(region: string): Promise<number | null> {
-  const client = new CloudFormationClient({ region });
+export async function getCDKBootstrapVersion(region: AwsLocation): Promise<number | null> {
+  const client = new CloudFormationClient(awsClientConfig(region));
   try {
     const command = new DescribeStacksCommand({
       StackName: 'CDKToolkit',
@@ -168,8 +174,14 @@ export async function getCDKBootstrapVersion(region: string): Promise<number | n
     if (!versionOutput?.OutputValue) return null;
 
     return parseInt(versionOutput.OutputValue, 10);
-  } catch {
-    return null; // Not bootstrapped
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === 'ValidationError' &&
+      error.message === 'Stack with id CDKToolkit does not exist'
+    )
+      return null;
+    throw error;
   } finally {
     client.destroy();
   }
@@ -181,7 +193,7 @@ export async function getCDKBootstrapVersion(region: string): Promise<number | n
  */
 export async function checkCDKBootstrap(
   account: string,
-  region: string,
+  region: AwsLocation,
   minVersion: number = 30,
 ): Promise<{
   bootstrapped: boolean;
@@ -203,32 +215,34 @@ export async function checkCDKBootstrap(
  */
 export async function runCDKBootstrap(
   account: string,
-  region: string,
+  region: AwsLocation,
   profile?: string,
 ): Promise<void> {
   const { execa } = await import('execa');
-  const { getCDKBinary } = await import('./cdk.js');
+  const { getCDKBinary, withCDKWorkspace } = await import('./cdk.js');
 
   const cdkBinary = getCDKBinary();
-  const envQualifier = `aws://${account}/${region}`;
-
+  const target = typeof region === 'string' ? await resolveAwsTarget({ region, profile }) : region;
+  if (target.account !== account)
+    throw new AWSError('CDK bootstrap account differs from the selected AWS target');
+  const envQualifier = `aws://${account}/${target.region}`;
   const env: Record<string, string | undefined> = {
-    ...process.env,
-    AWS_REGION: region,
+    ...(await target.environment(30 * 60_000)),
     CDK_DISABLE_VERSION_CHECK: 'true',
     CDK_DISABLE_CLI_TELEMETRY: '1',
     CI: 'true',
   };
 
-  if (profile) {
-    env.AWS_PROFILE = profile;
-  }
-
   try {
-    await execa(cdkBinary, ['bootstrap', '--no-notices', '--no-version-reporting', envQualifier], {
-      env,
-      stdio: 'inherit', // Show CDK output to user
-    });
+    await withCDKWorkspace(env, async (workspace) =>
+      execa(cdkBinary, ['bootstrap', '--no-notices', '--no-version-reporting', envQualifier], {
+        env: workspace.env,
+        cwd: workspace.cwd,
+        stdio: 'inherit', // Show CDK output to user
+        extendEnv: false,
+        timeout: 25 * 60_000,
+      }),
+    );
   } catch {
     throw new AWSError('Failed to bootstrap CDK', [
       `Tried: ${cdkBinary} bootstrap ${envQualifier}`,
@@ -238,28 +252,33 @@ export async function runCDKBootstrap(
   }
 }
 
-export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
+export async function validatePreDeploy(
+  config: OpenClawConfig,
+  resolvedTarget?: AwsTarget,
+  autoApprove = false,
+): Promise<void> {
   const spinner = ora('Running pre-deployment validation...').start();
 
   try {
     // 1. Validate AWS credentials
     spinner.text = 'Validating AWS credentials...';
-    const credentials = await requireAwsCredentials(config);
+    const target = resolvedTarget ?? (await resolveAwsTarget(config.aws));
+    const credentials = target;
     spinner.succeed(`AWS credentials validated (Account: ${credentials.account})`);
 
     // 2. Validate AWS region
     spinner.start('Validating AWS region...');
-    await validateAWSRegion(config.aws.region);
+    await validateAWSRegion(target);
     spinner.succeed(`AWS region validated (${config.aws.region})`);
 
     // 3. Reject unsupported hosts before CDK bootstrap can create any resources.
     spinner.start('Validating EC2 instance capabilities...');
-    await validateInstanceCapabilities(config.instance.type, config.aws.region);
+    await validateInstanceCapabilities(config.instance.type, target);
     spinner.succeed('EC2 instance capabilities validated');
 
     // 4. Check CDK bootstrap
     spinner.start('Checking CDK bootstrap...');
-    const bootstrapStatus = await checkCDKBootstrap(credentials.account, config.aws.region);
+    const bootstrapStatus = await checkCDKBootstrap(credentials.account, target);
 
     if (!bootstrapStatus.meetsMinimum) {
       spinner.warn(
@@ -289,14 +308,16 @@ export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
       console.log(''); // Empty line
 
       // Prompt user to run bootstrap
-      const { runBootstrap } = await prompts({
-        type: 'confirm',
-        name: 'runBootstrap',
-        message: bootstrapStatus.bootstrapped
-          ? 'Upgrade CDK bootstrap now? (Recommended)'
-          : 'Run CDK bootstrap now? (Recommended)',
-        initial: true,
-      });
+      const { runBootstrap } = autoApprove
+        ? { runBootstrap: true }
+        : await prompts({
+            type: 'confirm',
+            name: 'runBootstrap',
+            message: bootstrapStatus.bootstrapped
+              ? 'Upgrade CDK bootstrap now? (Recommended)'
+              : 'Run CDK bootstrap now? (Recommended)',
+            initial: true,
+          });
 
       if (!runBootstrap) {
         throw new ValidationError('CDK bootstrap required', [
@@ -310,12 +331,12 @@ export async function validatePreDeploy(config: OpenClawConfig): Promise<void> {
       spinner.start('Bootstrapping CDK... (this may take 1-2 minutes)');
 
       try {
-        await runCDKBootstrap(credentials.account, config.aws.region, config.aws.profile);
+        await runCDKBootstrap(credentials.account, target);
         spinner.succeed('CDK bootstrap completed successfully');
 
         // Verify the bootstrap worked and version is correct
         spinner.start('Verifying bootstrap...');
-        const verifyStatus = await checkCDKBootstrap(credentials.account, config.aws.region);
+        const verifyStatus = await checkCDKBootstrap(credentials.account, target);
 
         if (!verifyStatus.meetsMinimum) {
           spinner.fail('Bootstrap verification failed');
@@ -350,15 +371,24 @@ export function validateInstanceType(instanceType: string): void {
   }
 }
 
-export async function validateStackExists(stackName: string, region: string): Promise<boolean> {
-  const client = new CloudFormationClient({ region });
+export async function validateStackExists(
+  stackName: string,
+  region: AwsLocation,
+): Promise<boolean> {
+  const client = new CloudFormationClient(awsClientConfig(region));
   try {
     const command = new DescribeStacksCommand({ StackName: stackName });
 
     await client.send(command);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.name === 'ValidationError' &&
+      error.message === `Stack with id ${stackName} does not exist`
+    )
+      return false;
+    throw error;
   } finally {
     client.destroy();
   }

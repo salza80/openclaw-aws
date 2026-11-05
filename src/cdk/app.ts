@@ -2,14 +2,18 @@
 import * as cdk from 'aws-cdk-lib';
 import { OpenClawStack, OpenClawStackProps } from './stack.js';
 import { loadConfigByName } from '../cli/utils/config.js';
-import { validateProvisioningConfig } from '../cli/utils/config-validation.js';
+import {
+  validateConfig,
+  validateConfigStructure,
+  validateProvisioningConfig,
+} from '../cli/utils/config-validation.js';
 import { getApiKeyParamName, getGatewayTokenParamName } from '../cli/utils/api-keys.js';
-import type { StackConfig } from '../cli/types/index.js';
+import type { OpenClawConfig, StackConfig } from '../cli/types/index.js';
 
 const destroyOnly = process.env.OPENCLAW_CDK_OPERATION === 'destroy';
 
 // Load configuration
-let config;
+let config: OpenClawConfig;
 let configName: string;
 try {
   const envConfigName = process.env.OPENCLAW_CONFIG_NAME;
@@ -18,7 +22,18 @@ try {
     process.exit(1);
   }
   configName = envConfigName;
-  config = loadConfigByName(configName);
+  if (process.env.OPENCLAW_CONFIG_SNAPSHOT) {
+    const snapshot: unknown = JSON.parse(process.env.OPENCLAW_CONFIG_SNAPSHOT);
+    if (!validateConfigStructure(snapshot))
+      throw new Error('Invalid deployment configuration snapshot');
+    config = snapshot;
+    validateConfig(config);
+    if (process.env.AWS_REGION && config.aws.region !== process.env.AWS_REGION) {
+      throw new Error('Deployment snapshot does not match the selected AWS region');
+    }
+  } else {
+    config = loadConfigByName(configName);
+  }
   if (!destroyOnly) validateProvisioningConfig(config);
 } catch (error) {
   console.error(
@@ -43,7 +58,7 @@ const stackConfig: StackConfig = {
   useDefaultVpc: config.network.useDefaultVpc,
 };
 
-// Get configuration from environment (no model/sandbox in config anymore)
+// Gateway networking remains fixed for this installation.
 // Gateway port is fixed in the stack (18789)
 
 // Create CDK app
@@ -53,6 +68,7 @@ const app = new cdk.App({ builtinCloudFormationValidation: !destroyOnly });
 const stackProps: OpenClawStackProps = {
   config: stackConfig,
   apiProvider,
+  model: config.openclaw?.model,
   cloudflareAccountId: config.openclaw?.cloudflare?.accountId,
   cloudflareGatewayId: config.openclaw?.cloudflare?.gatewayId,
   apiKeyParamName,

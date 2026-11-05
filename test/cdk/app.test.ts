@@ -14,7 +14,7 @@ describe('CDK app provisioning validation', () => {
 
   afterEach(() => workspace.cleanup());
 
-  function runApp(operation: 'deploy' | 'destroy') {
+  function runApp(operation: 'deploy' | 'destroy', snapshot?: object, region?: string) {
     const configDirectory = join(workspace.cwd, '.openclaw-aws', 'configs');
     mkdirSync(configDirectory, { recursive: true });
     writeFileSync(
@@ -37,6 +37,8 @@ describe('CDK app provisioning validation', () => {
         ...process.env,
         OPENCLAW_CONFIG_NAME: 'legacy',
         OPENCLAW_CDK_OPERATION: operation,
+        OPENCLAW_CONFIG_SNAPSHOT: snapshot ? JSON.stringify(snapshot) : undefined,
+        AWS_REGION: region,
         CDK_DEFAULT_ACCOUNT: '123456789012',
         CDK_OUTDIR: join(workspace.cwd, 'assembly'),
       },
@@ -76,5 +78,38 @@ describe('CDK app provisioning validation', () => {
     expect(JSON.stringify(template)).not.toMatch(
       /cloudflare|ssm:|SignalResource|UserData|openclaw/i,
     );
+  });
+  it('uses the pinned parent snapshot even if the named configuration file differs', () => {
+    const snapshot = {
+      version: '1.0',
+      aws: { region: 'eu-central-1' },
+      instance: { type: 't3.small', name: 'openclaw-pinned' },
+      network: { useDefaultVpc: true },
+      features: { cloudWatchLogs: false },
+      stack: { name: 'OpenclawStack-pinned' },
+      openclaw: { apiProvider: 'openrouter-api-key' },
+    };
+    const result = runApp('destroy', snapshot, 'eu-central-1');
+    expect(result.status).toBe(0);
+    const manifest = JSON.parse(
+      readFileSync(join(workspace.cwd, 'assembly/manifest.json'), 'utf8'),
+    );
+    expect(manifest.artifacts['OpenclawStack-pinned'].environment).toBe(
+      'aws://123456789012/eu-central-1',
+    );
+    expect(manifest.artifacts['OpenclawStack-legacy']).toBeUndefined();
+    const mismatch = runApp('destroy', snapshot, 'us-east-1');
+    expect(mismatch.status).toBe(1);
+    expect(mismatch.stderr).toContain('does not match the selected AWS region');
+  });
+
+  it('rejects malformed parent snapshots before synthesis', () => {
+    const result = runApp(
+      'destroy',
+      { version: '1.0', aws: { region: 'eu-central-1' } },
+      'eu-central-1',
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Invalid deployment configuration snapshot');
   });
 });

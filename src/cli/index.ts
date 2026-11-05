@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
+import createCommand from './commands/create.js';
 import initCommand from './commands/init.js';
 import listCommand from './commands/list.js';
 import currentCommand from './commands/current.js';
@@ -19,6 +20,7 @@ import restartCommand from './commands/restart.js';
 yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
   .usage('$0 <command> [options]')
+  .command(createCommand)
   .command(initCommand)
   .command(listCommand)
   .command(currentCommand)

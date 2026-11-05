@@ -38,7 +38,7 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
 
       let instanceId: string;
       try {
-        instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
+        instanceId = await resolveInstanceId(config.stack.name, ctx.target);
         spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
       } catch (error) {
         spinner.fail('Instance not found');
@@ -47,12 +47,12 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
 
       // Check SSM connectivity
       spinner.start('Checking SSM connectivity...');
-      const isReady = await checkSSMStatus(instanceId, config.aws.region);
+      const isReady = await checkSSMStatus(instanceId, ctx.target);
 
       if (!isReady) {
         spinner.text =
           chalk.yellow('Instance not ready, waiting...') + ' (this may take a few minutes)';
-        const didBecomeReady = await waitForSSM(instanceId, config.aws.region, 180000, 10000);
+        const didBecomeReady = await waitForSSM(instanceId, ctx.target, 180000, 10000);
 
         if (!didBecomeReady) {
           spinner.fail('Instance SSM not ready after 3 minutes');
@@ -68,7 +68,7 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
       }
 
       // Set up environment
-      const env = ctx.awsEnv;
+      const env = await ctx.target.environment();
 
       console.log('');
       logger.info(
@@ -97,6 +97,7 @@ export const connectCommand: CommandModule<{}, ConnectArgs> = {
               ],
               {
                 stdio: 'inherit',
+                extendEnv: false,
                 env,
               },
             ),

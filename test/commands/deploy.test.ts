@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { CommandModule } from 'yargs';
-import { makeCommandContext } from '../helpers/fixtures/command-context.js';
+import { makeCommandContext, testTarget } from '../helpers/fixtures/command-context.js';
 
 const execaMock = vi.hoisted(() => vi.fn());
 vi.mock('execa', () => ({
@@ -44,6 +44,9 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
 
 vi.mock('../../src/cli/utils/cdk.js', () => ({
   getCDKBinary: vi.fn(() => 'cdk'),
+  getCDKAppCommand: vi.fn((value: string) => `node ${value}`),
+  withCDKWorkspace: async (env: object, operation: (value: object) => Promise<unknown>) =>
+    operation({ env, cwd: process.cwd() }),
 }));
 
 vi.mock('../../src/cli/utils/aws-validation.js', () => ({
@@ -109,8 +112,48 @@ describe('deploy command', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    execaMock.mockReset();
     waitForSSMMock.mockResolvedValue(true);
     buildCommandContextMock.mockImplementation(async () => makeCommandContext());
+  });
+
+  it('redacts resolved role credentials from deployment failures without relying on global environment values', async () => {
+    const role = {
+      AWS_ACCESS_KEY_ID: 'resolved-access-key',
+      AWS_SECRET_ACCESS_KEY: 'resolved-secret-key',
+      AWS_SESSION_TOKEN: 'resolved-session-token',
+    };
+    buildCommandContextMock.mockResolvedValue(
+      makeCommandContext({ target: { ...testTarget, environment: async () => role } }),
+    );
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
+    resolveApiKeyMock.mockReturnValue('private-provider-key');
+    execaMock.mockImplementation(async (_binary, args) => {
+      if (args[0] === '--version') return {};
+      throw new Error(Object.values(role).join(' '));
+    });
+    await deployCommand.handler?.({ autoApprove: true, _: [], $0: 'openclaw-aws' });
+    const failure = handleErrorMock.mock.calls[0][0] as Error;
+    for (const value of Object.values(role)) expect(failure.message).not.toContain(value);
+    expect(failure.message).toContain('[REDACTED]');
+  });
+
+  it('keeps the planned batch context through approval instead of selecting edited targets again', async () => {
+    listConfigNamesMock.mockReturnValue(['alpha']);
+    getStackStatusMock.mockRejectedValue(
+      new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'),
+    );
+    resolveApiKeyMock.mockReturnValue('private-key');
+    promptsMock.mockImplementation(async () => {
+      buildCommandContextMock.mockRejectedValue(new Error('Configuration changed after approval'));
+      return { confirmText: 'DEPLOY ALL' };
+    });
+    await deployCommand.handler?.({ all: true, _: [], $0: 'openclaw-aws' });
+    expect(buildCommandContextMock).toHaveBeenCalledTimes(1);
+    expect(execaMock.mock.calls.some(([, args]) => args[0] === 'deploy')).toBe(true);
+    expect(handleErrorMock).not.toHaveBeenCalled();
   });
 
   it('returns early when deploying all but no configs exist', async () => {
@@ -209,7 +252,7 @@ describe('deploy command', () => {
           message: expect.stringContaining('was created but SSM connectivity was not confirmed'),
         }),
       );
-      expect(waitForSSMMock).toHaveBeenCalledWith('i-test', 'us-east-1');
+      expect(waitForSSMMock).toHaveBeenCalledWith('i-test', testTarget);
     },
   );
 
@@ -306,6 +349,7 @@ describe('deploy command', () => {
       listConfigNamesMock.mockReturnValue(['alpha']);
       getStackStatusMock
         .mockRejectedValueOnce(new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'))
+        .mockRejectedValueOnce(new StackNotFoundError('OpenclawStack-alpha', 'us-east-1'))
         .mockResolvedValue({ stackStatus: 'CREATE_FAILED' });
       resolveApiKeyMock.mockReturnValue('secret');
       promptsMock.mockResolvedValue({ confirmText: 'DEPLOY ALL' });
@@ -325,7 +369,7 @@ describe('deploy command', () => {
       await deployCommand.handler?.({ all, autoApprove: true, _: [], $0: 'openclaw-aws' });
 
       expect(execaMock.mock.calls.filter(([, args]) => args[0] === 'deploy')).toHaveLength(1);
-      expect(getStackStatusMock).toHaveBeenCalledTimes(2);
+      expect(getStackStatusMock).toHaveBeenCalledTimes(3);
       expect(ssmSendMock).toHaveBeenCalledTimes(2);
       expect(handleErrorMock).toHaveBeenCalledWith(
         expect.objectContaining({ cause: originalError }),
@@ -344,10 +388,7 @@ describe('deploy command', () => {
 
       await deployCommand.handler?.({ all, autoApprove: true, _: [], $0: 'openclaw-aws' });
 
-      expect(getStackStatusMock).toHaveBeenCalledWith(
-        context.config.stack.name,
-        context.config.aws.region,
-      );
+      expect(getStackStatusMock).toHaveBeenCalledWith(context.config.stack.name, context.target);
       expect(resolveApiKeyMock).not.toHaveBeenCalled();
       expect(validatePreDeploy).not.toHaveBeenCalled();
       expect(ssmSendMock).not.toHaveBeenCalled();
@@ -365,7 +406,7 @@ describe('deploy command', () => {
       buildCommandContextMock.mockResolvedValue(context);
       listConfigNamesMock.mockReturnValue(['alpha']);
       getStackStatusMock.mockRejectedValue(
-        new StackNotFoundError(context.config.stack.name, context.config.aws.region),
+        new StackNotFoundError(context.config.stack.name, context.target),
       );
       resolveApiKeyMock.mockReturnValue('secret');
 
@@ -396,7 +437,7 @@ describe('deploy command', () => {
       buildCommandContextMock.mockResolvedValue(context);
       listConfigNamesMock.mockReturnValue(['alpha']);
       getStackStatusMock.mockRejectedValue(
-        new StackNotFoundError(context.config.stack.name, context.config.aws.region),
+        new StackNotFoundError(context.config.stack.name, context.target),
       );
       resolveApiKeyMock.mockReturnValue('secret');
       promptsMock.mockResolvedValue({ confirmText: 'DEPLOY ALL' });
@@ -412,7 +453,7 @@ describe('deploy command', () => {
           env: expect.objectContaining({ OPENCLAW_CDK_OPERATION: 'deploy' }),
         }),
       );
-      expect(waitForSSMMock).toHaveBeenCalledWith('i-test', context.config.aws.region);
+      expect(waitForSSMMock).toHaveBeenCalledWith('i-test', context.target);
       expect(handleErrorMock).not.toHaveBeenCalled();
     },
   );

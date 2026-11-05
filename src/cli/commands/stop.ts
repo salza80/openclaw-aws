@@ -40,10 +40,10 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      const instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
+      const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
       spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
 
-      const currentState = await getInstanceState(instanceId, config.aws.region);
+      const currentState = await getInstanceState(instanceId, ctx.target);
       if (currentState === 'stopped') {
         logger.info('Instance is already stopped');
         console.log('\n' + chalk.bold('To restart:'));
@@ -51,11 +51,10 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
         return;
       }
 
-      // Show cost savings
-      console.log('\n' + chalk.bold('Cost Savings:'));
-      console.log('  Running:  ~$8.30/month');
-      console.log('  Stopped:  ~$0.80/month (EBS storage only)');
-      console.log('  ' + chalk.green('Savings:  ~$7.50/month (~90%)'));
+      console.log('\n' + chalk.bold('While stopped:'));
+      console.log(
+        '  EC2 compute charges stop. EBS storage and other retained AWS resources can still incur charges.',
+      );
 
       console.log('\n' + chalk.bold('Note:'));
       console.log('  • Instance data is preserved');
@@ -80,10 +79,10 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
 
       // Stop instance
       spinner.start('Stopping instance...');
-      await stopInstance(instanceId, config.aws.region);
+      await stopInstance(instanceId, ctx.target);
       spinner.text = 'Waiting for instance to stop...';
 
-      const didStop = await waitForInstanceState(instanceId, config.aws.region, 'stopped', 120000);
+      const didStop = await waitForInstanceState(instanceId, ctx.target, 'stopped', 120000);
 
       if (didStop) {
         spinner.succeed('Instance stopped successfully');

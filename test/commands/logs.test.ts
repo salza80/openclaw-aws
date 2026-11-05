@@ -66,7 +66,12 @@ describe('logs command', () => {
         return { Command: { CommandId: 'cmd-1' } };
       }
       if (command instanceof GetCommandInvocationCommand) {
-        return { Status: 'Success', StandardOutputContent: 'OK', StandardErrorContent: '' };
+        return {
+          Status: 'Success',
+          ResponseCode: 0,
+          StandardOutputContent: 'OK',
+          StandardErrorContent: '',
+        };
       }
       return {};
     });
@@ -91,7 +96,12 @@ describe('logs command', () => {
         return { Command: { CommandId: 'cmd-2' } };
       }
       if (command instanceof GetCommandInvocationCommand) {
-        return { Status: 'Success', StandardOutputContent: 'OK', StandardErrorContent: '' };
+        return {
+          Status: 'Success',
+          ResponseCode: 0,
+          StandardOutputContent: 'OK',
+          StandardErrorContent: '',
+        };
       }
       return {};
     });
@@ -113,7 +123,12 @@ describe('logs command', () => {
         return { Command: { CommandId: 'cmd-3' } };
       }
       if (command instanceof GetCommandInvocationCommand) {
-        return { Status: 'Success', StandardOutputContent: 'OK', StandardErrorContent: '' };
+        return {
+          Status: 'Success',
+          ResponseCode: 0,
+          StandardOutputContent: 'OK',
+          StandardErrorContent: '',
+        };
       }
       return {};
     });

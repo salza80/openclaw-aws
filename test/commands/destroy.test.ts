@@ -3,6 +3,13 @@ import fs from 'fs';
 import type { CommandModule } from 'yargs';
 import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
+vi.mock('../../src/operations/state.js', () => ({ assertDeploymentTarget: vi.fn() }));
+
+const withLockMock = vi.hoisted(() =>
+  vi.fn(async (_ctx: unknown, operation: () => Promise<void>) => operation()),
+);
+vi.mock('../../src/operations/lock.js', () => ({ withDeploymentLock: withLockMock }));
+
 const execaMock = vi.hoisted(() => vi.fn());
 
 vi.mock('execa', () => ({
@@ -35,6 +42,9 @@ vi.mock('../../src/cli/utils/aws.js', () => ({
 
 vi.mock('../../src/cli/utils/cdk.js', () => ({
   getCDKBinary: vi.fn(() => 'cdk'),
+  getCDKAppCommand: vi.fn((value: string) => `node ${value}`),
+  withCDKWorkspace: async (env: object, operation: (value: object) => Promise<unknown>) =>
+    operation({ env, cwd: process.cwd() }),
 }));
 
 const listConfigNamesMock = vi.hoisted(() => vi.fn());
@@ -85,7 +95,7 @@ vi.mock('../../src/cli/utils/errors.js', async () => {
   return createErrorsModuleMock({ handleError: vi.fn() });
 });
 
-import { handleError, StackNotFoundError } from '../../src/cli/utils/errors.js';
+import { AWSError, handleError, StackNotFoundError } from '../../src/cli/utils/errors.js';
 import destroyCommand from '../../src/cli/commands/destroy.js';
 
 type DestroyHandler = NonNullable<(typeof destroyCommand)['handler']>;
@@ -97,6 +107,16 @@ describe('destroy command', () => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     buildCommandContextMock.mockImplementation(async () => makeCommandContext());
+  });
+
+  it('does not read, destroy or clean up while another operation owns the target lock', async () => {
+    const busy = new AWSError('Deployment lock is held');
+    withLockMock.mockRejectedValueOnce(busy);
+    await destroyCommand.handler?.({ name: 'alpha', force: true, _: [], $0: 'openclaw-aws' });
+    expect(getStackStatusMock).not.toHaveBeenCalled();
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(handleErrorMock).toHaveBeenCalledWith(busy);
   });
 
   it('skips destruction when stack is missing', async () => {

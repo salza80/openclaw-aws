@@ -118,12 +118,10 @@ describe('ec2 utils', () => {
     expect(mockClient.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it('returns undefined when getInstanceState describe fails', async () => {
-    mockClient.send.mockRejectedValueOnce(new Error('describe failed'));
-
-    const state = await getInstanceState('i-state', 'us-east-1');
-
-    expect(state).toBeUndefined();
+  it('preserves API errors when getting instance state', async () => {
+    const original = new Error('describe denied');
+    mockClient.send.mockRejectedValueOnce(original);
+    await expect(getInstanceState('i-state', 'us-east-1')).rejects.toBe(original);
     expect(mockClient.destroy).toHaveBeenCalledTimes(1);
   });
 
@@ -148,17 +146,12 @@ describe('ec2 utils', () => {
     expect(mockClient.destroy).toHaveBeenCalledTimes(1);
   });
 
-  it('waitForInstanceState returns false after retrying through errors', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-02-17T00:00:00.000Z'));
-
-    mockClient.send.mockRejectedValue(new Error('temporary error'));
-
-    const pending = waitForInstanceState('i-wait', 'us-east-1', 'running', 1);
-    await vi.advanceTimersByTimeAsync(5000);
-    const result = await pending;
-
-    expect(result).toBe(false);
+  it('preserves API errors while waiting rather than silently reporting a timeout', async () => {
+    const original = new Error('describe denied');
+    mockClient.send.mockRejectedValue(original);
+    await expect(waitForInstanceState('i-wait', 'us-east-1', 'running', 1000)).rejects.toBe(
+      original,
+    );
     expect(mockClient.send).toHaveBeenCalledTimes(1);
     expect(mockClient.destroy).toHaveBeenCalledTimes(1);
   });

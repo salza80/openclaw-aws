@@ -2,6 +2,9 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import type { CommandModule } from 'yargs';
 import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
+const tunnelMock = vi.hoisted(() => vi.fn());
+vi.mock('../../src/aws/tunnel.js', () => ({ startDashboardTunnel: tunnelMock }));
+
 const execaMock = vi.hoisted(() => vi.fn());
 
 vi.mock('execa', () => ({
@@ -75,6 +78,7 @@ const handleErrorMock = vi.mocked(handleError);
 describe('dashboard command', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    tunnelMock.mockResolvedValue({ port: 19876, done: Promise.resolve(), stop: vi.fn() });
   });
 
   afterEach(() => {
@@ -103,29 +107,12 @@ describe('dashboard command', () => {
     await vi.runAllTimersAsync();
     await run;
 
-    expect(execaMock).toHaveBeenCalledTimes(1);
-    expect(execaMock).toHaveBeenCalledWith(
-      'aws',
-      [
-        'ssm',
-        'start-session',
-        '--target',
-        'i-123',
-        '--document-name',
-        'AWS-StartPortForwardingSession',
-        '--parameters',
-        JSON.stringify({
-          portNumber: ['18789'],
-          localPortNumber: ['18789'],
-        }),
-        '--region',
-        'us-east-1',
-      ],
-      {
-        env: expect.objectContaining({ AWS_PROFILE: 'test' }),
-        stdio: 'inherit',
-      },
-    );
+    expect(tunnelMock).toHaveBeenCalledWith({
+      instanceId: 'i-123',
+      target: makeCommandContext().target,
+      localPort: undefined,
+    });
+    expect(execaMock).not.toHaveBeenCalled();
     expect(createSsmClientMock).not.toHaveBeenCalled();
   });
 

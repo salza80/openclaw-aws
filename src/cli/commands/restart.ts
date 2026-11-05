@@ -40,7 +40,7 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
 
       // Get instance ID
       const spinner = ora('Finding instance...').start();
-      const instanceId = await resolveInstanceId(config.stack.name, config.aws.region);
+      const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
       spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
 
       console.log('\n' + chalk.bold('Note:'));
@@ -66,7 +66,7 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
 
       // Reboot instance
       spinner.start('Rebooting instance...');
-      await rebootInstance(instanceId, config.aws.region);
+      await rebootInstance(instanceId, ctx.target);
       spinner.succeed('Reboot initiated');
 
       spinner.start('Waiting for instance to restart... (this may take 1-2 minutes)');
@@ -74,12 +74,7 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
       // Wait for instance to go through stopping and back to running
       await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait 10s for reboot to start
 
-      const didRestart = await waitForInstanceState(
-        instanceId,
-        config.aws.region,
-        'running',
-        180000,
-      );
+      const didRestart = await waitForInstanceState(instanceId, ctx.target, 'running', 180000);
 
       if (didRestart) {
         spinner.text = 'Waiting for SSM to be ready...';
@@ -88,7 +83,7 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
         let ssmReady = false;
         for (let i = 0; i < 24; i++) {
           // 2 minutes
-          ssmReady = await checkSSMStatus(instanceId, config.aws.region);
+          ssmReady = await checkSSMStatus(instanceId, ctx.target);
           if (ssmReady) break;
           await new Promise((resolve) => setTimeout(resolve, 5000));
         }

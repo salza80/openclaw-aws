@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { CommandModule } from 'yargs';
-import { makeCommandContext } from '../helpers/fixtures/command-context.js';
+import { makeCommandContext, testTarget } from '../helpers/fixtures/command-context.js';
 
 vi.mock('ora', async () => {
   const { createSpinnerMock } = await import('../helpers/mocks/spinner.js');
@@ -81,8 +81,8 @@ describe('start command', () => {
     const args: StartHandlerArgs = { _: [], $0: 'openclaw-aws' };
     await handler(args);
 
-    expect(startInstanceMock).toHaveBeenCalledWith('i-123', 'us-east-1');
-    expect(waitForInstanceStateMock).toHaveBeenCalledWith('i-123', 'us-east-1', 'running', 180000);
+    expect(startInstanceMock).toHaveBeenCalledWith('i-123', testTarget);
+    expect(waitForInstanceStateMock).toHaveBeenCalledWith('i-123', testTarget, 'running', 180000);
     expect(checkSSMStatusMock).toHaveBeenCalled();
     expect(handleErrorMock).not.toHaveBeenCalled();
   });

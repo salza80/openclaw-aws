@@ -5,14 +5,10 @@ vi.mock('../../src/cli/utils/config-store.js', () => ({
   resolveConfig: resolveConfigMock,
 }));
 
-const requireAwsCredentialsMock = vi.hoisted(() => vi.fn());
-const applyAwsProfileMock = vi.hoisted(() => vi.fn());
-vi.mock('../../src/cli/utils/aws-validation.js', () => ({
-  requireAwsCredentials: requireAwsCredentialsMock,
-  applyAwsProfile: applyAwsProfileMock,
-}));
-
-import { buildCommandContext, buildAwsEnv } from '../../src/cli/utils/context.js';
+const resolveTarget = vi.hoisted(() => vi.fn());
+vi.mock('../../src/aws/target.js', () => ({ resolveAwsTarget: resolveTarget }));
+import { buildCommandContext } from '../../src/cli/utils/context.js';
+import { testTarget } from '../helpers/fixtures/command-context.js';
 
 describe('context utils', () => {
   afterEach(() => {
@@ -26,31 +22,13 @@ describe('context utils', () => {
       configPath: '/tmp/alpha.json',
     });
 
+    resolveTarget.mockResolvedValue(testTarget);
     const ctx = await buildCommandContext();
 
-    expect(requireAwsCredentialsMock).toHaveBeenCalled();
-    expect(applyAwsProfileMock).not.toHaveBeenCalled();
+    expect(resolveTarget).toHaveBeenCalledWith({ region: 'us-east-1', profile: 'dev' });
+    expect(ctx.target).toBe(testTarget);
     expect(ctx.name).toBe('alpha');
     expect(ctx.awsEnv.AWS_REGION).toBe('us-east-1');
-    expect(ctx.awsEnv.AWS_PROFILE).toBe('dev');
-  });
-
-  it('buildCommandContext skips credential check when requireCredentials is false', async () => {
-    resolveConfigMock.mockReturnValue({
-      name: 'alpha',
-      config: { aws: { region: 'us-east-1', profile: 'dev' } },
-      configPath: '/tmp/alpha.json',
-    });
-
-    await buildCommandContext({ requireCredentials: false });
-
-    expect(requireAwsCredentialsMock).not.toHaveBeenCalled();
-    expect(applyAwsProfileMock).toHaveBeenCalledWith('dev');
-  });
-
-  it('buildAwsEnv sets region and optional profile', () => {
-    const env = buildAwsEnv({ aws: { region: 'us-east-1', profile: 'dev' } } as never);
-    expect(env.AWS_REGION).toBe('us-east-1');
-    expect(env.AWS_PROFILE).toBe('dev');
+    expect(ctx.awsEnv.AWS_PROFILE).toBeUndefined();
   });
 });

@@ -332,6 +332,7 @@ else
     --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN --install-daemon --daemon-runtime node \
     --skip-skills --skip-channels --skip-search --skip-hooks --skip-ui --skip-health \
     --suppress-gateway-token-output > "$WORK_DIR/onboard.json" 2> "$WORK_DIR/onboard.err"
+  @@MODEL_SETUP@@
 fi
 
 phase service

@@ -32,10 +32,10 @@ export const outputsCommand: CommandModule<{}, OutputsArgs> = {
       const spinner = ora('Fetching stack outputs...').start();
 
       try {
-        const outputs = await withRetry(
-          () => getStackOutputs(config.stack.name, config.aws.region),
-          { maxAttempts: 2, operationName: 'get stack outputs' },
-        );
+        const outputs = await withRetry(() => getStackOutputs(config.stack.name, ctx.target), {
+          maxAttempts: 2,
+          operationName: 'get stack outputs',
+        });
         spinner.succeed('Outputs retrieved');
 
         if (Object.keys(outputs).length === 0) {
