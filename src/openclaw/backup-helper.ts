@@ -303,6 +303,8 @@ export async function runBackupHelper(options: {
   const directory = await mkdtemp(path.join(tmpdir(), 'openclaw-aws-recovery-'));
   try {
     const config = path.join(directory, 'openclaw.json');
+    const keyInput = path.join(directory, 'key.json');
+    await writeFile(keyInput, JSON.stringify({ passphrase: options.passphrase }), { mode: 0o600 });
     await writeFile(
       config,
       JSON.stringify({
@@ -311,13 +313,16 @@ export async function runBackupHelper(options: {
           load: { paths: [helper.plugin] },
           entries: { 'openclaw-aws-s3': { enabled: true } },
         },
+        secrets: {
+          providers: { 'aws-vault-key': { source: 'file', path: keyInput, mode: 'json' } },
+        },
         storage: {
           locations: {
             'aws-vault': {
               provider: 'aws-s3',
               settings: { ...options.settings, readOnly: true },
               encryption: {
-                passphrase: { source: 'env', provider: 'default', id: 'OPENCLAW_AWS_VAULT_KEY' },
+                passphrase: { source: 'file', provider: 'aws-vault-key', id: '/passphrase' },
               },
             },
           },
@@ -338,7 +343,6 @@ export async function runBackupHelper(options: {
       if (aws[name]) env[name] = aws[name]!;
     env.OPENCLAW_CONFIG_PATH = config;
     env.OPENCLAW_STATE_DIR = path.join(directory, 'state');
-    env.OPENCLAW_AWS_VAULT_KEY = options.passphrase;
     env.OPENCLAW_AWS_BACKUP_OPERATION_ID = randomUUID();
     const result = await execa(helper.node, [helper.entrypoint, ...args], {
       env,

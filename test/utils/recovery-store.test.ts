@@ -39,6 +39,8 @@ describe('independent AWS recovery metadata', () => {
       's3://private-backups/a#x',
       's3://private-backups/a//b',
       's3://1.2.3.4/vault',
+      's3://private-backups/vault/*',
+      's3://private-backups/vault/${aws:username}',
     ])
       expect(() => parseVaultUri(value)).toThrow();
   });

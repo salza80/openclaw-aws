@@ -87,6 +87,19 @@ describe('managed native recovery helper', () => {
   it('runs a read-only native command in a fresh private context and deletes its configuration afterwards', async () => {
     const directory = await cache();
     await ensureBackupHelper({ cacheDirectory: directory });
+    const previous = mocks.run.getMockImplementation()!;
+    let privateKeyPath = '';
+    mocks.run.mockImplementation(async (node, args, options) => {
+      if (args[0].endsWith('openclaw.mjs')) {
+        const config = JSON.parse(await readFile(options.env.OPENCLAW_CONFIG_PATH, 'utf8'));
+        privateKeyPath = config.secrets.providers['aws-vault-key'].path;
+        expect(JSON.parse(await readFile(privateKeyPath, 'utf8')).passphrase).toBe(
+          'private-vault-passphrase\0\n',
+        );
+        expect(config.storage.locations['aws-vault'].settings.readOnly).toBe(true);
+      }
+      return previous(node, args, options);
+    });
     const environment = vi.fn(async () => ({
       AWS_ACCESS_KEY_ID: 'selected-key',
       AWS_SECRET_ACCESS_KEY: 'selected-private-secret',
@@ -100,7 +113,7 @@ describe('managed native recovery helper', () => {
         target: { ...testTarget, environment },
         operation: { action: 'list' },
         settings: { readOnly: false },
-        passphrase: 'private-vault-passphrase',
+        passphrase: 'private-vault-passphrase\0\n',
       }),
     ).toEqual({ native: true });
     expect(environment).toHaveBeenCalledWith(30 * 60 * 1000);
@@ -112,14 +125,15 @@ describe('managed native recovery helper', () => {
       env: {
         AWS_ACCESS_KEY_ID: 'selected-key',
         AWS_SECRET_ACCESS_KEY: 'selected-private-secret',
-        OPENCLAW_AWS_VAULT_KEY: 'private-vault-passphrase',
       },
     });
     expect(call[2].env).not.toHaveProperty('AWS_PROFILE');
     expect(call[2].env).not.toHaveProperty('NODE_OPTIONS');
+    expect(call[2].env).not.toHaveProperty('OPENCLAW_AWS_VAULT_KEY');
     await expect(readFile(call[2].env.OPENCLAW_CONFIG_PATH)).rejects.toMatchObject({
       code: 'ENOENT',
     });
+    await expect(readFile(privateKeyPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
   it('does not expose private command output or credentials on native failures', async () => {
     const directory = await cache();

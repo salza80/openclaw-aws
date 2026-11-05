@@ -32,8 +32,8 @@ export function relativeKey(value: string, allowEmpty = false): string {
   return value;
 }
 function prefix(value: unknown, field: string): string {
-  if (typeof value !== 'string' || !value || Buffer.byteLength(value, 'utf8') > 512)
-    throw new Error(`S3 ${field} must be a nonempty relative prefix of at most 512 bytes`);
+  if (typeof value !== 'string' || !value || Buffer.byteLength(value, 'utf8') > 768)
+    throw new Error(`S3 ${field} must be a nonempty relative prefix of at most 768 bytes`);
   const result = value.replace(/\/+$/, '');
   relativeKey(result);
   if (result.includes('//')) throw new Error(`S3 ${field} cannot contain empty path components`);

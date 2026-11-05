@@ -18,7 +18,7 @@ import { getApiKeyEnvVar, resolveApiKey } from '../utils/api-keys.js';
 
 import { deployDeployment, rejectFailedStack } from '../../operations/deployment.js';
 
-loadEnv({ path: path.join(process.cwd(), '.env') });
+loadEnv({ path: path.join(process.cwd(), '.env'), quiet: true });
 
 interface DeployArgs {
   autoApprove?: boolean;

@@ -14,9 +14,23 @@ The native storage SPI has no S3 VersionId field. The narrow `readVersions` sett
 
 ## Independent recovery resources
 
+The vault command is available independently of source deployment configuration:
+
+```sh
+openclaw-aws vault create primary --region eu-central-1 --profile operator --yes
+openclaw-aws vault register s3://my-bucket/recovery --key-arn <independent-secret-arn> --region eu-central-1 --profile operator --yes
+openclaw-aws vault inspect s3://my-bucket/recovery --region eu-central-1 --profile operator --json
+```
+
+Creation previews the independently retained bucket/key resources. Registration checks an existing bucket without rewriting its policies. Both preserve the original encryption identity on retry. The metadata contains an explicitly labeled Secrets Manager version, so automatic collection of unlabeled secret versions cannot discard that passphrase. Secret values are not included in command arguments, receipts or output.
+
+Existing vaults must have enabled versioning, full public-access blocking, enforced bucket-owner ownership, supported default encryption and a policy denying insecure transport. Lifecycle expiry or storage transitions overlapping the selected prefix are refused. SSE-S3, SSE-KMS and DSSE-KMS defaults are supported; KMS keys must be enabled symmetric keys in the selected account and region. Source permission plans scope KMS use to the S3 encryption context and independent secret. Existing key policies must permit that access; this CLI does not rewrite customer key policies.
+
 `RecoveryVaultStack` retains a private, versioned, TLS-only S3 bucket and an independent Secrets Manager passphrase. Native encryption and S3 server-side encryption both apply. Destroying source compute must not destroy either resource. Retained objects, object versions and the secret continue to incur storage charges.
 
 `RecoveryAccessStack` attaches a prefix-scoped inline policy to a role whose source-stack ownership must first be verified by the application operation. It does not import or resynthesize the source stack. Delete permissions cover probe objects only. The source access stack must be removed before deleting the source role; the independent vault remains.
+
+The policy uses `AWS::IAM::RolePolicy`, with its independent stack name as its discoverable policy name. Cleanup verifies the stack ownership and confirms that its live template contains only the expected role-policy resource before deletion. Source identity inspection also checks the stack-owned EC2 instance/profile/role, unique IAM IDs and absence of another instance sharing the profile. Denied or incomplete inspections do not authorize a write or cleanup.
 
 `src/aws/recovery-store.ts` writes thin immutable AWS metadata with conditional creation and exact-version byte readback. Identical retries can adopt an existing receipt; collisions, missing versions, malformed data and denied access fail. These primitives alone do not establish that a native recovery point is complete. Application code must validate native verification and coverage requirements before writing a completed receipt.
 
@@ -24,7 +38,7 @@ The native storage SPI has no S3 VersionId field. The narrow `readVersions` sett
 
 `src/openclaw/backup-helper.ts` provisions a private, lockfile-pinned OpenClaw helper from `templates/openclaw/native-helper/`. Linux/macOS x64 and arm64 clients receive a private Node 24.22.2 runtime, verified against published Node release checksums. They do not depend on a global OpenClaw or an old deployment's configuration. Other platforms require the pinned Node runtime and npm to be supplied explicitly and have not received the same acceptance test.
 
-The helper receives a private temporary native configuration, the independently retained passphrase and a sufficiently long-lived snapshot of the selected operator's AWS credentials. It runs typed read/list/verify/staged-restore operations, forces read-only S3 access, and removes temporary state afterwards. It sends no model prompts and starts no Gateway. Child errors must not expose environment variables or raw native output. An installer lock is never stolen based on its age.
+The helper receives a private temporary native configuration, the independently retained passphrase through a native file SecretRef, and a sufficiently long-lived snapshot of the selected operator's AWS credentials. Its temporary key file has mode 0600; the key does not enter command arguments or the child environment. This preserves multiline and NUL-containing passphrases. It runs typed read/list/verify/staged-restore operations, forces read-only S3 access, and removes temporary state afterwards. It sends no model prompts and starts no Gateway. Child errors must not expose environment variables or raw native output. An installer lock is never stolen based on its age.
 
 The pinned host and helper use compatible zod 4.6.6 and npm 12.2.2 security patches. The dependency audit still reports moderate minimatch advisories; resolving them requires assessing a major dependency change. Do not use forced audit fixes that downgrade OpenClaw.
 

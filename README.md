@@ -310,6 +310,17 @@ Select a config.
 npx openclaw-aws use my-bot
 ```
 
+### Independent recovery vaults
+
+```bash
+openclaw-aws vault create primary --region eu-central-1 --profile operator --yes
+openclaw-aws vault inspect s3://bucket/vault-prefix --region eu-central-1 --profile operator --json
+```
+
+Vaults keep private, versioned S3 storage and a retained Secrets Manager passphrase independently of deployment stacks. An existing bucket can be registered with `vault register <s3-uri> --key-arn <independent-secret-arn>` and explicit region/profile. Registration checks ownership, encryption, public-access protection, TLS and retention without changing existing bucket policies. Storage, old versions and retained keys remain billable after source deletion.
+
+The portable backup CLI is still being integrated on this branch; vault creation alone does not create a verified recovery point. See [native backup integration](docs/native-backup-transport.md) for delivery, key retention, permissions and verification boundaries.
+
 ## Configuration
 
 Configuration is created with the `init` command, and stored per config in `.openclaw-aws/configs/<name>.json`.

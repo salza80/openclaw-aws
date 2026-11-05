@@ -68,7 +68,7 @@ describe('AWS S3 native settings', () => {
       { prefix: '../other' },
       { prefix: '/' },
       { prefix: 'a//b' },
-      { prefix: 'é'.repeat(257) },
+      { prefix: 'é'.repeat(385) },
       { region: undefined },
       { expectedBucketOwner: '' },
       { readVersions: { '../escape': 'v1' } },

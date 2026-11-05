@@ -31,7 +31,7 @@ export function parseVaultUri(uri: string): VaultLocation {
     !match ||
     match[1].includes('..') ||
     /^\d+\.\d+\.\d+\.\d+$/.test(match[1]) ||
-    /[%?#]/.test(match[2])
+    /[%?#*$]/.test(match[2])
   )
     throw new Error('Expected s3://bucket/nonempty-vault-prefix');
   const prefix = relativeKey(match[2]);

@@ -35,4 +35,9 @@ describe('cli config workflow', () => {
     const current = JSON.parse(fs.readFileSync(currentPath, 'utf-8'));
     expect(current.name).toBe('beta');
   });
+  it('keeps machine-readable output free of dotenv startup notices', async () => {
+    fs.writeFileSync(path.join(workspace.cwd, '.env'), 'CLI_STDOUT_FIXTURE=nonsecret\n');
+    const result = await runCli(['--version'], workspace.cwd);
+    expect(result.stdout).toMatch(/^\d+\.\d+\.\d+(?:[-+]\S+)?$/);
+  });
 });

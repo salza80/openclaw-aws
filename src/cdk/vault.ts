@@ -1,9 +1,8 @@
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import { Bucket, BlockPublicAccess, BucketEncryption, ObjectOwnership } from 'aws-cdk-lib/aws-s3';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
-import { CfnPolicy, PolicyDocument, PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { CfnRolePolicy, PolicyDocument, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import type { Construct } from 'constructs';
-import { createHash } from 'node:crypto';
 
 /** An independent stack: source deployment destruction cannot delete recovery state. */
 export class RecoveryVaultStack extends Stack {
@@ -41,6 +40,8 @@ export interface RecoveryAccessProps extends StackProps {
   bucket: string;
   dataPrefix: string;
   keyArn: string;
+  s3KmsKeyArn?: string;
+  secretKmsKeyArn?: string;
 }
 
 /** Attach only after verifying this role belongs to the selected source stack.
@@ -52,8 +53,12 @@ export class RecoveryAccessStack extends Stack {
     if (!/^[\w+=,.@-]{1,64}$/.test(props.roleName)) throw new Error('Invalid deployment role name');
     if (
       !/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(props.bucket) ||
-      !/^[a-zA-Z0-9/_-]+$/.test(props.dataPrefix) ||
-      props.dataPrefix.split('/').some((part) => !part)
+      typeof props.dataPrefix !== 'string' ||
+      props.dataPrefix.startsWith('/') ||
+      /[\\%?#*$]/.test(props.dataPrefix) ||
+      [...props.dataPrefix].some((char) => char.charCodeAt(0) < 32) ||
+      Buffer.byteLength(props.dataPrefix, 'utf8') > 768 ||
+      props.dataPrefix.split('/').some((part) => !part || part === '.' || part === '..')
     )
       throw new Error('Invalid recovery access scope');
     const keyParts = props.keyArn.split(':');
@@ -100,9 +105,44 @@ export class RecoveryAccessStack extends Stack {
         }),
       ],
     });
-    new CfnPolicy(this, 'RecoveryAccess', {
-      policyName: `OpenclawRecovery-${createHash('sha256').update(this.stackName).digest('hex').slice(0, 32)}`,
-      roles: [props.roleName],
+    for (const [keyArn, service, context] of [
+      [
+        props.s3KmsKeyArn,
+        's3',
+        { 'kms:EncryptionContext:aws:s3:arn': [bucketArn, `${bucketArn}/${prefix}/*`] },
+      ],
+      [
+        props.secretKmsKeyArn,
+        'secretsmanager',
+        { 'kms:EncryptionContext:SecretARN': props.keyArn },
+      ],
+    ] as const) {
+      if (!keyArn) continue;
+      const keyParts = keyArn.split(':');
+      if (
+        !/^arn:[a-z0-9-]+:kms:[a-z0-9-]+:\d{12}:key\/[A-Za-z0-9-]+$/.test(keyArn) ||
+        keyParts[3] !== props.env?.region ||
+        keyParts[4] !== props.env?.account
+      )
+        throw new Error('Recovery KMS key must belong to the selected AWS account and region');
+      document.addStatements(
+        new PolicyStatement({
+          actions:
+            service === 's3'
+              ? ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey']
+              : ['kms:Decrypt'],
+          resources: [keyArn],
+          conditions: {
+            StringEquals: { 'kms:ViaService': `${service}.${this.region}.${this.urlSuffix}` },
+            StringLike: context,
+          },
+        }),
+      );
+    }
+    new CfnRolePolicy(this, 'RecoveryAccess', {
+      // The policy name lets teardown discover its owning independent stack.
+      policyName: this.stackName,
+      roleName: props.roleName,
       policyDocument: document.toJSON(),
     });
   }

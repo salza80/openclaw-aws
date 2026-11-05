@@ -38,7 +38,6 @@ function environment(directory: string, endpoint: string): Record<string, string
     TMPDIR: directory,
     OPENCLAW_STATE_DIR: path.join(directory, 'state'),
     OPENCLAW_CONFIG_PATH: path.join(directory, 'config.json'),
-    OPENCLAW_AWS_VAULT_KEY: 'disposable-native-encryption-fixture',
     OPENCLAW_AWS_BACKUP_OPERATION_ID: 'native-fixture',
     AWS_CONFIG_FILE: path.join(directory, 'empty-aws-config'),
     AWS_SHARED_CREDENTIALS_FILE: path.join(directory, 'empty-aws-credentials'),
@@ -102,6 +101,7 @@ describe('packaged native S3 conformance', () => {
     const config = {
       plugins: pluginConfig,
       storage: storageConfig(),
+      secrets: { providers: { 'aws-backup-store': { source: 'store' } } },
       agents: {
         ownership: 'explicit',
         defaults: { workspace: firstWorkspace },
@@ -111,7 +111,19 @@ describe('packaged native S3 conformance', () => {
         },
       },
     };
+    const passphrase = 'disposable-native-encryption-fixture\nwith-lines\0and-a-trailing-newline\n';
+    config.storage.locations.vault.encryption.passphrase = {
+      source: 'store',
+      provider: 'aws-backup-store',
+      id: 'OPENCLAW_AWS_FIXTURE_VAULT_KEY',
+    };
     await mkdir(state, { recursive: true });
+    // Bootstrap materializes source SSM credentials here; full recovery must retain them.
+    await writeFile(
+      path.join(state, '.env'),
+      'OPENROUTER_API_KEY=fixture-provider-key\nOPENCLAW_GATEWAY_TOKEN=fixture-gateway-token\n',
+      { mode: 0o600 },
+    );
     for (const [dir, name] of [
       [firstWorkspace, 'coordinator'],
       [secondWorkspace, 'researcher'],
@@ -135,6 +147,30 @@ describe('packaged native S3 conformance', () => {
       expect(
         plugins.plugins.find((item: { id: string }) => item.id === 'openclaw-aws-s3').status,
       ).toBe('loaded');
+      const privateKeyInput = path.join(directory, 'vault-passphrase-input');
+      await writeFile(privateKeyInput, passphrase, { mode: 0o600 });
+      await execa(
+        process.execPath,
+        [
+          native,
+          'secrets',
+          'store',
+          'set',
+          'OPENCLAW_AWS_FIXTURE_VAULT_KEY',
+          '--kind',
+          'secret',
+          '--value-file',
+          privateKeyInput,
+        ],
+        { env, extendEnv: false, timeout: 30000 },
+      );
+      await rm(privateKeyInput);
+      config.storage.locations.vault.encryption.passphrase = {
+        source: 'store',
+        provider: 'aws-backup-store',
+        id: 'OPENCLAW_AWS_FIXTURE_VAULT_KEY',
+      };
+      await writeFile(env.OPENCLAW_CONFIG_PATH, JSON.stringify(config));
       expect((await run('storage', 'init', 'vault')).state).toBe('ok');
       expect((await run('storage', 'test', 'vault')).state).toBe('ok');
       const created = await run('backup', 'create', '--to', 'vault', '--namespace', 'team-fixture');
@@ -150,6 +186,16 @@ describe('packaged native S3 conformance', () => {
       const storedArchive = server.objects.get(`vault/main/backups/team-fixture/${key}`)!.at(-1)!;
       expect(storedArchive.body.subarray(0, 2).equals(Buffer.from([0x1f, 0x8b]))).toBe(false);
       config.storage = storageConfig({ readOnly: true, readVersions: versions });
+      const helperKeyInput = path.join(directory, 'clean-client-key.json');
+      await writeFile(helperKeyInput, JSON.stringify({ passphrase }), { mode: 0o600 });
+      Object.assign(config.secrets.providers, {
+        'aws-vault-key': { source: 'file', path: helperKeyInput, mode: 'json' },
+      });
+      config.storage.locations.vault.encryption.passphrase = {
+        source: 'file',
+        provider: 'aws-vault-key',
+        id: '/passphrase',
+      };
       await writeFile(env.OPENCLAW_CONFIG_PATH, JSON.stringify(config));
       // Hide the current archive behind a delete marker; recovery must use its committed version.
       server.objects
@@ -184,6 +230,11 @@ describe('packaged native S3 conformance', () => {
         expect(relative, `${name} was omitted from native recovery`).toBeDefined();
         expect(await readFile(path.join(target, relative!), 'utf8')).toBe(`${name}-recovery-proof`);
       }
+      const environmentFile = files.find((file) => path.basename(file) === '.env');
+      expect(environmentFile, 'source provider and Gateway credentials were omitted').toBeDefined();
+      expect(await readFile(path.join(target, environmentFile!), 'utf8')).toBe(
+        'OPENROUTER_API_KEY=fixture-provider-key\nOPENCLAW_GATEWAY_TOKEN=fixture-gateway-token\n',
+      );
     } finally {
       await server.close();
     }
