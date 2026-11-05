@@ -17,6 +17,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import type { AwsTarget } from '../aws/target.js';
+import { nativeStorageReadConfig } from './storage-config.js';
 
 const helperSpec = new URL('../../templates/openclaw/native-helper/', import.meta.url);
 const pluginFiles = new URL('../../dist/native-plugins/aws-s3/', import.meta.url);
@@ -307,27 +308,7 @@ export async function runBackupHelper(options: {
     await writeFile(keyInput, JSON.stringify({ passphrase: options.passphrase }), { mode: 0o600 });
     await writeFile(
       config,
-      JSON.stringify({
-        plugins: {
-          allow: ['openclaw-aws-s3'],
-          load: { paths: [helper.plugin] },
-          entries: { 'openclaw-aws-s3': { enabled: true } },
-        },
-        secrets: {
-          providers: { 'aws-vault-key': { source: 'file', path: keyInput, mode: 'json' } },
-        },
-        storage: {
-          locations: {
-            'aws-vault': {
-              provider: 'aws-s3',
-              settings: { ...options.settings, readOnly: true },
-              encryption: {
-                passphrase: { source: 'file', provider: 'aws-vault-key', id: '/passphrase' },
-              },
-            },
-          },
-        },
-      }),
+      JSON.stringify(nativeStorageReadConfig(helper.plugin, options.settings, keyInput)),
       { mode: 0o600 },
     );
     const aws = await options.target.environment(30 * 60 * 1000);

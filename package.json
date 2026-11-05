@@ -67,6 +67,7 @@
     "@aws-sdk/client-ssm": "^3.1161.0",
     "@aws-sdk/client-sts": "^3.1161.0",
     "@aws-sdk/credential-provider-node": "^3.972.92",
+    "@aws-sdk/credential-providers": "^3.1163.0",
     "aws-cdk": "^2.1147.0",
     "aws-cdk-lib": "^2.275.0",
     "chalk": "^6.0.1",

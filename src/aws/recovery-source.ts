@@ -4,7 +4,7 @@ import {
   ListStackResourcesCommand,
   type StackResourceSummary,
 } from '@aws-sdk/client-cloudformation';
-import { DescribeInstancesCommand, EC2Client } from '@aws-sdk/client-ec2';
+import { DescribeInstancesCommand, DescribeVolumesCommand, EC2Client } from '@aws-sdk/client-ec2';
 import {
   GetInstanceProfileCommand,
   GetRoleCommand,
@@ -30,6 +30,7 @@ export interface RecoverySource {
     subnetId: string;
     vpcId: string;
     architecture: string;
+    minimumDiskGiB: number;
   };
   resources: { type: string; id: string }[];
 }
@@ -180,6 +181,33 @@ export async function inspectRecoverySource(ctx: CommandContext): Promise<Recove
       throw new Error(
         'Hosting instance profile is shared or its isolation could not be established',
       );
+    const volumeIds = host.BlockDeviceMappings?.map((mapping) => mapping.Ebs?.VolumeId);
+    if (
+      !volumeIds?.length ||
+      volumeIds.some((id) => !id) ||
+      new Set(volumeIds).size !== volumeIds.length
+    )
+      throw new Error('Source attached disk inventory is incomplete');
+    const volumes = await ec2.send(
+      new DescribeVolumesCommand({ VolumeIds: volumeIds as string[] }),
+      { abortSignal: signal },
+    );
+    if (
+      volumes.Volumes?.length !== volumeIds.length ||
+      volumes.Volumes.some(
+        (volume) =>
+          !volume.VolumeId ||
+          !volumeIds.includes(volume.VolumeId) ||
+          !Number.isSafeInteger(volume.Size) ||
+          !volume.Size ||
+          volume.Size < 1 ||
+          !volume.Attachments?.some(
+            (attachment) => attachment.InstanceId === instanceId && attachment.State === 'attached',
+          ),
+      )
+    )
+      throw new Error('Source attached disk capacity could not be established');
+    const minimumDiskGiB = volumes.Volumes.reduce((total, volume) => total + volume.Size!, 0);
     return {
       stackId: status.stackId,
       stackName: status.stackName,
@@ -192,6 +220,7 @@ export async function inspectRecoverySource(ctx: CommandContext): Promise<Recove
         subnetId: host.SubnetId,
         vpcId: host.VpcId,
         architecture: host.Architecture,
+        minimumDiskGiB,
       },
       resources: resources.flatMap((resource) =>
         resource.ResourceType && resource.PhysicalResourceId
@@ -240,6 +269,7 @@ export async function removeSourceRecoveryAccess(
         throw new Error('Could not confirm source role identity before policy cleanup');
       let marker: string | undefined;
       const seen = new Set<string>();
+      const ownedPolicies = new Set<string>();
       while (true) {
         const policies = await iam.send(
           new ListRolePoliciesCommand({ RoleName: name, Marker: marker }),
@@ -249,17 +279,21 @@ export async function removeSourceRecoveryAccess(
         for (const policy of policies.PolicyNames.filter((entry) =>
           entry.startsWith(`OpenclawRecovery-${sourceHash(stackId)}-`),
         ))
-          await removeRecoveryAccessStack(target, {
-            stackName: policy,
-            identity: sourceAccessIdentity(stackId, role.RoleId),
-            roleName: name,
-          });
+          ownedPolicies.add(policy);
         if (!policies.IsTruncated) break;
         marker = policies.Marker;
         if (!marker || seen.has(marker))
           throw new Error('Hosting role policy pagination is invalid');
         seen.add(marker);
       }
+      // Finish the read inventory before deletion: changing the policy collection
+      // while paginating can skip policies, and a denied later page is not consent.
+      for (const policy of ownedPolicies)
+        await removeRecoveryAccessStack(target, {
+          stackName: policy,
+          identity: sourceAccessIdentity(stackId, role.RoleId),
+          roleName: name,
+        });
     }
   } finally {
     iam.destroy();

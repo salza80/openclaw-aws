@@ -1,3 +1,4 @@
+import { withDeploymentLock } from '../../operations/lock.js';
 import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -33,66 +34,68 @@ export const stopCommand: CommandModule<{}, StopArgs> = {
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
-      const config = ctx.config;
+      await withDeploymentLock(ctx, async () => {
+        const config = ctx.config;
 
-      logger.title('OpenClaw AWS - Stop Instance');
-      logger.info(`Stopping ${chalk.cyan(ctx.name)}`);
+        logger.title('OpenClaw AWS - Stop Instance');
+        logger.info(`Stopping ${chalk.cyan(ctx.name)}`);
 
-      // Get instance ID
-      const spinner = ora('Finding instance...').start();
-      const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
-      spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
+        // Get instance ID
+        const spinner = ora('Finding instance...').start();
+        const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
+        spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
 
-      const currentState = await getInstanceState(instanceId, ctx.target);
-      if (currentState === 'stopped') {
-        logger.info('Instance is already stopped');
-        console.log('\n' + chalk.bold('To restart:'));
-        console.log('  ' + chalk.cyan('openclaw-aws start'));
-        return;
-      }
-
-      console.log('\n' + chalk.bold('While stopped:'));
-      console.log(
-        '  EC2 compute charges stop. EBS storage and other retained AWS resources can still incur charges.',
-      );
-
-      console.log('\n' + chalk.bold('Note:'));
-      console.log('  • Instance data is preserved');
-      console.log('  • Restart anytime with: ' + chalk.cyan('openclaw-aws start'));
-      console.log('  • IP address may change after restart');
-
-      // Confirm
-      if (!argv.force) {
-        console.log('');
-        const { confirm } = await prompts({
-          type: 'confirm',
-          name: 'confirm',
-          message: `Stop instance ${config.instance.name}?`,
-          initial: true,
-        });
-
-        if (!confirm) {
-          logger.warn('Stop cancelled');
+        const currentState = await getInstanceState(instanceId, ctx.target);
+        if (currentState === 'stopped') {
+          logger.info('Instance is already stopped');
+          console.log('\n' + chalk.bold('To restart:'));
+          console.log('  ' + chalk.cyan('openclaw-aws start'));
           return;
         }
-      }
 
-      // Stop instance
-      spinner.start('Stopping instance...');
-      await stopInstance(instanceId, ctx.target);
-      spinner.text = 'Waiting for instance to stop...';
+        console.log('\n' + chalk.bold('While stopped:'));
+        console.log(
+          '  EC2 compute charges stop. EBS storage and other retained AWS resources can still incur charges.',
+        );
 
-      const didStop = await waitForInstanceState(instanceId, ctx.target, 'stopped', 120000);
+        console.log('\n' + chalk.bold('Note:'));
+        console.log('  • Instance data is preserved');
+        console.log('  • Restart anytime with: ' + chalk.cyan('openclaw-aws start'));
+        console.log('  • IP address may change after restart');
 
-      if (didStop) {
-        spinner.succeed('Instance stopped successfully');
-        logger.success('Instance is now stopped');
-        console.log('\n' + chalk.bold('To restart:'));
-        console.log('  ' + chalk.cyan('openclaw-aws start'));
-      } else {
-        spinner.warn('Instance stop initiated (still stopping...)');
-        console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
-      }
+        // Confirm
+        if (!argv.force) {
+          console.log('');
+          const { confirm } = await prompts({
+            type: 'confirm',
+            name: 'confirm',
+            message: `Stop instance ${config.instance.name}?`,
+            initial: true,
+          });
+
+          if (!confirm) {
+            logger.warn('Stop cancelled');
+            return;
+          }
+        }
+
+        // Stop instance
+        spinner.start('Stopping instance...');
+        await stopInstance(instanceId, ctx.target);
+        spinner.text = 'Waiting for instance to stop...';
+
+        const didStop = await waitForInstanceState(instanceId, ctx.target, 'stopped', 120000);
+
+        if (didStop) {
+          spinner.succeed('Instance stopped successfully');
+          logger.success('Instance is now stopped');
+          console.log('\n' + chalk.bold('To restart:'));
+          console.log('  ' + chalk.cyan('openclaw-aws start'));
+        } else {
+          spinner.warn('Instance stop initiated (still stopping...)');
+          console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
+        }
+      });
     } catch (error) {
       handleError(error);
     }

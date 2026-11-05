@@ -70,6 +70,7 @@ const host = {
   State: { Name: 'running' },
   IamInstanceProfile: { Arn: profile.Arn, Id: profile.InstanceProfileId },
   InstanceType: 't3a.small',
+  BlockDeviceMappings: [{ Ebs: { VolumeId: 'vol-source' } }],
   ImageId: 'ami-source',
   SubnetId: 'subnet-source',
   VpcId: 'vpc-source',
@@ -89,7 +90,19 @@ beforeEach(() => {
     instanceId: host.InstanceId,
   });
   mocks.cfn.mockResolvedValue({ StackResourceSummaries: resources });
-  mocks.ec2.mockResolvedValue({ Reservations: [{ OwnerId: target.account, Instances: [host] }] });
+  mocks.ec2.mockImplementation(async (command) =>
+    command.constructor.name === 'DescribeVolumesCommand'
+      ? {
+          Volumes: [
+            {
+              VolumeId: 'vol-source',
+              Size: 30,
+              Attachments: [{ InstanceId: host.InstanceId, State: 'attached' }],
+            },
+          ],
+        }
+      : { Reservations: [{ OwnerId: target.account, Instances: [host] }] },
+  );
   mocks.iam.mockImplementation(async (command) => {
     if (command instanceof GetInstanceProfileCommand) return { InstanceProfile: profile };
     if (command instanceof GetRoleCommand) return { Role: role };
@@ -142,6 +155,15 @@ describe('source recovery ownership', () => {
     expect(mocks.iam).not.toHaveBeenCalled();
     expect(mocks.remove).not.toHaveBeenCalled();
   });
+  it('requires live source disk capacity before certifying recovery sizing', async () => {
+    mocks.ec2.mockImplementation(async (command) =>
+      command.constructor.name === 'DescribeVolumesCommand'
+        ? { Volumes: [] }
+        : { Reservations: [{ OwnerId: target.account, Instances: [host] }] },
+    );
+    await expect(inspectRecoverySource(ctx)).rejects.toThrow('disk capacity');
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
   it('removes only access stacks discoverable through this source role and source identity', async () => {
     const owned = `OpenclawRecovery-${sourceHash(stackId)}-vault-id`;
     mocks.iam.mockImplementation(async (command) =>
@@ -166,6 +188,20 @@ describe('source recovery ownership', () => {
     mocks.remove.mockRejectedValue(failure);
     await expect(removeSourceRecoveryAccess(target, stackId)).rejects.toBe(failure);
     expect(mocks.cfn).toHaveBeenCalledTimes(1); // Inventory only; source deletion belongs to its caller.
+  });
+  it('completes the policy inventory before removing any access stack', async () => {
+    mocks.iam
+      .mockResolvedValueOnce({ Role: role })
+      .mockResolvedValueOnce({
+        PolicyNames: [`OpenclawRecovery-${sourceHash(stackId)}-first`],
+        IsTruncated: true,
+        Marker: 'next',
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('denied second page'), { name: 'AccessDenied' }),
+      );
+    await expect(removeSourceRecoveryAccess(target, stackId)).rejects.toThrow('denied second page');
+    expect(mocks.remove).not.toHaveBeenCalled();
   });
   it('handles an explicitly absent role during a partial teardown retry', async () => {
     mocks.iam.mockRejectedValue(

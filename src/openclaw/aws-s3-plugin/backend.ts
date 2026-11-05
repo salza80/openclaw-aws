@@ -18,6 +18,7 @@ import type {
   StorageProviderOpenParams,
 } from 'openclaw/plugin-sdk/plugin-entry';
 import { parseSettings, relativeKey } from './settings.js';
+import { fromInstanceMetadata } from '@aws-sdk/credential-providers';
 
 // Bounded buffering, including streams whose encrypted size is not known yet.
 const PART_BYTES = 8 * 1024 * 1024;
@@ -45,7 +46,18 @@ export async function openS3Backend(params: StorageProviderOpenParams): Promise<
   const operationId = process.env.OPENCLAW_AWS_BACKUP_OPERATION_ID;
   if (operationId && !/^[a-zA-Z0-9-]{1,128}$/.test(operationId))
     throw new Error('Invalid backup operation identifier');
-  const client = new S3Client({ region: settings.region }); // Includes refreshable EC2 role credentials.
+  const client = new S3Client({
+    region: settings.region,
+    ...(settings.credentialSource === 'instance-role'
+      ? {
+          credentials: fromInstanceMetadata({
+            ec2MetadataV1Disabled: true,
+            timeout: 3000,
+            maxRetries: 2,
+          }),
+        }
+      : {}),
+  });
   const tagging = operationId
     ? `openclaw-aws-operation=${encodeURIComponent(operationId)}`
     : undefined;

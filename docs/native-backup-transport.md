@@ -1,6 +1,6 @@
 # Native backup integration
 
-The recovery implementation uses the storage and backup APIs of **OpenClaw 2026.11.1**. The `aws-s3` transport is an internal component of the portable-backup work; the vault and backup CLI workflows must pass their AWS acceptance gate before this feature is complete.
+The recovery implementation uses the storage and backup APIs of **OpenClaw 2026.11.1**, with Node **24.22.2**. Vault and backup CLI workflows require the separate live AWS acceptance gate as well as offline native conformance tests.
 
 OpenClaw owns archive capture, encryption, storage markers, namespaces, catalog discovery, verification and staged extraction. This project adds AWS provisioning, access policies and receipts identifying exact S3 object versions. A local archive check or a matching stored size is insufficient to commit a completed receipt: verification must download and verify the exact remote archive through the native engine.
 
@@ -9,6 +9,8 @@ OpenClaw owns archive capture, encryption, storage markers, namespaces, catalog 
 `src/openclaw/aws-s3-plugin/` implements the public `openclaw/plugin-sdk/plugin-entry` contract. `npm run build` produces the self-contained `dist/native-plugins/aws-s3/` package, manifest and third-party licenses. Its AWS SDK is bundled; the receiving host supplies the public OpenClaw SDK. No CLI/CDK installation or additional npm dependencies are required for this plugin. The experimental plugin ABI is restricted to the tested native release.
 
 The backend uses the AWS credential chain, including refreshable instance-role credentials. Every request carries the expected bucket owner. Keys stay inside the configured prefix. Writes use conditional creation, exact lengths and checksums; failed multipart uploads are aborted. The bounded 8 MiB part size supports objects up to 78.125 GiB. Vault lifecycle rules also abort abandoned multipart sessions after one day, without expiring completed objects or their older versions.
+
+Host capture explicitly selects `credentialSource: instance-role`, using refreshable IMDSv2 credentials. This prevents AWS credentials saved for model providers from changing backup authority. Clean-client recovery uses the selected operator credential snapshot instead. Code and the nonsecret job travel through exact S3 versions with SHA-256 checks; keys are fetched privately by the host role from the independent Secrets Manager version. Native diagnostics remain in private host job files, outside SSM inline output.
 
 The native storage SPI has no S3 VersionId field. The narrow `readVersions` setting supplies an exact-version, read-only view for verification and extraction. Unlisted objects cannot fall back to current state, and listing this view includes committed objects hidden behind later delete markers. This supplements native storage behavior without introducing another archive format or catalog.
 
@@ -32,7 +34,21 @@ Existing vaults must have enabled versioning, full public-access blocking, enfor
 
 The policy uses `AWS::IAM::RolePolicy`, with its independent stack name as its discoverable policy name. Cleanup verifies the stack ownership and confirms that its live template contains only the expected role-policy resource before deletion. Source identity inspection also checks the stack-owned EC2 instance/profile/role, unique IAM IDs and absence of another instance sharing the profile. Denied or incomplete inspections do not authorize a write or cleanup.
 
+The operator needs CloudFormation describe/resource inventory/create access, source EC2/IAM read access, and permission to create the scoped inline role policy. Destroy additionally needs IAM role/inline-policy reads and CloudFormation template/tag reads plus deletion of the owned recovery-access stack. Backup reads require S3 list/get/version access within the vault and access to the retained Secrets Manager version (and applicable KMS decrypt permissions). S3/Secrets Manager access must remain available to the recovery operator after the source role is deleted.
+
 `src/aws/recovery-store.ts` writes thin immutable AWS metadata with conditional creation and exact-version byte readback. Identical retries can adopt an existing receipt; collisions, missing versions, malformed data and denied access fail. These primitives alone do not establish that a native recovery point is complete. Application code must validate native verification and coverage requirements before writing a completed receipt.
+
+## Capture and discovery
+
+`backup create --name <deployment> --vault <s3-uri> --yes` uses the existing deployment target and an already registered vault. The optional `--label` is nonsecret metadata. The command prints its operation UUID before mutation; `--operation-id <uuid>` resumes that operation. Source version and ownership checks precede access provisioning. Recovery storage, secret and KMS resources owned by the source stack are refused.
+
+The host locks the complete installation, remembers whether its Gateway was active, and stops an active service. Public native config APIs add the managed storage transport while preserving models, agents and unrelated storage settings. Native backup captures all declared members and workspaces. Credential inventory checks the source config, native auth profiles and provider files; exec references, missing environment secrets, uncaptured files, unresolved references and external archive symlinks refuse full certification. Default config folded inside state is checked using its actual canonical path. Native SQLite snapshots remain authoritative; `.env` and native secret-store state are inside the encrypted archive.
+
+The archive and marker are pinned by actual S3 VersionId. The worker downloads, decrypts and fully verifies those versions through the native engine before publishing nonsecret capture metadata. It then restores prior service state; failed health restoration retains the maintenance record and is reported separately from backup validity. Only validated complete capture metadata can produce an AWS receipt. Uncertain SSM outcomes never authorize completion; a retry can adopt an already verified capture without stopping the service again. No retention flags, scheduling or automatic pruning are applied.
+
+`backup list`, `backup inspect <uuid>` and `backup verify <uuid>` require `--vault`, `--region` and optional `--profile`; they do not read local deployment configuration or source SSM keys. Listing confirms completed points against the native backup catalog using exact versions. Inspect reports filtered AWS/native metadata and prerequisites. Verify downloads and fully verifies the archive again from the clean helper, even when current S3 objects have later delete markers. Destroying a source removes only its verified recovery-access stack; the vault and key are independently retained.
+
+This release handles backup creation/discovery/verification. Provisioning a restored installation, archive-and-destroy and independent cloning are subsequent feature issues; a standalone backup is not permission to delete the source automatically.
 
 ## Clean-client helper
 

@@ -26,8 +26,11 @@ await rm(directory, { recursive: true, force: true });
 await mkdir(directory, { recursive: true });
 const bundled = await build({
   absWorkingDir: root,
-  entryPoints: ['src/openclaw/aws-s3-plugin/index.ts'],
-  outfile: path.join(directory, 'index.js'),
+  entryPoints: {
+    index: 'src/openclaw/aws-s3-plugin/index.ts',
+    worker: 'src/openclaw/capture-worker-entry.ts',
+  },
+  outdir: directory,
   bundle: true,
   platform: 'node',
   target: 'node24',

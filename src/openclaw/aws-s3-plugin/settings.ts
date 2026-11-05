@@ -6,6 +6,7 @@ export interface S3StorageSettings {
   probePrefix: string;
   readOnly: boolean;
   readVersions: ReadonlyMap<string, string>;
+  credentialSource: 'default' | 'instance-role';
 }
 const allowed = new Set([
   'bucket',
@@ -15,6 +16,7 @@ const allowed = new Set([
   'probePrefix',
   'readOnly',
   'readVersions',
+  'credentialSource',
 ]);
 
 /** Keys remain relative to the selected vault; do not normalize traversal away. */
@@ -61,6 +63,12 @@ export function parseSettings(settings: Readonly<Record<string, unknown>>): S3St
     throw new Error('S3 expectedBucketOwner must be an AWS account ID');
   if (settings.readOnly !== undefined && typeof settings.readOnly !== 'boolean')
     throw new Error('S3 readOnly must be boolean');
+  if (
+    settings.credentialSource !== undefined &&
+    (typeof settings.credentialSource !== 'string' ||
+      !['default', 'instance-role'].includes(settings.credentialSource))
+  )
+    throw new Error('Invalid S3 credential source');
   const versions = new Map<string, string>();
   if (settings.readVersions !== undefined) {
     if (
@@ -90,6 +98,7 @@ export function parseSettings(settings: Readonly<Record<string, unknown>>): S3St
     probePrefix: prefix(settings.probePrefix ?? '_probes', 'probePrefix'),
     readOnly: settings.readOnly === true,
     readVersions: versions,
+    credentialSource: settings.credentialSource === 'instance-role' ? 'instance-role' : 'default',
   };
 }
 export function validateS3Settings(

@@ -1,5 +1,6 @@
 import { withDeploymentLock } from '../../operations/lock.js';
 import { assertDeploymentTarget } from '../../operations/state.js';
+import { removeSourceRecoveryAccess } from '../../aws/recovery-source.js';
 import type { AwsLocation } from '../../aws/target.js';
 import type { CommandModule } from 'yargs';
 import { execa } from 'execa';
@@ -149,10 +150,12 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             logger.info(`Destroying ${chalk.cyan(ctx.name)}`);
 
             let stackExists = true;
+            let stackId: string | undefined;
             const spinner = ora('Checking stack status...').start();
             try {
               const status = await getStackStatus(config.stack.name, ctx.target);
               assertDeploymentTarget(ctx, status);
+              stackId = status.stackId;
               spinner.succeed(`Stack found: ${config.stack.name}`);
             } catch (error) {
               if (!(error instanceof StackNotFoundError)) {
@@ -183,6 +186,11 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
             const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
 
             try {
+              if (!stackId)
+                throw new AWSError(
+                  'Cannot clean up recovery access without a verified source stack identity',
+                );
+              await removeSourceRecoveryAccess(ctx.target, stackId);
               await withCDKWorkspace(env, async (workspace) =>
                 execa(
                   cdkBinary,
@@ -269,11 +277,13 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         // Try to get stack status
         let stackExists = true;
         let instanceId: string | undefined;
+        let stackId: string | undefined;
 
         const spinner = ora('Checking stack status...').start();
         try {
           const status = await getStackStatus(config.stack.name, ctx.target);
           assertDeploymentTarget(ctx, status);
+          stackId = status.stackId;
           instanceId = status.instanceId;
           spinner.succeed(`Stack found: ${config.stack.name}`);
         } catch (error) {
@@ -370,6 +380,11 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
         const destroySpinner = ora('Destroying stack... (this may take 3-5 minutes)').start();
 
         try {
+          if (!stackId)
+            throw new AWSError(
+              'Cannot clean up recovery access without a verified source stack identity',
+            );
+          await removeSourceRecoveryAccess(ctx.target, stackId);
           await withCDKWorkspace(env, async (workspace) =>
             execa(
               cdkBinary,
