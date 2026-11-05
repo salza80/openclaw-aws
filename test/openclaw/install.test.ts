@@ -345,6 +345,71 @@ fetch_parameter /openclaw/test/key "$TEST_DIR/credential.json"`,
   );
 });
 
+describe('small-host swap setup', () => {
+  function setup(memory: number, activeSwap = '', existingFile = false, activationFails = false) {
+    const directory = scratch();
+    if (existingFile) writeFileSync(join(directory, 'swap'), 'existing-data');
+    const result = bash(
+      `${functions(bootstrap(), ['configure_swap'])}
+awk() { printf '%s' "$TEST_MEMORY"; }
+fallocate() { : > "$3"; }
+mkswap() { printf formatted > "$TEST_DIR/formatted"; }
+swapon() {
+  if [[ "$1" == --show=NAME ]]; then printf '%s' "$TEST_ACTIVE_SWAP";
+  else
+    [[ "$TEST_ACTIVATION_FAILS" == 0 ]] || return 5
+    printf activated > "$TEST_DIR/activated"
+  fi
+}
+sysctl() { printf '%s' "$*" > "$TEST_DIR/sysctl"; }
+configure_swap "$TEST_DIR/swap" "$TEST_DIR/fstab" "$TEST_DIR/settings"`,
+      {
+        TEST_DIR: directory,
+        TEST_MEMORY: String(memory),
+        TEST_ACTIVE_SWAP: activeSwap,
+        TEST_ACTIVATION_FAILS: activationFails ? '1' : '0',
+      },
+    );
+    return { ...result, directory };
+  }
+
+  it.each([1024 * 1024, 2 * 1024 * 1024])('persists private swap on a %s KiB host', (memory) => {
+    const result = setup(memory);
+    expect(result.status).toBe(0);
+    expect(statSync(join(result.directory, 'swap')).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(result.directory, 'fstab'), 'utf8')).toBe(
+      `${result.directory}/swap none swap sw 0 0\n`,
+    );
+    expect(readFileSync(join(result.directory, 'settings'), 'utf8')).toBe('vm.swappiness=10\n');
+    expect(existsSync(join(result.directory, 'activated'))).toBe(true);
+    expect(readFileSync(join(result.directory, 'sysctl'), 'utf8')).toBe('-w vm.swappiness=10');
+  });
+
+  it.each([
+    [4 * 1024 * 1024, ''],
+    [1024 * 1024, '/existing-swap'],
+  ])('preserves existing memory setup (%s KiB, %s)', (memory, active) => {
+    const result = setup(memory, active);
+    expect(result.status).toBe(0);
+    expect(existsSync(join(result.directory, 'swap'))).toBe(false);
+    expect(existsSync(join(result.directory, 'fstab'))).toBe(false);
+  });
+
+  it('refuses to overwrite an inactive existing file', () => {
+    const result = setup(1024 * 1024, '', true);
+    expect(result.status).toBe(1);
+    expect(readFileSync(join(result.directory, 'swap'), 'utf8')).toBe('existing-data');
+    expect(existsSync(join(result.directory, 'formatted'))).toBe(false);
+  });
+
+  it('does not persist failed swap activation', () => {
+    const result = setup(1024 * 1024, '', false, true);
+    expect(result.status).toBe(5);
+    expect(existsSync(join(result.directory, 'fstab'))).toBe(false);
+    expect(existsSync(join(result.directory, 'settings'))).toBe(false);
+  });
+});
+
 function exitHarness({
   ready = false,
   exitCode = 0,
