@@ -116,7 +116,9 @@ systemctl enable amazon-cloudwatch-agent
     if (!(name in replacements)) throw new Error(`Unknown bootstrap placeholder: ${name}`);
     return replacements[name];
   });
-  if (Buffer.byteLength(rendered) > 16 * 1024) {
+  // CDK adds a shell header and resolves the stack-ID token to a longer ARN.
+  // Leave room for those bytes within EC2's decoded 16 KiB user-data limit.
+  if (Buffer.byteLength(rendered) > 16 * 1024 - 256) {
     throw new Error('OpenClaw bootstrap exceeds the EC2 user-data limit');
   }
   return rendered;

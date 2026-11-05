@@ -168,6 +168,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           const env = {
             ...ctx.awsEnv,
             OPENCLAW_CONFIG_NAME: ctx.name,
+            OPENCLAW_CDK_OPERATION: 'destroy',
             CDK_DISABLE_VERSION_CHECK: 'true',
             CDK_DISABLE_CLI_TELEMETRY: '1',
             CI: 'true',
@@ -343,6 +344,7 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
       const env = {
         ...ctx.awsEnv,
         OPENCLAW_CONFIG_NAME: ctx.name,
+        OPENCLAW_CDK_OPERATION: 'destroy',
         CDK_DISABLE_VERSION_CHECK: 'true',
         CDK_DISABLE_CLI_TELEMETRY: '1',
         CI: 'true',

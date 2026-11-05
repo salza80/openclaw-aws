@@ -79,23 +79,6 @@ export function validateConfig(config: OpenClawConfig): void {
     if (!API_PROVIDERS.some(({ value }) => value === config.openclaw?.apiProvider)) {
       errors.push('Invalid openclaw.apiProvider');
     }
-    if (config.openclaw.apiProvider === 'cloudflare-ai-gateway-api-key') {
-      const cloudflare = config.openclaw.cloudflare;
-      if (
-        typeof cloudflare?.accountId !== 'string' ||
-        !/^[a-fA-F0-9]{32}$/.test(cloudflare.accountId)
-      ) {
-        errors.push(
-          'openclaw.cloudflare.accountId must be a Cloudflare account ID (32 hex characters)',
-        );
-      }
-      if (
-        typeof cloudflare?.gatewayId !== 'string' ||
-        !/^[a-zA-Z0-9_-]+$/.test(cloudflare.gatewayId)
-      ) {
-        errors.push('openclaw.cloudflare.gatewayId must be a nonempty gateway identifier');
-      }
-    }
   }
 
   if (errors.length > 0) {
@@ -103,6 +86,38 @@ export function validateConfig(config: OpenClawConfig): void {
       'Run: openclaw-aws init (to recreate configuration)',
       'Or manually fix the active config in .openclaw-aws/configs/<name>.json (see .openclaw-aws/current.json)',
     ]);
+  }
+}
+
+/** Check new-instance inputs without making older configs unusable for lifecycle commands. */
+export function validateProvisioningConfig(config: OpenClawConfig): void {
+  validateConfig(config);
+  const errors: string[] = [];
+  if (config.openclaw?.apiProvider === 'cloudflare-ai-gateway-api-key') {
+    const cloudflare = config.openclaw.cloudflare;
+    if (
+      typeof cloudflare?.accountId !== 'string' ||
+      !/^[a-fA-F0-9]{32}$/.test(cloudflare.accountId)
+    ) {
+      errors.push(
+        'openclaw.cloudflare.accountId must be a Cloudflare account ID (32 hex characters)',
+      );
+    }
+    if (
+      typeof cloudflare?.gatewayId !== 'string' ||
+      !/^[a-zA-Z0-9_-]+$/.test(cloudflare.gatewayId)
+    ) {
+      errors.push('openclaw.cloudflare.gatewayId must be a nonempty gateway identifier');
+    }
+  }
+  if (errors.length > 0) {
+    throw new ValidationError(
+      'Provisioning configuration validation failed:\n  ' + errors.join('\n  '),
+      [
+        'Set the Cloudflare account and gateway IDs before creating a new deployment',
+        'Edit .openclaw-aws/configs/<name>.json or provide both IDs to openclaw-aws init',
+      ],
+    );
   }
 }
 

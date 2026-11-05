@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -183,6 +192,13 @@ describe('OpenClaw bootstrap renderer', () => {
     );
   });
 
+  it('reserves user-data space for CDK shell framing and stack ARN expansion', () => {
+    const padding = 'x'.repeat(16 * 1024 - 128 - Buffer.byteLength(bootstrap()));
+    expect(() =>
+      renderOpenClawBootstrap({ ...options, stackId: options.stackId + padding }),
+    ).toThrow('user-data limit');
+  });
+
   it('loads packaged assets from the compiled module outside the repository working directory', () => {
     const moduleUrl = new URL('../../dist/openclaw/install.js', import.meta.url).href;
     const result = spawnSync(
@@ -336,22 +352,33 @@ function exitHarness({
   phase = 'readiness',
   command = '',
   markerFails = false,
+  fixtures = {} as Record<string, string>,
 } = {}) {
   const directory = scratch();
   mkdirSync(join(directory, 'work'));
   mkdirSync(join(directory, 'install'));
+  for (const [name, content] of Object.entries(fixtures)) {
+    writeFileSync(join(directory, 'work', name), content);
+  }
   const script = bootstrap();
   const trap = script.split('\n').find((line) => line === "trap 'on_exit $?' EXIT");
   expect(trap).toBeDefined();
   expectBefore(script, trap!, 'phase dependencies');
   const result = bash(
-    `${functions(script, ['phase', 'on_exit'])}
+    `${functions(script, ['phase', 'retain_failure_diagnostics', 'on_exit'])}
 PHASE=initializing
 BOOTSTRAP_READY="$TEST_READY"
 WORK_DIR="$TEST_DIR/work"
 INSTALL_DIR="$TEST_DIR/install"
+DIAGNOSTIC_ROOT="$TEST_DIR/diagnostics"
+STATE_DIR="$TEST_DIR/state"
+NODE_BIN="$TEST_NODE_BIN"
 SETUP_MARKER="$TEST_DIR/$TEST_MARKER"
-signal_result() { printf '%s\n' "$1" >> "$TEST_DIR/signals"; return "$TEST_SIGNAL_CODE"; }
+signal_result() {
+  printf '%s\n' "$1" >> "$TEST_DIR/signals"
+  if [[ -d "$DIAGNOSTIC_ROOT" ]]; then printf yes > "$TEST_DIR/diagnostics-before-signal"; fi
+  return "$TEST_SIGNAL_CODE"
+}
 ${trap}
 phase "$TEST_PHASE"
 PRIVATE_CREDENTIAL=secret-redaction-sentinel
@@ -363,6 +390,7 @@ ${command || 'bash -c \'exit "$TEST_EXIT_CODE"\''}`,
       TEST_SIGNAL_CODE: String(signalCode),
       TEST_PHASE: phase,
       TEST_MARKER: markerFails ? 'missing/setup-complete' : 'setup-complete',
+      TEST_NODE_BIN: process.execPath,
     },
   );
   return {
@@ -370,6 +398,8 @@ ${command || 'bash -c \'exit "$TEST_EXIT_CODE"\''}`,
     signals: readFileSync(join(directory, 'signals'), 'utf8').trim().split('\n'),
     marker: existsSync(join(directory, 'setup-complete')),
     cleaned: !existsSync(join(directory, 'work')) && !existsSync(join(directory, 'install')),
+    diagnosticRoot: join(directory, 'diagnostics'),
+    diagnosticsBeforeSignal: existsSync(join(directory, 'diagnostics-before-signal')),
   };
 }
 
@@ -444,6 +474,117 @@ ${onboarding}`,
     expect(result.stderr).toContain('completion marker unavailable');
     expect(result.marker).toBe(false);
     expect(result.cleaned).toBe(true);
+  });
+
+  it('retains actionable private failure diagnostics while deleting credentials and temporary files', () => {
+    const key = 'provider-secret-fixture';
+    const token = 'gateway-token-fixture';
+    const result = exitHarness({
+      phase: 'onboarding',
+      exitCode: 9,
+      fixtures: {
+        'api-key.json': JSON.stringify({ Parameter: { Value: key } }),
+        'gateway-token.json': JSON.stringify({ Parameter: { Value: token } }),
+        'openclaw.env': `API_KEY=${key}\nTOKEN=${token}`,
+        'onboard.json': JSON.stringify({ error: 'Provider setup failed', apiKey: key }),
+        'onboard.err': `Provider refused ${key}; token=${token}`,
+      },
+    });
+    expect(result.status).toBe(9);
+    expect(result.cleaned).toBe(true);
+    expect(result.diagnosticsBeforeSignal).toBe(true);
+    const directories = readdirSync(result.diagnosticRoot);
+    expect(directories).toHaveLength(1);
+    const directory = join(result.diagnosticRoot, directories[0]);
+    expect(result.stderr).toContain(`diagnostics=${directory}`);
+    expect(statSync(result.diagnosticRoot).mode & 0o777).toBe(0o700);
+    expect(statSync(directory).mode & 0o777).toBe(0o700);
+    const names = readdirSync(directory).sort();
+    expect(names).toEqual(['metadata.json', 'onboard.err', 'onboard.json']);
+    const contents = names
+      .map((name) => {
+        expect(statSync(join(directory, name)).mode & 0o777).toBe(0o600);
+        return readFileSync(join(directory, name), 'utf8');
+      })
+      .join('\n');
+    expect(contents).toContain('Provider setup failed');
+    expect(contents).toContain('[REDACTED]');
+    expect(contents).not.toContain(key);
+    expect(contents).not.toContain(token);
+    expect(result.stdout + result.stderr).not.toContain(key);
+    expect(result.stdout + result.stderr).not.toContain(token);
+  });
+
+  it('retains diagnostics for a failed success signal and none after successful setup', () => {
+    const fixtures = { 'health.json': '{"ok":true}' };
+    const failed = exitHarness({ ready: true, signalCode: 1, fixtures });
+    const directory = join(failed.diagnosticRoot, readdirSync(failed.diagnosticRoot)[0]);
+    expect(JSON.parse(readFileSync(join(directory, 'metadata.json'), 'utf8')).phase).toBe('signal');
+    const succeeded = exitHarness({ ready: true, fixtures });
+    expect(succeeded.status).toBe(0);
+    expect(existsSync(succeeded.diagnosticRoot)).toBe(false);
+    expect(succeeded.cleaned).toBe(true);
+  });
+});
+
+describe('private bootstrap diagnostic retention', () => {
+  it('bounds file sizes and retained failures without copying unknown or oversized inputs', () => {
+    const directory = scratch();
+    mkdirSync(join(directory, 'work'));
+    writeFileSync(join(directory, 'work/onboard.err'), 'Useful error\n' + 'x'.repeat(80 * 1024));
+    writeFileSync(join(directory, 'work/health.err'), 'x'.repeat(1024 * 1024 + 1));
+    writeFileSync(join(directory, 'work/unrelated-secret'), 'never-copy-this');
+    const result = bash(
+      `${functions(bootstrap(), ['retain_failure_diagnostics'])}
+WORK_DIR="$TEST_DIR/work"
+DIAGNOSTIC_ROOT="$TEST_DIR/diagnostics"
+STATE_DIR="$TEST_DIR/state"
+NODE_BIN="$TEST_NODE_BIN"
+PHASE=readiness
+for attempt in 1 2 3 4; do retain_failure_diagnostics; done`,
+      {
+        TEST_DIR: directory,
+        TEST_NODE_BIN: process.execPath,
+      },
+    );
+    expect(result.status).toBe(0);
+    const root = join(directory, 'diagnostics');
+    expect(readdirSync(root)).toHaveLength(3);
+    for (const name of readdirSync(root)) {
+      const retained = join(root, name);
+      expect(readdirSync(retained).sort()).toEqual(['health.err', 'metadata.json', 'onboard.err']);
+      expect(statSync(join(retained, 'onboard.err')).size).toBe(64 * 1024);
+      expect(readFileSync(join(retained, 'onboard.err'), 'utf8')).toContain('Useful error');
+      expect(readFileSync(join(retained, 'health.err'), 'utf8')).toContain(
+        'diagnostic exceeds 1 MiB',
+      );
+    }
+  });
+
+  it('omits command output if a credential input cannot be read for redaction', () => {
+    const directory = scratch();
+    mkdirSync(join(directory, 'work'));
+    writeFileSync(join(directory, 'work/api-key.json'), 'invalid credential response');
+    writeFileSync(join(directory, 'work/onboard.err'), 'secret-could-not-be-loaded');
+    const result = bash(
+      `${functions(bootstrap(), ['retain_failure_diagnostics'])}
+WORK_DIR="$TEST_DIR/work"
+DIAGNOSTIC_ROOT="$TEST_DIR/diagnostics"
+STATE_DIR="$TEST_DIR/state"
+NODE_BIN="$TEST_NODE_BIN"
+PHASE=onboarding
+retain_failure_diagnostics`,
+      { TEST_DIR: directory, TEST_NODE_BIN: process.execPath },
+    );
+    expect(result.status).toBe(0);
+    const root = join(directory, 'diagnostics');
+    const retained = join(root, readdirSync(root)[0]);
+    const content = readFileSync(join(retained, 'onboard.err'), 'utf8');
+    expect(content).toContain('credential redaction unavailable');
+    expect(content).not.toContain('secret-could-not-be-loaded');
+    expect(JSON.parse(readFileSync(join(retained, 'metadata.json'), 'utf8')).redactionReady).toBe(
+      false,
+    );
   });
 });
 

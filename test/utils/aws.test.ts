@@ -26,6 +26,7 @@ vi.mock('@aws-sdk/client-cloudformation', async () => {
   const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
   return {
     DescribeStacksCommand: createAwsCommandClass<Record<string, unknown>>(),
+    DescribeStackResourcesCommand: createAwsCommandClass<Record<string, unknown>>(),
   };
 });
 
@@ -62,10 +63,15 @@ import {
   getStackOutputs,
 } from '../../src/cli/utils/aws.js';
 import { AWSError, StackNotFoundError } from '../../src/cli/utils/errors.js';
+import {
+  DescribeStacksCommand,
+  DescribeStackResourcesCommand,
+} from '@aws-sdk/client-cloudformation';
 
 describe('aws utils', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    cfnSendMock.mockReset();
   });
 
   const stackLookups = [
@@ -84,6 +90,7 @@ describe('aws utils', () => {
       name: 'StackNotFoundError',
       cause: error,
     });
+    expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
   });
 
   it.each(stackLookups)(
@@ -95,6 +102,7 @@ describe('aws utils', () => {
       cfnSendMock.mockRejectedValue(error);
 
       await expect(lookup('stack', 'us-east-1')).rejects.toBe(error);
+      expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
     },
   );
 
@@ -108,14 +116,131 @@ describe('aws utils', () => {
       Stacks: [{ Outputs: [{ OutputKey: 'InstanceId', OutputValue: 'i-123' }] }],
     });
     await expect(getInstanceIdFromStack('stack', 'us-east-1')).resolves.toBe('i-123');
-    expect(cfnDestroyMock).toHaveBeenCalled();
+    expect(cfnSendMock).toHaveBeenCalledTimes(1);
+    expect(cfnSendMock.mock.calls[0][0]).toBeInstanceOf(DescribeStacksCommand);
+    expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
   });
 
-  it('getInstanceIdFromStack throws when output missing', async () => {
-    cfnSendMock.mockResolvedValue({ Stacks: [{ Outputs: [] }] });
+  it('finds an instance retained by CREATE_FAILED before outputs are available', async () => {
+    const instanceId = 'i-0123456789abcdef0';
+    cfnSendMock
+      .mockResolvedValueOnce({ Stacks: [{ StackStatus: 'CREATE_FAILED', Outputs: [] }] })
+      .mockResolvedValueOnce({
+        StackResources: [
+          {
+            LogicalResourceId: 'PreviousInstance',
+            ResourceType: 'AWS::EC2::Instance',
+            ResourceStatus: 'DELETE_COMPLETE',
+            PhysicalResourceId: 'i-fedcba98765432100',
+          },
+          {
+            LogicalResourceId: 'AnyConstructGeneratedId',
+            ResourceType: 'AWS::EC2::Instance',
+            ResourceStatus: 'CREATE_FAILED',
+            PhysicalResourceId: instanceId,
+          },
+          {
+            ResourceType: 'AWS::IAM::Role',
+            ResourceStatus: 'CREATE_COMPLETE',
+            PhysicalResourceId: 'role',
+          },
+        ],
+      });
+
+    await expect(getInstanceIdFromStack('stack', 'us-east-1')).resolves.toBe(instanceId);
+    expect(cfnSendMock).toHaveBeenCalledTimes(2);
+    expect(cfnSendMock.mock.calls[1][0]).toBeInstanceOf(DescribeStackResourcesCommand);
+    expect(cfnSendMock.mock.calls[1][0].input).toEqual({ StackName: 'stack' });
+    expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
+    expect(ec2SendMock).not.toHaveBeenCalled();
+    expect(ssmSendMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { resources: [] },
+    {
+      resources: [
+        {
+          ResourceType: 'AWS::EC2::Instance',
+          ResourceStatus: 'DELETE_COMPLETE',
+          PhysicalResourceId: 'i-0123456789abcdef0',
+        },
+      ],
+    },
+    {
+      resources: [
+        {
+          ResourceType: 'AWS::EC2::Instance',
+          ResourceStatus: 'CREATE_FAILED',
+          PhysicalResourceId: 'i-not-valid',
+        },
+      ],
+    },
+    { resources: [{ ResourceType: 'AWS::EC2::Instance', ResourceStatus: 'CREATE_FAILED' }] },
+    {
+      resources: [
+        {
+          ResourceType: 'AWS::IAM::Role',
+          ResourceStatus: 'CREATE_COMPLETE',
+          PhysicalResourceId: 'i-0123456789abcdef0',
+        },
+      ],
+    },
+  ])(
+    'fails explicitly when outputs and usable EC2 resources are absent: $resources',
+    async ({ resources }) => {
+      cfnSendMock
+        .mockResolvedValueOnce({ Stacks: [{ Outputs: [] }] })
+        .mockResolvedValueOnce({ StackResources: resources });
+      await expect(getInstanceIdFromStack('stack', 'us-east-1')).rejects.toThrow(
+        'Instance ID not found',
+      );
+      expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('rejects ambiguous nondeleted EC2 resources instead of guessing a target', async () => {
+    cfnSendMock.mockResolvedValueOnce({ Stacks: [{ Outputs: [] }] }).mockResolvedValueOnce({
+      StackResources: [
+        {
+          ResourceType: 'AWS::EC2::Instance',
+          ResourceStatus: 'CREATE_COMPLETE',
+          PhysicalResourceId: 'i-0123456789abcdef0',
+        },
+        {
+          ResourceType: 'AWS::EC2::Instance',
+          ResourceStatus: 'CREATE_FAILED',
+          PhysicalResourceId: 'i-abcdef01',
+        },
+      ],
+    });
     await expect(getInstanceIdFromStack('stack', 'us-east-1')).rejects.toThrow(
-      'Instance ID not found',
+      'Multiple nondeleted EC2 instances',
     );
+    expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    Object.assign(new Error('Access denied describing stack resources'), {
+      name: 'AccessDeniedException',
+    }),
+    Object.assign(new Error('Invalid stack identifier'), { name: 'ValidationError' }),
+  ])('preserves resource lookup errors and destroys the client: %j', async (error) => {
+    cfnSendMock.mockResolvedValueOnce({ Stacks: [{ Outputs: [] }] }).mockRejectedValueOnce(error);
+    await expect(getInstanceIdFromStack('stack', 'us-east-1')).rejects.toBe(error);
+    expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('translates a missing-stack response from the resource lookup', async () => {
+    const error = Object.assign(new Error('Stack with id stack does not exist'), {
+      name: 'ValidationError',
+    });
+    cfnSendMock.mockResolvedValueOnce({ Stacks: [{ Outputs: [] }] }).mockRejectedValueOnce(error);
+    await expect(getInstanceIdFromStack('stack', 'us-east-1')).rejects.toMatchObject({
+      name: 'StackNotFoundError',
+      cause: error,
+    });
+    expect(cfnDestroyMock).toHaveBeenCalledTimes(1);
   });
 
   it('resolveInstanceId throws AWSError when not found', async () => {

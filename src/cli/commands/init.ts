@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { logger } from '../utils/logger.js';
 import { saveConfigByName, configExistsByName } from '../utils/config.js';
 import { setCurrentName } from '../utils/config-store.js';
+import { validateProvisioningConfig } from '../utils/config-validation.js';
 import {
   validateProjectName,
   validateInstanceName,
@@ -258,6 +259,7 @@ export const initCommand: CommandModule<{}, InitArgs> = {
         return;
       }
 
+      validateProvisioningConfig(config);
       logger.info(`Creating deployment ${chalk.cyan(deploymentName)}`);
 
       // Save configuration
