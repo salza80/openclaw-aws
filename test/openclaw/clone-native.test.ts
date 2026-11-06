@@ -13,6 +13,8 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { execa } from 'execa';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
 import { planCloneContent } from '../../src/openclaw/clone-content.js';
 import { installCloneWorkspaces } from '../../src/openclaw/clone-workspaces.js';
 import { readCloneSourcePolicy } from '../../src/openclaw/clone-source.js';
@@ -208,6 +210,79 @@ describe('fresh native independent clone', () => {
       expect(await readFile(path.join(sourceState, 'state.sqlite'), 'utf8')).toBe(
         'opaque-source-identity',
       );
+      // Start the actual clone on an isolated loopback port, authenticate through
+      // the native client, and prove startup did not change the certified config.
+      const reservation = createServer();
+      reservation.listen(0, '127.0.0.1');
+      await once(reservation, 'listening');
+      const address = reservation.address();
+      if (!address || typeof address === 'string') throw new Error('No local clone test port');
+      const port = address.port;
+      await new Promise<void>((resolve) => reservation.close(() => resolve()));
+      const env = {
+        HOME: target,
+        PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        TMPDIR: target,
+        OPENCLAW_STATE_DIR: path.join(target, '.openclaw'),
+        OPENCLAW_CONFIG_PATH: path.join(target, '.openclaw/openclaw.json'),
+        OPENCLAW_GATEWAY_TOKEN: 'b'.repeat(48),
+        OPENCLAW_GATEWAY_PORT: String(port),
+        OPENCLAW_DEFER_SHELL_ENV_FALLBACK: '1',
+        AWS_CONFIG_FILE: '/dev/null',
+        AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
+        AWS_EC2_METADATA_DISABLED: 'true',
+        NO_COLOR: '1',
+      };
+      const native = path.join(path.dirname(nativePackageJson), 'openclaw.mjs');
+      const gateway = execa(process.execPath, [native, 'gateway', 'run', `--port=${port}`], {
+        env,
+        extendEnv: false,
+        reject: false,
+        maxBuffer: 1024 * 1024,
+        forceKillAfterDelay: 5000,
+      });
+      try {
+        const deadline = Date.now() + 60000;
+        let healthy = false;
+        while (Date.now() < deadline && gateway.exitCode == null) {
+          try {
+            if (
+              (
+                await fetch(`http://127.0.0.1:${port}/healthz`, {
+                  signal: AbortSignal.timeout(1000),
+                })
+              ).ok
+            ) {
+              healthy = true;
+              break;
+            }
+          } catch {
+            /* Local startup may still be in progress. */
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        expect(healthy).toBe(true);
+        const health = await execa(process.execPath, [native, 'health', '--json'], {
+          env,
+          extendEnv: false,
+          timeout: 30000,
+          maxBuffer: 1024 * 1024,
+        });
+        expect(JSON.parse(health.stdout).ok).toBe(true);
+        const verify = `import {readFile} from 'node:fs/promises';
+          const {verifyNativeClone}=await import(${JSON.stringify(pathToFileURL(path.resolve('dist/openclaw/clone-validate.js')).href)});
+          const options=JSON.parse(await readFile(process.argv[1],'utf8'));
+          await verifyNativeClone({members:options.content.members,nativePackageJson:options.nativePackageJson,configurationHash:${JSON.stringify(JSON.parse(result.stdout).configurationHash)}});`;
+        await execa(process.execPath, ['--input-type=module', '-e', verify, request], {
+          env,
+          extendEnv: false,
+          timeout: 120000,
+          maxBuffer: 1024 * 1024,
+        });
+      } finally {
+        gateway.kill('SIGTERM');
+        await gateway;
+      }
       await expect(
         execa(process.execPath, ['--input-type=module', '-e', script, request], {
           env: { HOME: target, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin` },
