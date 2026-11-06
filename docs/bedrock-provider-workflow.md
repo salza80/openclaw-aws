@@ -56,4 +56,14 @@ Configured acceptance requires current applied IAM grants, exact plugin provenan
 
 If no native mutation started, `--accept previous` requires the original native revision and writes a terminal no-write receipt. This fences delayed original SSM delivery. It cannot roll back an already-started plugin/configuration mutation. Retained IAM review/applied-policy state still needs inspection; this acceptance alone is not proof that an interrupted CloudFormation action completed or was undone.
 
+For a partial setup whose provider configuration remains unchanged, use:
+
+```sh
+openclaw-aws providers abort --name research --operation-id <uuid> --yes
+```
+
+Abort verifies the operation's durable preflight digest against the current healthy native configuration. It excludes only automatic last-touch metadata and this plugin's enablement/empty-config bookkeeping. It releases only this operation's maintenance and fences delayed delivery, without repeating a plugin/configuration write. Installed plugin files, managed role files and auxiliary IAM grants remain for inspection and a fresh explicit setup review.
+
+Changed provider settings or unrelated native edits, missing original proof, unavailable health and another maintenance owner all prevent abort. Older worker records without this proof cannot be upgraded by guessing. Any recorded configuration-write intent also prevents abort: an unchanged observation cannot cancel a potentially in-flight native patch. Inspect that outcome and use configured-state reconciliation only after verifying the provider; unresolved changes retain their hold. An age-based hold deletion is never recovery.
+
 Newly installed plugin files, managed role files and additive IAM grants can remain after a verified native rollback. Completion/refusal must describe that retained state. Real AWS/Bedrock inference acceptance is separate from native control-plane tests; no metadata result certifies model entitlement, organization restrictions or inference availability.

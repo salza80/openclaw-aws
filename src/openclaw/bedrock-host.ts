@@ -207,7 +207,9 @@ export async function runAwsBedrockWorker(
       };
     },
     async revision() {
-      const snapshot = await bedrockNativeSnapshot(makeClient(false));
+      const client = makeClient(false);
+      await client.health();
+      const snapshot = await bedrockNativeSnapshot(client);
       return {
         configHash: snapshot.hash,
         unrelatedHash: bedrockUnrelatedConfigHash(snapshot.config),

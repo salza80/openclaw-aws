@@ -23,7 +23,7 @@ async function main() {
     !['--dispatch', '--lock', '--run'].includes(step) ||
     !(
       provider
-        ? ['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous']
+        ? ['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous', 'abort']
         : ['execute', 'inspect', 'accept-requested', 'accept-previous']
     ).includes(mode) ||
     !inputFile ||

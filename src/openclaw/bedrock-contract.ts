@@ -23,7 +23,7 @@ export interface BedrockJob {
   plugin: typeof BEDROCK_PLUGIN;
 }
 export type BedrockWorkerMode =
-  'preview' | 'execute' | 'inspect' | 'accept-configured' | 'accept-previous';
+  'preview' | 'execute' | 'inspect' | 'accept-configured' | 'accept-previous' | 'abort';
 export function parseBedrockJob(input: unknown): BedrockJob {
   const row = modelObject(input);
   if (

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
@@ -93,6 +93,7 @@ describe('durable Bedrock provider lifecycle', () => {
     const journal = await bedrockHostJournal(home, bedrockJob, false);
     expect((await journal.events()).map((event) => event.phase)).toEqual([
       'started',
+      'preflight-ready',
       'plugin-intent',
       'plugin-ready',
       'environment-intent',
@@ -181,5 +182,93 @@ describe('durable Bedrock provider lifecycle', () => {
       phase: 'complete',
       observed: null,
     });
+  });
+  it('explicitly aborts a partial plugin setup only when the original native settings are still proven, without replaying writes', async () => {
+    vi.mocked(host.installPlugin).mockRejectedValueOnce(new Error('lost plugin reply'));
+    await runBedrockOperation(bedrockJob, host);
+    expect(await runBedrockOperation(bedrockJob, host, 'abort')).toMatchObject({
+      phase: 'aborted',
+      maintenanceHeld: false,
+      reconciled: true,
+    });
+    expect(host.installPlugin).toHaveBeenCalledOnce();
+    expect(host.configure).not.toHaveBeenCalled();
+    expect(host.prepareEnvironment).not.toHaveBeenCalled();
+    expect(host.refresh).not.toHaveBeenCalled();
+    expect((await runBedrockOperation(bedrockJob, host, 'inspect')).phase).toBe('aborted');
+    await expect(runBedrockOperation(bedrockJob, host)).rejects.toThrow(/already started/);
+    expect((await runBedrockOperation(bedrockJob, host, 'abort')).phase).toBe('aborted');
+  });
+  it('retains the hold if provider or unrelated settings changed after the original preflight', async () => {
+    vi.mocked(host.prepareEnvironment).mockRejectedValueOnce(
+      new Error('environment outcome unknown'),
+    );
+    await runBedrockOperation(bedrockJob, host);
+    vi.mocked(host.revision).mockResolvedValueOnce({
+      configHash: 'changed',
+      unrelatedHash: 'b'.repeat(64),
+    });
+    await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(
+      /differ from the original/,
+    );
+    expect(await (await bedrockHostJournal(home, bedrockJob, false)).ownsMaintenance()).toBe(true);
+    expect(host.configure).not.toHaveBeenCalled();
+    expect(host.installPlugin).toHaveBeenCalledOnce();
+  });
+  it('does not invent proof for legacy interrupted history, abort a completed connection or release a competing owner', async () => {
+    const legacy = await bedrockHostJournal(home, bedrockJob, true);
+    await legacy.claim();
+    await legacy.append({ phase: 'started' });
+    await legacy.append({ phase: 'plugin-intent' });
+    await legacy.append({ phase: 'uncertain' });
+    await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(
+      /no durable original-settings proof/,
+    );
+    expect(await legacy.ownsMaintenance()).toBe(true);
+    await rm(path.join(home, '.openclaw-aws'), { recursive: true });
+    await runBedrockOperation(bedrockJob, host);
+    await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(
+      /original unresolved/,
+    );
+    await rm(path.join(home, '.openclaw-aws'), { recursive: true });
+    vi.mocked(host.installPlugin).mockRejectedValueOnce(new Error('lost reply'));
+    await runBedrockOperation(bedrockJob, host);
+    // Simulate an externally replaced hold; abort must not release that owner.
+    await unlink(path.join(home, '.openclaw-aws/maintenance.json'));
+    const other = await modelHostJournal(home, modelJob, true);
+    await other.claim();
+    await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(
+      /original unresolved/,
+    );
+    expect(await other.ownsMaintenance()).toBe(true);
+  });
+  it('validates a durable preflight proof before any plugin intent can be persisted', async () => {
+    const journal = await bedrockHostJournal(home, bedrockJob, true);
+    await journal.claim();
+    await journal.append({ phase: 'started' });
+    await expect(journal.append({ phase: 'preflight-ready' })).rejects.toThrow(
+      /Invalid Bedrock journal event/,
+    );
+    await expect(
+      journal.append({ phase: 'preflight-ready', unrelatedHash: 'private-or-invalid' }),
+    ).rejects.toThrow(/Invalid Bedrock journal event/);
+    await journal.append({ phase: 'preflight-ready', unrelatedHash: 'a'.repeat(64) });
+    expect((await journal.events()).at(-1)).toMatchObject({ unrelatedHash: 'a'.repeat(64) });
+  });
+  it('never interprets an unchanged observation as cancellation of a potentially in-flight config write', async () => {
+    vi.mocked(host.configure).mockImplementationOnce(async (_job, _revision, record) => {
+      await record({
+        phase: 'intent',
+        beforeHash: 'plugin-revision',
+        inferenceRegion: 'eu-central-1',
+      });
+      throw new Error('patch acknowledgement lost');
+    });
+    await runBedrockOperation(bedrockJob, host);
+    await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(
+      /cannot cancel an in-flight/,
+    );
+    expect(await (await bedrockHostJournal(home, bedrockJob, false)).ownsMaintenance()).toBe(true);
+    expect(host.configure).toHaveBeenCalledOnce();
   });
 });

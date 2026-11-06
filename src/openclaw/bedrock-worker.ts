@@ -43,7 +43,11 @@ export async function runBedrockOperation(
   mode: BedrockWorkerMode = 'execute',
 ) {
   const job = parseBedrockJob(input);
-  if (!['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous'].includes(mode))
+  if (
+    !['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous', 'abort'].includes(
+      mode,
+    )
+  )
     throw new Error('Unsupported Bedrock worker mode');
   await host.identify();
   const header = {
@@ -81,6 +85,37 @@ export async function runBedrockOperation(
         recordedAt: latest?.checkedAt ?? null,
         observed,
       };
+    if (mode === 'abort') {
+      const before = history.find((event) => event.phase === 'preflight-ready');
+      if (!journal || !before?.unrelatedHash)
+        throw new Error(
+          'This operation has no durable original-settings proof; inspect it or use unchanged-state reconciliation without guessing',
+        );
+      if (
+        (!held && latest?.phase !== 'aborted') ||
+        ['complete', 'rolled-back', 'unchanged'].includes(latest?.phase ?? '')
+      )
+        throw new Error('Only the original unresolved Bedrock maintenance owner can be aborted');
+      if (history.some((event) => event.phase === 'config-intent'))
+        throw new Error(
+          'A native configuration write may have started; abort cannot cancel an in-flight or unacknowledged patch. Inspect/reconcile its outcome without clearing the hold',
+        );
+      const current = await host.revision();
+      if (current.unrelatedHash !== before.unrelatedHash)
+        throw new Error(
+          'Native provider or other saved settings differ from the original preflight; abort cannot certify the previous configuration',
+        );
+      if (latest?.phase !== 'aborted') await journal.append({ phase: 'aborted' });
+      if (await journal.ownsMaintenance()) await journal.release();
+      return {
+        ...header,
+        phase: 'aborted',
+        maintenanceHeld: false,
+        reconciled: true,
+        message:
+          'Original native settings are verified, excluding only this plugin’s enablement bookkeeping. No plugin/config write was repeated. Installed plugin files, managed role files and additive IAM grants remain; inspect them before a new reviewed setup.',
+      };
+    }
     if (mode === 'accept-previous') {
       if (!journal || history.some((event) => !['started', 'unchanged'].includes(event.phase)))
         throw new Error(
@@ -139,6 +174,7 @@ export async function runBedrockOperation(
     const before = await host.preflight(job);
     if (before.configHash !== job.expectedHash)
       throw new Error('Native configuration changed after Bedrock preview');
+    await journal.append({ phase: 'preflight-ready', unrelatedHash: before.unrelatedHash });
     await journal.append({ phase: 'plugin-intent' });
     await host.installPlugin(job);
     const afterPlugin = await host.revision();
@@ -171,7 +207,7 @@ export async function runBedrockOperation(
   } catch {
     const history = await journal.events();
     const latest = history.at(-1)?.phase;
-    if (latest === 'started') {
+    if (latest === 'started' || latest === 'preflight-ready') {
       await journal.append({ phase: 'unchanged' });
       await journal.release();
       return {

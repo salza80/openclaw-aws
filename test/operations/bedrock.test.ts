@@ -240,4 +240,40 @@ describe('shared Bedrock connection controller', () => {
     await cancelBedrockConnection(ctx, plan);
     expect(mocks.discard).toHaveBeenCalledWith(ctx, plan.access);
   });
+  it('settles only a verified terminal abort without adopting connection intent or applying IAM again', async () => {
+    const plan = await prepare();
+    mocks.apply.mockResolvedValueOnce(undefined);
+    mocks.execute.mockRejectedValueOnce(new Error('lost partial provider reply'));
+    await expect(applyBedrockConnection(ctx, plan)).rejects.toThrow();
+    mocks.execute.mockImplementationOnce(async (_id, _target, commands) => {
+      const { job, mode } = JSON.parse(commands[0]);
+      expect(mode).toBe('abort');
+      return {
+        stdout: JSON.stringify({
+          ok: true,
+          kind: job.kind,
+          operationId: job.operationId,
+          target: job.target,
+          inferenceRegion: job.inferenceRegion,
+          inferenceVerified: false,
+          replayAllowed: false,
+          phase: 'aborted',
+          maintenanceHeld: false,
+          reconciled: true,
+        }),
+        stderr: '',
+        commandId: 'abort',
+      };
+    });
+    expect(
+      await inspectBedrockConnection(ctx, plan.job.operationId, { abort: true }),
+    ).toMatchObject({ phase: 'aborted' });
+    expect(await readControlFence(plan.job.target)).toBeUndefined();
+    expect(loadDeploymentState(ctx)?.bedrockConnection).toBeUndefined();
+    expect(mocks.apply).toHaveBeenCalledOnce();
+    expect(mocks.inspectAccess).not.toHaveBeenCalled();
+    await expect(
+      inspectBedrockConnection(ctx, plan.job.operationId, { abort: true, accept: 'configured' }),
+    ).rejects.toThrow(/either/);
+  });
 });

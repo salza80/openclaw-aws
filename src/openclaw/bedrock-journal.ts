@@ -7,6 +7,7 @@ import { assertDirectoryChain } from './restore-layout.js';
 
 export type BedrockPhase =
   | 'started'
+  | 'preflight-ready'
   | 'plugin-intent'
   | 'plugin-ready'
   | 'environment-intent'
@@ -20,15 +21,18 @@ export type BedrockPhase =
   | 'complete'
   | 'rolled-back'
   | 'unchanged'
+  | 'aborted'
   | 'uncertain';
 export interface BedrockEvent {
   phase: BedrockPhase;
   checkedAt: string;
   beforeHash?: string;
+  unrelatedHash?: string;
 }
 const transitions: Record<BedrockPhase | 'none', BedrockPhase[]> = {
   none: ['started', 'unchanged', 'complete'],
-  started: ['plugin-intent', 'unchanged', 'uncertain'],
+  started: ['preflight-ready', 'plugin-intent', 'unchanged', 'uncertain'],
+  'preflight-ready': ['plugin-intent', 'unchanged', 'uncertain'],
   'plugin-intent': ['plugin-ready', 'uncertain'],
   'plugin-ready': ['environment-intent', 'uncertain'],
   'environment-intent': ['environment-ready', 'uncertain'],
@@ -61,7 +65,13 @@ const transitions: Record<BedrockPhase | 'none', BedrockPhase[]> = {
   complete: [],
   'rolled-back': [],
   unchanged: [],
+  aborted: [],
 };
+// Aborting is never authority to roll back config. The worker must prove the
+// current native settings match this operation's preflight digest first.
+for (const [phase, next] of Object.entries(transitions))
+  if (!['none', 'complete', 'rolled-back', 'unchanged', 'aborted'].includes(phase))
+    next.push('aborted');
 const missing = (error: unknown) =>
   error instanceof Error && 'code' in error && error.code === 'ENOENT';
 async function sync(directory: string) {
@@ -103,7 +113,9 @@ export async function bedrockHostJournal(home: string, input: BedrockJob, create
   const maintenance = path.join(root, 'maintenance.json');
   const parseEvent = (value: Record<string, unknown>): BedrockEvent => {
     if (
-      Object.keys(value).some((key) => !['phase', 'checkedAt', 'beforeHash'].includes(key)) ||
+      Object.keys(value).some(
+        (key) => !['phase', 'checkedAt', 'beforeHash', 'unrelatedHash'].includes(key),
+      ) ||
       typeof value.phase !== 'string' ||
       !Object.hasOwn(transitions, value.phase) ||
       value.phase === 'none' ||
@@ -111,6 +123,9 @@ export async function bedrockHostJournal(home: string, input: BedrockJob, create
       value.checkedAt.length > 64 ||
       !Number.isFinite(Date.parse(value.checkedAt)) ||
       value.phase.startsWith('config-') !== (value.beforeHash !== undefined) ||
+      (value.phase === 'preflight-ready') !== (value.unrelatedHash !== undefined) ||
+      (value.unrelatedHash !== undefined &&
+        (typeof value.unrelatedHash !== 'string' || !/^[a-f0-9]{64}$/.test(value.unrelatedHash))) ||
       (value.beforeHash !== undefined &&
         (typeof value.beforeHash !== 'string' ||
           !value.beforeHash ||
@@ -193,7 +208,9 @@ export async function bedrockHostJournal(home: string, input: BedrockJob, create
     async release() {
       if (
         !(await ownsMaintenance()) ||
-        !['complete', 'rolled-back', 'unchanged'].includes((await events()).at(-1)?.phase ?? '')
+        !['complete', 'rolled-back', 'unchanged', 'aborted'].includes(
+          (await events()).at(-1)?.phase ?? '',
+        )
       )
         throw new Error('Unresolved Bedrock maintenance cannot be released');
       await unlink(maintenance);

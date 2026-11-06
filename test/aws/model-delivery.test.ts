@@ -22,6 +22,9 @@ describe('private Ubuntu model dispatch', () => {
     expect(command).toContain('env -i HOME=/home/ubuntu');
     expect(command).not.toContain('AWS_ACCESS_KEY_ID');
     expect(Buffer.byteLength(command)).toBeLessThan(60000);
+    const abort = bedrockRemoteCommand({ pin, job: bedrockJob, mode: 'abort' });
+    await execa('/bin/bash', ['--noprofile', '--norc', '-n'], { input: abort });
+    expect(abort).toContain("'abort'");
   });
   it('checks root-owned artifact pins before Ubuntu-only immutable request installation and clean native execution', async () => {
     const pin = pinModelArtifact(

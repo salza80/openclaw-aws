@@ -37,7 +37,9 @@ export function bedrockRemoteCommand(input: {
   const pin = parseModelArtifactPin(input.pin);
   const job = parseBedrockJob(input.job);
   if (
-    !['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous'].includes(input.mode)
+    !['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous', 'abort'].includes(
+      input.mode,
+    )
   )
     throw new Error('Unsupported Bedrock dispatch mode');
   return controlCommand(pin, job, input.mode, true);

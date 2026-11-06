@@ -108,6 +108,7 @@ export function parseBedrockResult(
     typeof row.phase !== 'string' ||
     ![
       'started',
+      'preflight-ready',
       'plugin-intent',
       'plugin-ready',
       'environment-intent',
@@ -121,6 +122,7 @@ export function parseBedrockResult(
       'complete',
       'rolled-back',
       'unchanged',
+      'aborted',
       'uncertain',
       'not-recorded',
     ].includes(row.phase)
@@ -142,12 +144,15 @@ export function parseBedrockResult(
     return result;
   }
   exact(row, [...common, 'maintenanceHeld', 'reconciled', 'observed', 'discovery', 'message']);
-  if (!['complete', 'unchanged', 'rolled-back', 'uncertain'].includes(row.phase))
+  if (!['complete', 'unchanged', 'rolled-back', 'uncertain', 'aborted'].includes(row.phase))
     throw new Error('Bedrock execution did not return an outcome');
   if (row.message !== undefined) result.message = modelText(row.message, 2048);
   if (row.observed !== undefined) result.observed = observation(row.observed);
   if (row.reconciled !== undefined) {
-    if (row.reconciled !== true || !['accept-configured', 'accept-previous'].includes(mode))
+    if (
+      row.reconciled !== true ||
+      !['accept-configured', 'accept-previous', 'abort'].includes(mode)
+    )
       throw new Error('Invalid Bedrock reconciliation');
     result.reconciled = true;
   }
@@ -183,5 +188,11 @@ export function parseBedrockResult(
     throw new Error('Terminal Bedrock refusal/rollback still holds maintenance');
   if (mode === 'accept-previous' && (row.phase !== 'unchanged' || row.reconciled !== true))
     throw new Error('Previous-state acceptance must fence an unchanged operation');
+  if (mode === 'accept-configured' && (row.phase !== 'complete' || row.reconciled !== true))
+    throw new Error('Configured-state acceptance must certify the configured connection');
+  if (row.phase === 'aborted' && mode !== 'abort')
+    throw new Error('Only an explicit abort can certify a stopped partial setup');
+  if (mode === 'abort' && (row.phase !== 'aborted' || row.reconciled !== true))
+    throw new Error('Bedrock abort must certify the original settings and release its own hold');
   return result;
 }

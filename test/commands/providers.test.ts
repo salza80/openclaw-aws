@@ -109,4 +109,26 @@ describe('provider CLI boundary', () => {
       accept: 'previous',
     });
   });
+  it('requires explicit abort approval and uses the recorded operation without repeating setup', async () => {
+    await expect(
+      runProvidersCommand({ action: 'abort', operationId: bedrockJob.operationId }),
+    ).rejects.toThrow(/--yes/);
+    await runProvidersCommand({ action: 'abort', operationId: bedrockJob.operationId, yes: true });
+    expect(mocks.inspect).toHaveBeenLastCalledWith(expect.anything(), bedrockJob.operationId, {
+      abort: true,
+    });
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Retain plugin/role files and IAM grants'),
+    );
+    await expect(
+      runProvidersCommand({
+        action: 'abort',
+        operationId: bedrockJob.operationId,
+        accept: 'previous',
+        yes: true,
+      }),
+    ).rejects.toThrow(/--accept/);
+  });
 });

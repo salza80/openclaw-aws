@@ -83,4 +83,18 @@ describe('bounded Bedrock response projection', () => {
     ).toMatchObject({ phase: 'unchanged', reconciled: true });
     expect(() => parseBedrockResult(complete, bedrockJob, 'accept-previous')).toThrow();
   });
+  it('requires an explicit terminal abort receipt with released ownership', () => {
+    const aborted = { ...header, phase: 'aborted', maintenanceHeld: false, reconciled: true };
+    expect(parseBedrockResult(aborted, bedrockJob, 'abort').phase).toBe('aborted');
+    for (const response of [
+      complete,
+      { ...aborted, reconciled: false },
+      { ...aborted, maintenanceHeld: true },
+    ])
+      expect(() => parseBedrockResult(response, bedrockJob, 'abort')).toThrow();
+    expect(() => parseBedrockResult(aborted, bedrockJob, 'accept-configured')).toThrow();
+    expect(() =>
+      parseBedrockResult({ ...aborted, reconciled: undefined }, bedrockJob, 'execute'),
+    ).toThrow();
+  });
 });

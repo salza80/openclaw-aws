@@ -305,7 +305,7 @@ export async function cancelBedrockConnection(ctx: CommandContext, input: Bedroc
 async function settle(plan: BedrockConnectionPlan, result: BedrockResult) {
   if (
     result.maintenanceHeld !== false ||
-    !['complete', 'unchanged', 'rolled-back'].includes(result.phase)
+    !['complete', 'unchanged', 'rolled-back', 'aborted'].includes(result.phase)
   )
     return;
   await writeControlRecord(
@@ -395,8 +395,13 @@ export async function applyBedrockConnection(
 export async function inspectBedrockConnection(
   ctx: CommandContext,
   operationId: string,
-  options: { accept?: 'configured' | 'previous'; signal?: AbortSignal } = {},
+  options: { accept?: 'configured' | 'previous'; abort?: boolean; signal?: AbortSignal } = {},
 ): Promise<BedrockResult> {
+  if (
+    (options.abort && options.accept !== undefined) ||
+    (options.accept !== undefined && !['configured', 'previous'].includes(options.accept))
+  )
+    throw new Error('Choose either an explicit provider-state acceptance or abort');
   return withDeploymentLock(ctx, async () => {
     const plan = await loadBedrockConnection(operationId);
     context(ctx, plan.job);
@@ -427,11 +432,13 @@ export async function inspectBedrockConnection(
       ctx,
       plan.job,
       plan.artifact,
-      options.accept === 'configured'
-        ? 'accept-configured'
-        : options.accept === 'previous'
-          ? 'accept-previous'
-          : 'inspect',
+      options.abort
+        ? 'abort'
+        : options.accept === 'configured'
+          ? 'accept-configured'
+          : options.accept === 'previous'
+            ? 'accept-previous'
+            : 'inspect',
       options.signal,
     );
     await settle(plan, result);

@@ -40,8 +40,8 @@ async function approve(argv: ProvidersArgs, description: string) {
   );
 }
 export async function runProvidersCommand(argv: ProvidersArgs) {
-  if (!['enable-bedrock', 'inspect', 'reconcile'].includes(argv.action))
-    throw new ValidationError('Use providers enable-bedrock, inspect or reconcile');
+  if (!['enable-bedrock', 'inspect', 'reconcile', 'abort'].includes(argv.action))
+    throw new ValidationError('Use providers enable-bedrock, inspect, reconcile or abort');
   if (argv.action === 'enable-bedrock') {
     if (!argv.inferenceRegion || argv.accept !== undefined)
       throw new ValidationError(
@@ -59,7 +59,7 @@ export async function runProvidersCommand(argv: ProvidersArgs) {
       throw new ValidationError(
         'Provider inspection/reconciliation uses --operation-id and its original recorded setup; omit new connection options',
       );
-    if (argv.action === 'inspect' && argv.accept !== undefined)
+    if (['inspect', 'abort'].includes(argv.action) && argv.accept !== undefined)
       throw new ValidationError('--accept belongs to providers reconcile');
     if (argv.action === 'reconcile' && !['configured', 'previous'].includes(argv.accept ?? ''))
       throw new ValidationError('Choose --accept configured or --accept previous explicitly');
@@ -118,13 +118,19 @@ export async function runProvidersCommand(argv: ProvidersArgs) {
   if (
     !(await approve(
       argv,
-      `Reconcile Bedrock operation ${argv.operationId} on '${ctx.name}' (${ctx.target.account}/${ctx.target.region}); recorded phase ${observed.phase}. Accept ${argv.accept === 'configured' ? 'a freshly verified configured provider and current IAM grants' : 'only an unchanged original native revision, fencing delayed delivery; retained IAM state requires separate inspection'}. Never repeat plugin/configuration writes.`,
+      argv.action === 'abort'
+        ? `Abort Bedrock operation ${argv.operationId} on '${ctx.name}' (${ctx.target.account}/${ctx.target.region}); recorded phase ${observed.phase}. Release only its own hold after verifying the original native settings, excluding this plugin's enablement bookkeeping. Refuse changed provider/settings. Retain plugin/role files and IAM grants for inspection. No config or plugin write is repeated.`
+        : `Reconcile Bedrock operation ${argv.operationId} on '${ctx.name}' (${ctx.target.account}/${ctx.target.region}); recorded phase ${observed.phase}. Accept ${argv.accept === 'configured' ? 'a freshly verified configured provider and current IAM grants' : 'only an unchanged original native revision, fencing delayed delivery; retained IAM state requires separate inspection'}. Never repeat plugin/configuration writes.`,
     ))
   )
     return;
   console.log(
     JSON.stringify(
-      await inspectBedrockConnection(ctx, argv.operationId!, { accept: argv.accept }),
+      await inspectBedrockConnection(
+        ctx,
+        argv.operationId!,
+        argv.action === 'abort' ? { abort: true } : { accept: argv.accept },
+      ),
       null,
       2,
     ),
@@ -137,7 +143,7 @@ export const providersCommand: CommandModule<{}, ProvidersArgs> = {
     yargs
       .positional('action', {
         type: 'string',
-        choices: ['enable-bedrock', 'inspect', 'reconcile'] as const,
+        choices: ['enable-bedrock', 'inspect', 'reconcile', 'abort'] as const,
         demandOption: true,
       })
       .option('name', { type: 'string' })
