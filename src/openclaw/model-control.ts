@@ -8,6 +8,7 @@ export interface ModelMutationRecord {
   beforeHash: string;
   requested: string;
   previous: ModelSetting | null;
+  previousPublished: string;
 }
 /** Host callers hold the deployment flock/maintenance record. RPC is always
  * directed at the authenticated running Gateway, never an offline CLI fallback.
@@ -68,7 +69,7 @@ function storedReference(value: unknown): string {
   // rollback instead of interpreting them as this CLI's provider defaults.
   return value;
 }
-function modelScope(input: ModelScope): ModelScope {
+export function nativeModelScope(input: ModelScope): ModelScope {
   if (input.kind === 'default') return { kind: 'default' };
   if (
     input.kind !== 'agent' ||
@@ -79,7 +80,7 @@ function modelScope(input: ModelScope): ModelScope {
     throw new Error('Use an existing native agent ID');
   return { kind: 'agent', agentId: input.agentId };
 }
-function setting(value: unknown): ModelSetting | undefined {
+export function nativeModelSetting(value: unknown): ModelSetting | undefined {
   if (value === undefined) return undefined;
   if (typeof value === 'string') return storedReference(value);
   const entry = record(value);
@@ -111,7 +112,7 @@ async function snapshot(client: NativeModelClient): Promise<Snapshot> {
 }
 function selection(config: Record<string, unknown>, scope: ModelScope) {
   const agents = field(config, 'agents');
-  return setting(
+  return nativeModelSetting(
     field(
       scope.kind === 'default'
         ? field(agents, 'defaults')
@@ -134,7 +135,7 @@ async function assertAgent(client: NativeModelClient, scope: ModelScope) {
     throw new Error('Running Gateway roster is unavailable');
   const ids = roster.agents.map((agent) => {
     const identity = { kind: 'agent' as const, agentId: field(agent, 'id') as string };
-    modelScope(identity);
+    nativeModelScope(identity);
     return identity.agentId;
   });
   if (new Set(ids).size !== ids.length)
@@ -177,7 +178,7 @@ export async function inspectModelSelection(
   client: NativeModelClient,
   input: ModelScope,
 ): Promise<ModelSelectionObservation> {
-  const scope = modelScope(input);
+  const scope = nativeModelScope(input);
   await assertAgent(client, scope);
   const before = await snapshot(client);
   const effectiveForNewSessions = await published(client, scope);
@@ -204,7 +205,9 @@ async function assertCatalogChoice(client: NativeModelClient, agentId: string, m
     await client.call('models.list', {
       agentId,
       provider,
-      view: 'all',
+      // The native "all" view bypasses model policy. A persistent setting must
+      // remain usable by this agent, even though config.patch is an admin write.
+      view: 'default',
       includeDetails: true,
     }),
   );
@@ -217,7 +220,7 @@ async function assertCatalogChoice(client: NativeModelClient, agentId: string, m
   );
   if (!match)
     throw new Error(
-      'Model is absent from native inventory; refresh that provider before selecting it',
+      'Model is absent from native inventory permitted by this agent policy; review policy and provider discovery before selecting it',
     );
   if (field(match, 'available') === false) {
     const reason = field(match, 'unavailableReason');
@@ -229,6 +232,8 @@ async function assertCatalogChoice(client: NativeModelClient, agentId: string, m
   }
   if (field(match, 'supportsTools') === false)
     throw new Error('Native catalog reports unsupported tool use for this model');
+  if (field(match, 'manualSelectionAllowed') === false)
+    throw new Error('Native model policy does not permit manually selecting this model');
   if (Array.isArray(result.pendingProviders) && result.pendingProviders.includes(provider))
     throw new Error('Native provider refresh is pending; retry after it publishes');
   // Unknown capabilities/readiness remain advisory. No discovery, token refresh
@@ -249,7 +254,7 @@ export async function changeModelSelection(
   client: NativeModelClient,
   options: { scope: ModelScope; model: string; expectedHash: string; allowRestart?: boolean },
 ): Promise<ModelSelectionChange> {
-  const scope = modelScope(options.scope);
+  const scope = nativeModelScope(options.scope);
   const model = nativeModelReference(options.model);
   const agentIds = await assertAgent(client, scope);
   const before = await snapshot(client);
@@ -276,7 +281,13 @@ export async function changeModelSelection(
   for (const agentId of catalogAgents) await assertCatalogChoice(client, agentId, model);
   const desired: ModelSetting =
     typeof previous === 'string' ? model : { ...previous, primary: model };
-  const mutation = { scope, beforeHash: before.hash, requested: model, previous: previous ?? null };
+  const mutation = {
+    scope,
+    beforeHash: before.hash,
+    requested: model,
+    previous: previous ?? null,
+    previousPublished,
+  };
   await client.record({ ...mutation, phase: 'intent' });
   let acknowledged = false;
   let restarted = false;

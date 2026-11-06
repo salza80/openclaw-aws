@@ -14,6 +14,9 @@ import {
   type ModelMutationRecord,
 } from '../../src/openclaw/model-control.js';
 import { createNativeModelClient } from '../../src/openclaw/model-client.js';
+import { runModelOperation } from '../../src/openclaw/model-worker.js';
+import { modelHostJournal } from '../../src/openclaw/model-journal.js';
+import { modelJob } from '../helpers/model-operation.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 describe('native Gateway persistent model selection', () => {
@@ -68,6 +71,7 @@ describe('native Gateway persistent model selection', () => {
           ownership: 'explicit',
           defaults: {
             model: { primary: 'fixture/one', fallbacks: ['fixture/fallback'] },
+            modelPolicy: { allow: ['fixture/one', 'fixture/two', 'fixture/fallback'] },
             skipBootstrap: true,
             heartbeat: { every: '0m' },
           },
@@ -88,7 +92,7 @@ describe('native Gateway persistent model selection', () => {
               baseUrl: `http://127.0.0.1:${modelAddress.port}/v1`,
               api: 'openai-completions',
               apiKey: 'fixture-only-key',
-              models: ['one', 'two', 'fallback'].map((id) => ({
+              models: ['one', 'two', 'fallback', 'blocked'].map((id) => ({
                 id,
                 name: id,
                 contextWindow: 32000,
@@ -190,12 +194,56 @@ describe('native Gateway persistent model selection', () => {
           inherited: true,
           effectiveForNewSessions: 'fixture/one',
         });
-        const changed = await changeModelSelection(client, {
+        await expect(
+          changeModelSelection(client, {
+            scope,
+            model: 'fixture/blocked',
+            expectedHash: before.configHash,
+          }),
+        ).rejects.toThrow(/agent policy/);
+        expect(records).toHaveLength(0);
+        const hostJob = {
+          ...modelJob,
           scope,
-          model: 'fixture/two',
-          expectedHash: before.configHash,
+          action: {
+            kind: 'set' as const,
+            model: 'fixture/two',
+            expectedHash: before.configHash,
+            allowRestart: false,
+          },
+        };
+        const localHost = {
+          home,
+          // Local conformance deliberately has no AWS identity or resources.
+          async identify() {},
+          client(record: NativeModelClient['record']) {
+            return {
+              ...client,
+              async record(value) {
+                records.push(structuredClone(value));
+                await record(value);
+              },
+            };
+          },
+        };
+        const inventory = await runModelOperation(
+          { ...hostJob, action: { kind: 'list', provider: 'fixture', offset: 0, limit: 20 } },
+          localHost,
+        );
+        expect(inventory).toMatchObject({
+          models: expect.arrayContaining([expect.objectContaining({ model: 'fixture/two' })]),
         });
-        expect(changed.effectiveForNewSessions).toBe('fixture/two');
+        expect(JSON.stringify(inventory)).not.toContain('fixture/blocked');
+        const changed = await runModelOperation(hostJob, localHost);
+        expect(changed).toMatchObject({ phase: 'complete', maintenanceHeld: false });
+        const journal = await modelHostJournal(home, hostJob, false);
+        expect((await journal.events()).map((row) => row.phase)).toEqual([
+          'started',
+          'intent',
+          'acknowledged',
+          'complete',
+        ]);
+        expect(changed).toMatchObject({ effectiveForNewSessions: 'fixture/two' });
         expect(gateway!.pid).toBe(originalPid);
         expect(await session()).toEqual(retained);
         const after = JSON.parse(await readFile(configPath, 'utf8'));
@@ -206,7 +254,7 @@ describe('native Gateway persistent model selection', () => {
           changeModelSelection(client, {
             scope,
             model: 'fixture/one',
-            expectedHash: changed.configHash,
+            expectedHash: (await inspectModelSelection(client, scope)).configHash,
           }),
         ).rejects.toMatchObject({ outcome: 'rolled-back' });
         expect((await inspectModelSelection(client, scope)).effectiveForNewSessions).toBe(

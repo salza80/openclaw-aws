@@ -9,7 +9,7 @@ import {
 } from '../../src/openclaw/model-control.js';
 type Config = {
   agents: {
-    defaults: { model?: ModelSetting };
+    defaults: { model?: ModelSetting; modelPolicy?: { allow: string[] } };
     entries: Record<string, { model?: ModelSetting; workspace?: string }>;
   };
   gateway: { reload: { mode: string } };
@@ -89,7 +89,15 @@ beforeEach(() => {
         if (!params.agentId && Object.keys(saved.agents.entries).length > 1)
           throw Error('native catalog owner required');
         return {
-          models: structuredClone(catalog.filter((row) => row.provider === params.provider)),
+          models: structuredClone(
+            catalog.filter(
+              (row) =>
+                row.provider === params.provider &&
+                (params.view !== 'default' ||
+                  !saved.agents.defaults.modelPolicy ||
+                  saved.agents.defaults.modelPolicy.allow.includes(`${row.provider}/${row.id}`)),
+            ),
+          ),
         };
       }
       if (method === 'sessions.list') {
@@ -207,6 +215,22 @@ describe('native persistent model control', () => {
     expect(mutations()).toHaveLength(0);
     expect(client.record).not.toHaveBeenCalled();
   });
+  it.each([{ kind: 'default' as const }, scope])(
+    'respects native model policy at %j scope before writing any intent',
+    async (targetScope) => {
+      saved.agents.defaults.modelPolicy = { allow: ['openrouter/old'] };
+      runtime = structuredClone(saved);
+      await expect(change({ scope: targetScope })).rejects.toThrow(/agent policy/);
+      expect(mutations()).toHaveLength(0);
+      expect(client.record).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(client.call)
+          .mock.calls.filter(([method]) => method === 'models.list')
+          .every(([, params]) => params.view === 'default'),
+      ).toBe(true);
+    },
+  );
   it.each([
     { available: false, unavailableReason: 'missing-auth', message: /authentication/ },
     { supportsTools: false, message: /unsupported tool/ },

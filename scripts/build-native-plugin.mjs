@@ -44,8 +44,31 @@ const bundled = await build({
   legalComments: 'linked',
   metafile: true,
 });
+// Model-only management uses chunked SSM delivery without a backup vault.
+// Keep it outside the versioned recovery artifact's fixed nine-file inventory.
+const modelDirectory = path.join(root, 'dist/model-worker');
+await rm(modelDirectory, { recursive: true, force: true });
+await mkdir(modelDirectory, { recursive: true });
+const modelBundled = await build({
+  absWorkingDir: root,
+  entryPoints: ['src/openclaw/model-worker-entry.ts'],
+  outfile: path.join(modelDirectory, 'worker.mjs'),
+  bundle: true,
+  minify: true,
+  platform: 'node',
+  target: 'node24',
+  format: 'esm',
+  banner: {
+    js: 'import { createRequire as __awsCreateRequire } from "node:module"; const require = __awsCreateRequire(import.meta.url);',
+  },
+  legalComments: 'linked',
+  metafile: true,
+});
 const packages = new Set();
-for (const input of Object.keys(bundled.metafile.inputs)) {
+for (const input of new Set([
+  ...Object.keys(bundled.metafile.inputs),
+  ...Object.keys(modelBundled.metafile.inputs),
+])) {
   const full = path.resolve(root, input).replaceAll('\\', '/');
   const marker = full.lastIndexOf('/node_modules/');
   if (marker < 0) continue;
@@ -74,6 +97,10 @@ for (const packageDirectory of [...packages].sort()) {
 }
 await writeFile(
   path.join(directory, 'THIRD-PARTY-LICENSES.txt'),
+  notices.join('\n\n----------------------------------------\n\n'),
+);
+await writeFile(
+  path.join(modelDirectory, 'THIRD-PARTY-LICENSES.txt'),
   notices.join('\n\n----------------------------------------\n\n'),
 );
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
