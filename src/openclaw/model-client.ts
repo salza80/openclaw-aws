@@ -15,6 +15,9 @@ const methods = new Set([
   'plugins.inspect',
   'plugins.install',
   'plugins.setEnabled',
+  'gateway.suspend.prepare',
+  'gateway.suspend.status',
+  'gateway.suspend.resume',
 ]);
 /** Public native capability gate, parsed without retaining arbitrary errors or
  * native output. Only the fixed reviewed install may acknowledge this token. */
