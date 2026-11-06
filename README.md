@@ -310,6 +310,28 @@ Select a config.
 npx openclaw-aws use my-bot
 ```
 
+### Independent recovery vaults
+
+```bash
+openclaw-aws vault create primary --region eu-central-1 --profile operator --yes
+openclaw-aws vault inspect s3://bucket/vault-prefix --region eu-central-1 --profile operator --json
+```
+
+Vaults keep private, versioned S3 storage and a retained Secrets Manager passphrase independently of deployment stacks. An existing bucket can be registered with `vault register <s3-uri> --key-arn <independent-secret-arn>` and explicit region/profile. Registration checks ownership, encryption, public-access protection, TLS and retention without changing existing bucket policies. Storage, old versions and retained keys remain billable after source deletion.
+
+Create a recovery point from a named deployment, then discover and verify it using only the vault location and operator AWS access:
+
+```bash
+openclaw-aws backup create --name my-bot --vault s3://bucket/vault-prefix --label before-holiday --yes
+openclaw-aws backup list --vault s3://bucket/vault-prefix --region eu-central-1 --profile operator --json
+openclaw-aws backup inspect <point-id> --vault s3://bucket/vault-prefix --region eu-central-1 --profile operator --json
+openclaw-aws backup verify <point-id> --vault s3://bucket/vault-prefix --region eu-central-1 --profile operator --json
+```
+
+Capture briefly stops the Gateway, uses native OpenClaw encryption and full remote verification, then restores the previous service state. It covers the complete native agent roster, declared workspaces, state and recoverable credentials. An incomplete capture never becomes a completed recovery point. Retry an interrupted operation with its printed `--operation-id`; maintenance ownership is never cleared by age. The independently retained vault and key survive destruction of the source instance and source SSM parameters. Save the vault URI and keep operator access to both resources.
+
+The first backup release supports our pinned OpenClaw/Node installation and default native service paths; it does not silently upgrade older instances. Native runtime caches and volatile queues are omitted. External secret commands, uncaptured credential files and unresolved native references prevent full recovery certification. Destroy removes the source's separately attached backup access policy before its IAM role; denied cleanup stops destruction. Vault creation alone does not create a recovery point. See [native backup integration](docs/native-backup-transport.md) for installation, key retention, operator permissions and verification boundaries.
+
 ## Configuration
 
 Configuration is created with the `init` command, and stored per config in `.openclaw-aws/configs/<name>.json`.

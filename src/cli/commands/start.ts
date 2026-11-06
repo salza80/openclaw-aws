@@ -1,3 +1,4 @@
+import { withDeploymentLock } from '../../operations/lock.js';
 import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -25,66 +26,68 @@ export const startCommand: CommandModule<{}, StartArgs> = {
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
-      const config = ctx.config;
+      await withDeploymentLock(ctx, async () => {
+        const config = ctx.config;
 
-      logger.title('OpenClaw AWS - Start Instance');
-      logger.info(`Starting ${chalk.cyan(ctx.name)}`);
+        logger.title('OpenClaw AWS - Start Instance');
+        logger.info(`Starting ${chalk.cyan(ctx.name)}`);
 
-      // Get instance ID
-      const spinner = ora('Finding instance...').start();
-      const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
-      spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
+        // Get instance ID
+        const spinner = ora('Finding instance...').start();
+        const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
+        spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
 
-      const currentState = await getInstanceState(instanceId, ctx.target);
-      if (currentState === 'running') {
-        logger.info('Instance is already running');
-        console.log('\n' + chalk.bold('Next steps:'));
-        console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
-        console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
-        console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
-        console.log('  ' + chalk.cyan('openclaw-aws stop') + '       - Stop to save costs');
-        return;
-      }
-
-      // Start instance
-      spinner.start('Starting instance...');
-      await startInstance(instanceId, ctx.target);
-      spinner.text = 'Waiting for instance to start... (this may take 1-2 minutes)';
-
-      const didStart = await waitForInstanceState(instanceId, ctx.target, 'running', 180000);
-
-      if (didStart) {
-        spinner.succeed('Instance started successfully');
-
-        // Check SSM connectivity
-        spinner.start('Waiting for SSM to be ready...');
-        let ssmReady = false;
-
-        // Wait up to 2 minutes for SSM
-        for (let i = 0; i < 24; i++) {
-          // 24 * 5 seconds = 2 minutes
-          ssmReady = await checkSSMStatus(instanceId, ctx.target);
-          if (ssmReady) break;
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+        const currentState = await getInstanceState(instanceId, ctx.target);
+        if (currentState === 'running') {
+          logger.info('Instance is already running');
+          console.log('\n' + chalk.bold('Next steps:'));
+          console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
+          console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
+          console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
+          console.log('  ' + chalk.cyan('openclaw-aws stop') + '       - Stop to save costs');
+          return;
         }
 
-        if (ssmReady) {
-          spinner.succeed('Instance ready for connection');
+        // Start instance
+        spinner.start('Starting instance...');
+        await startInstance(instanceId, ctx.target);
+        spinner.text = 'Waiting for instance to start... (this may take 1-2 minutes)';
+
+        const didStart = await waitForInstanceState(instanceId, ctx.target, 'running', 180000);
+
+        if (didStart) {
+          spinner.succeed('Instance started successfully');
+
+          // Check SSM connectivity
+          spinner.start('Waiting for SSM to be ready...');
+          let ssmReady = false;
+
+          // Wait up to 2 minutes for SSM
+          for (let i = 0; i < 24; i++) {
+            // 24 * 5 seconds = 2 minutes
+            ssmReady = await checkSSMStatus(instanceId, ctx.target);
+            if (ssmReady) break;
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+
+          if (ssmReady) {
+            spinner.succeed('Instance ready for connection');
+          } else {
+            spinner.warn('Instance running, SSM not ready yet');
+            console.log('\nWait a minute then check: ' + chalk.cyan('openclaw-aws status'));
+          }
+
+          console.log('\n' + chalk.bold('Instance is now running'));
+          console.log('\n' + chalk.bold('Next steps:'));
+          console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
+          console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
+          console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
+          console.log('  ' + chalk.cyan('openclaw-aws stop') + '       - Stop to save costs');
         } else {
-          spinner.warn('Instance running, SSM not ready yet');
-          console.log('\nWait a minute then check: ' + chalk.cyan('openclaw-aws status'));
+          spinner.warn('Instance start initiated (still starting...)');
+          console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
         }
-
-        console.log('\n' + chalk.bold('Instance is now running'));
-        console.log('\n' + chalk.bold('Next steps:'));
-        console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
-        console.log('  ' + chalk.cyan('openclaw-aws dashboard') + '  - Access dashboard');
-        console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
-        console.log('  ' + chalk.cyan('openclaw-aws stop') + '       - Stop to save costs');
-      } else {
-        spinner.warn('Instance start initiated (still starting...)');
-        console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
-      }
+      });
     } catch (error) {
       handleError(error);
     }

@@ -16,6 +16,8 @@ import logsCommand from './commands/logs.js';
 import stopCommand from './commands/stop.js';
 import startCommand from './commands/start.js';
 import restartCommand from './commands/restart.js';
+import vaultCommand from './commands/vault.js';
+import backupCommand from './commands/backup.js';
 
 yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
@@ -35,6 +37,8 @@ yargs(hideBin(process.argv))
   .command(startCommand)
   .command(restartCommand)
   .command(destroyCommand)
+  .command(vaultCommand)
+  .command(backupCommand)
   .demandCommand(1, 'You must specify a command')
   .help()
   .alias('h', 'help')

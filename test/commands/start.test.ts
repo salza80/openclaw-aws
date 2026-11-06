@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+const withLockMock = vi.hoisted(() =>
+  vi.fn(async (_ctx: unknown, operation: () => Promise<void>) => operation()),
+);
+vi.mock('../../src/operations/lock.js', () => ({ withDeploymentLock: withLockMock }));
 import type { CommandModule } from 'yargs';
 import { makeCommandContext, testTarget } from '../helpers/fixtures/command-context.js';
 
@@ -55,6 +59,14 @@ const handleErrorMock = vi.mocked(handleError);
 describe('start command', () => {
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it('does not read or mutate while backup owns the deployment lock', async () => {
+    withLockMock.mockRejectedValueOnce(new Error('deployment lock owned by backup'));
+    await startCommand.handler?.({ _: [], $0: 'openclaw-aws' });
+    expect(resolveInstanceIdMock).not.toHaveBeenCalled();
+    expect(startInstanceMock).not.toHaveBeenCalled();
+    expect(handleErrorMock).toHaveBeenCalled();
   });
 
   it('returns early when instance is already running', async () => {

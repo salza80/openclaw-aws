@@ -1,3 +1,4 @@
+import { withDeploymentLock } from '../../operations/lock.js';
 import type { CommandModule } from 'yargs';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -33,72 +34,74 @@ export const restartCommand: CommandModule<{}, RestartArgs> = {
   handler: async (argv) => {
     try {
       const ctx = await buildCommandContext({ name: argv.name });
-      const config = ctx.config;
+      await withDeploymentLock(ctx, async () => {
+        const config = ctx.config;
 
-      logger.title('OpenClaw AWS - Restart Instance');
-      logger.info(`Restarting ${chalk.cyan(ctx.name)}`);
+        logger.title('OpenClaw AWS - Restart Instance');
+        logger.info(`Restarting ${chalk.cyan(ctx.name)}`);
 
-      // Get instance ID
-      const spinner = ora('Finding instance...').start();
-      const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
-      spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
+        // Get instance ID
+        const spinner = ora('Finding instance...').start();
+        const instanceId = await resolveInstanceId(config.stack.name, ctx.target);
+        spinner.succeed(`Found instance: ${chalk.cyan(instanceId)}`);
 
-      console.log('\n' + chalk.bold('Note:'));
-      console.log('  • This will reboot the instance');
-      console.log('  • OpenClaw service will restart automatically');
-      console.log('  • Brief downtime (~1-2 minutes)');
+        console.log('\n' + chalk.bold('Note:'));
+        console.log('  • This will reboot the instance');
+        console.log('  • OpenClaw service will restart automatically');
+        console.log('  • Brief downtime (~1-2 minutes)');
 
-      // Confirm
-      if (!argv.force) {
-        console.log('');
-        const { confirm } = await prompts({
-          type: 'confirm',
-          name: 'confirm',
-          message: `Restart instance ${config.instance.name}?`,
-          initial: true,
-        });
+        // Confirm
+        if (!argv.force) {
+          console.log('');
+          const { confirm } = await prompts({
+            type: 'confirm',
+            name: 'confirm',
+            message: `Restart instance ${config.instance.name}?`,
+            initial: true,
+          });
 
-        if (!confirm) {
-          logger.warn('Restart cancelled');
-          return;
-        }
-      }
-
-      // Reboot instance
-      spinner.start('Rebooting instance...');
-      await rebootInstance(instanceId, ctx.target);
-      spinner.succeed('Reboot initiated');
-
-      spinner.start('Waiting for instance to restart... (this may take 1-2 minutes)');
-
-      // Wait for instance to go through stopping and back to running
-      await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait 10s for reboot to start
-
-      const didRestart = await waitForInstanceState(instanceId, ctx.target, 'running', 180000);
-
-      if (didRestart) {
-        spinner.text = 'Waiting for SSM to be ready...';
-
-        // Wait for SSM
-        let ssmReady = false;
-        for (let i = 0; i < 24; i++) {
-          // 2 minutes
-          ssmReady = await checkSSMStatus(instanceId, ctx.target);
-          if (ssmReady) break;
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          if (!confirm) {
+            logger.warn('Restart cancelled');
+            return;
+          }
         }
 
-        if (ssmReady) {
-          spinner.succeed('Instance restarted and ready');
-          logger.success('Instance is back online');
+        // Reboot instance
+        spinner.start('Rebooting instance...');
+        await rebootInstance(instanceId, ctx.target);
+        spinner.succeed('Reboot initiated');
+
+        spinner.start('Waiting for instance to restart... (this may take 1-2 minutes)');
+
+        // Wait for instance to go through stopping and back to running
+        await new Promise((resolve) => setTimeout(resolve, 10000)); // Wait 10s for reboot to start
+
+        const didRestart = await waitForInstanceState(instanceId, ctx.target, 'running', 180000);
+
+        if (didRestart) {
+          spinner.text = 'Waiting for SSM to be ready...';
+
+          // Wait for SSM
+          let ssmReady = false;
+          for (let i = 0; i < 24; i++) {
+            // 2 minutes
+            ssmReady = await checkSSMStatus(instanceId, ctx.target);
+            if (ssmReady) break;
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+
+          if (ssmReady) {
+            spinner.succeed('Instance restarted and ready');
+            logger.success('Instance is back online');
+          } else {
+            spinner.warn('Instance restarted, SSM not ready yet');
+            console.log('\nWait a minute then check: ' + chalk.cyan('openclaw-aws status'));
+          }
         } else {
-          spinner.warn('Instance restarted, SSM not ready yet');
-          console.log('\nWait a minute then check: ' + chalk.cyan('openclaw-aws status'));
+          spinner.warn('Instance reboot in progress...');
+          console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
         }
-      } else {
-        spinner.warn('Instance reboot in progress...');
-        console.log('\nCheck status with: ' + chalk.cyan('openclaw-aws status'));
-      }
+      });
     } catch (error) {
       handleError(error);
     }

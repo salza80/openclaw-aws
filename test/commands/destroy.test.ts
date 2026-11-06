@@ -5,6 +5,11 @@ import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 
 vi.mock('../../src/operations/state.js', () => ({ assertDeploymentTarget: vi.fn() }));
 
+const recoveryCleanupMock = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../../src/aws/recovery-source.js', () => ({
+  removeSourceRecoveryAccess: recoveryCleanupMock,
+}));
+
 const withLockMock = vi.hoisted(() =>
   vi.fn(async (_ctx: unknown, operation: () => Promise<void>) => operation()),
 );
@@ -163,8 +168,25 @@ describe('destroy command', () => {
     },
   );
 
+  it('does not destroy or delete source secrets when recovery access cleanup fails', async () => {
+    getStackStatusMock.mockResolvedValue({
+      instanceId: 'i-123',
+      stackStatus: 'CREATE_COMPLETE',
+      stackId: 'source-stack-id',
+    });
+    recoveryCleanupMock.mockRejectedValueOnce(new AWSError('Denied recovery policy inspection'));
+    await destroyCommand.handler?.({ force: true, deleteConfig: true, _: [], $0: 'openclaw-aws' });
+    expect(execaMock).not.toHaveBeenCalled();
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(handleErrorMock).toHaveBeenCalled();
+  });
+
   it('destroys stack when force is true', async () => {
-    getStackStatusMock.mockResolvedValue({ instanceId: 'i-123', stackStatus: 'CREATE_COMPLETE' });
+    getStackStatusMock.mockResolvedValue({
+      instanceId: 'i-123',
+      stackStatus: 'CREATE_COMPLETE',
+      stackId: 'source-stack-id',
+    });
     execaMock.mockResolvedValue({});
     promptsMock.mockResolvedValue({ deleteConfig: false });
 
@@ -205,7 +227,11 @@ describe('destroy command', () => {
       context.awsEnv.OPENCLAW_CDK_OPERATION = 'deploy';
       buildCommandContextMock.mockResolvedValue(context);
       listConfigNamesMock.mockReturnValue(['alpha']);
-      getStackStatusMock.mockResolvedValue({ instanceId: 'i-123', stackStatus: 'CREATE_COMPLETE' });
+      getStackStatusMock.mockResolvedValue({
+        instanceId: 'i-123',
+        stackStatus: 'CREATE_COMPLETE',
+        stackId: 'source-stack-id',
+      });
       execaMock.mockResolvedValue({});
       promptsMock.mockResolvedValue({ confirmText: 'DESTROY ALL', deleteConfig: false });
 
