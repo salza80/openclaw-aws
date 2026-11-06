@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { prepareInactiveRecoveryTarget } from './recovery-target.js';
-import { prepareRecoveryDelivery } from './recovery-delivery.js';
+import { prepareRecoveryDelivery, executeRecoveryDelivery } from './recovery-delivery.js';
 import type { AwsTarget } from '../aws/target.js';
 import { resolveAwsTarget } from '../aws/target.js';
 import { inspectRecoveryPresence, type RecoveryPresence } from '../aws/recovery-presence.js';
@@ -288,26 +288,25 @@ async function continueRestoreOnTarget(
       ? 'Installing the native service and verifying health while integrations and restored work remain paused...'
       : 'Restoring the verified native archive, reconciling credentials and validating every member with the Gateway inactive...',
   );
-  const remote = await executeSsm(
-    target.instanceId,
-    ctx.target,
-    [
-      recoveryRemoteCommand({
-        operationId: bootstrap.operationId,
-        region: recoveryTarget.region,
-        account: ctx.target.account,
-        bucket: point.job.settings.bucket,
-        pluginDirectory: job.pluginDirectory,
-        worker: 'restore-worker.js',
-        mode,
-        artifact,
-        request: {
-          ...request,
-        },
-      }),
-    ],
-    { executionSeconds: 45 * 60 },
-  );
+  const remote = await executeRecoveryDelivery({
+    instanceId: target.instanceId,
+    target: ctx.target,
+    operationId: bootstrap.operationId,
+    activate: mode === 'activate',
+    command: recoveryRemoteCommand({
+      operationId: bootstrap.operationId,
+      region: recoveryTarget.region,
+      account: ctx.target.account,
+      bucket: point.job.settings.bucket,
+      pluginDirectory: job.pluginDirectory,
+      worker: 'restore-worker.js',
+      mode,
+      artifact,
+      request: {
+        ...request,
+      },
+    }),
+  });
   const result = object(JSON.parse(remote.stdout));
   if (
     result.ok !== true ||

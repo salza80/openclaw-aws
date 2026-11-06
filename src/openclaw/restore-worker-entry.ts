@@ -139,7 +139,9 @@ async function main() {
         ok: false,
         operationId: job.bootstrap.operationId,
         message:
-          'Restore failed; leave Gateway inactive and inspect the owned maintenance record, staging and retained resources before retrying.',
+          mode === '--activate' || mode === '--activate-clone'
+            ? 'Recovery activation failed; Gateway inactivity is unconfirmed. Inspect the target immediately and retain its owned maintenance records and resources.'
+            : 'Recovery staging failed; activation was not requested. Inspect the owned maintenance record, staging and retained resources before retrying.',
       }),
       { mode: 0o600 },
     );

@@ -9,6 +9,30 @@ import { readRecoveryVault } from './vault.js';
 import { ensureRecoveryStack } from '../aws/auxiliary-stacks.js';
 import { uploadRecoveryArtifact } from '../aws/recovery-artifact.js';
 import { recoveryStore } from '../aws/recovery-store.js';
+import { executeSsm } from '../aws/ssm.js';
+
+/** SSM hides worker output on failure. Activation may already have started;
+ * surface uncertainty without exposing private diagnostics or assuming rollback.
+ */
+export async function executeRecoveryDelivery(options: {
+  instanceId: string;
+  target: AwsTarget;
+  command: string;
+  operationId: string;
+  activate: boolean;
+}) {
+  try {
+    return await executeSsm(options.instanceId, options.target, [options.command], {
+      executionSeconds: 45 * 60,
+    });
+  } catch {
+    throw new Error(
+      options.activate
+        ? `Recovery activation outcome is unconfirmed for ${options.operationId}. The Gateway may be running; inspect the target immediately before retrying or cleanup. Owned resources are retained.`
+        : `Recovery staging outcome is unconfirmed for ${options.operationId}. Activation was not requested; inspect the retained target and operation before retrying. Owned resources may remain billable.`,
+    );
+  }
+}
 
 /** Shared read-only archive access and immutable delivery setup. Caller persists
  * the returned pins before executing code, then removes this temporary lease.

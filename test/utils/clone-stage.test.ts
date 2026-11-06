@@ -140,6 +140,17 @@ async function stage() {
   return stageClone(plan, recoveryTarget, { 'openrouter-api-key': 'explicit-target-key' });
 }
 describe('independent clone AWS operations', () => {
+  it('reports unknown Gateway state after an unconfirmed activation, without publishing worker details', async () => {
+    await stage();
+    mocks.remote.mockResolvedValueOnce({
+      stdout: JSON.stringify({ verified: true, masked: true, inactive: true }),
+    });
+    mocks.remote.mockRejectedValueOnce(new Error('private-worker-details'));
+    await expect(resumeClone(plan.operationId, { activate: true })).rejects.toThrow(
+      'Gateway may be running',
+    );
+    expect(loadCloneRecord(plan.operationId).phase).toBe('ready-inactive');
+  });
   it('provisions once, imports explicit target credentials and removes source access while inactive', async () => {
     const record = await stage();
     expect(record.phase).toBe('ready-inactive');

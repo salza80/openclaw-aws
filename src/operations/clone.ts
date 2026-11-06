@@ -15,7 +15,7 @@ import { provisionInactiveTarget } from './deployment.js';
 import { configExistsByName, saveConfigByName } from '../cli/utils/config.js';
 import { recordDeploymentState, assertDeploymentTarget } from './state.js';
 import { saveCloneRecord, loadCloneRecord, cloneReport, type CloneRecord } from './clone-record.js';
-import { prepareRecoveryDelivery } from './recovery-delivery.js';
+import { prepareRecoveryDelivery, executeRecoveryDelivery } from './recovery-delivery.js';
 import {
   parseCloneJob,
   parseCloneWorkerResult,
@@ -23,7 +23,6 @@ import {
 } from '../openclaw/clone-contract.js';
 import { createSsmClient } from '../cli/utils/aws-clients.js';
 import { importRestoreProviderSecrets } from '../openclaw/restore-secrets.js';
-import { executeSsm } from '../aws/ssm.js';
 import { recoveryRemoteCommand, installedRecoveryRemoteCommand } from '../aws/recovery-delivery.js';
 import { removeRecoveryAccessStack } from '../aws/auxiliary-stacks.js';
 import { object } from '../openclaw/backup-contract.js';
@@ -221,20 +220,19 @@ export async function resumeClone(
         ? 'Verifying revoked source access and activating the fresh Gateway with integrations disconnected...'
         : 'Revalidating the already staged native clone...',
     );
-    const remote = await executeSsm(
-      live.instanceId,
+    const remote = await executeRecoveryDelivery({
+      instanceId: live.instanceId,
       target,
-      [
-        installedRecoveryRemoteCommand({
-          operationId,
-          pluginDirectory: delivery.job.pluginDirectory,
-          artifact: delivery.artifact,
-          requestSha256: delivery.request.sha256,
-          mode: activate ? 'activate-clone' : 'clone',
-        }),
-      ],
-      { executionSeconds: 45 * 60 },
-    );
+      operationId,
+      activate: Boolean(activate),
+      command: installedRecoveryRemoteCommand({
+        operationId,
+        pluginDirectory: delivery.job.pluginDirectory,
+        artifact: delivery.artifact,
+        requestSha256: delivery.request.sha256,
+        mode: activate ? 'activate-clone' : 'clone',
+      }),
+    });
     const output = object(JSON.parse(remote.stdout));
     if (output.ok !== true)
       throw new Error('Clone completion was not confirmed; inspect the target before retrying');
@@ -397,24 +395,23 @@ async function continueCloneStage(
   options.progress?.(
     'Creating fresh native identities and copying reviewed knowledge; source credentials and automatic integrations are excluded...',
   );
-  const remote = await executeSsm(
-    lease.target.instanceId,
-    ctx.target,
-    [
-      recoveryRemoteCommand({
-        operationId: record.operationId,
-        region: recoveryTarget.region,
-        account: ctx.target.account,
-        bucket: point.job.settings.bucket,
-        pluginDirectory: lease.delivery.job.pluginDirectory,
-        worker: 'restore-worker.js',
-        mode: 'clone',
-        artifact: lease.delivery.artifact,
-        request: lease.delivery.request,
-      }),
-    ],
-    { executionSeconds: 45 * 60 },
-  );
+  const remote = await executeRecoveryDelivery({
+    instanceId: lease.target.instanceId,
+    target: ctx.target,
+    operationId: record.operationId,
+    activate: false,
+    command: recoveryRemoteCommand({
+      operationId: record.operationId,
+      region: recoveryTarget.region,
+      account: ctx.target.account,
+      bucket: point.job.settings.bucket,
+      pluginDirectory: lease.delivery.job.pluginDirectory,
+      worker: 'restore-worker.js',
+      mode: 'clone',
+      artifact: lease.delivery.artifact,
+      request: lease.delivery.request,
+    }),
+  });
   const output = object(JSON.parse(remote.stdout));
   if (output.ok !== true) throw new Error('Remote clone did not prove readiness');
   record.result = parseCloneWorkerResult(output, lease.delivery.job);
