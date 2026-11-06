@@ -2,6 +2,8 @@
 
 This is an AWS-only CLI for OpenClaw deployments. Keep TypeScript on major version 6. Preserve v1 configuration, deployment names and existing SSM parameter paths. Do not add runtime registries, Hermes adapters or another model router.
 
+- Link completed work with `Closes #<issue>` in the pull request description before merging so GitHub closes the issue automatically. Keep routine progress in the local execution plan instead of adding issue comments. Preserve deferred validation explicitly in that plan and the relevant remaining issue; issue closure must not be described as proof that an unrun test passed.
+
 - CLI commands collect inputs, display plans and handle errors. Share provisioning through `src/operations/deployment.ts`; commands must not call other command handlers. `init` and `create` share the configuration workflow.
 - `src/aws/target.ts` resolves credentials per target without modifying `process.env`. Pass that target to AWS clients. CDK child processes must use a captured configuration snapshot instead of rereading editable files, plus a private working/home directory so concurrent assemblies and unrelated CDK settings cannot interfere. Resolve a fresh, sufficiently long-lived child environment for each CDK attempt. Never persist or log credentials, provider keys, tokens or raw native auth results.
 - Use `src/aws/ssm.ts` for bounded remote execution and `src/openclaw/commands.ts` for the Ubuntu/private-prefix/legacy-NVM environment and native structured results. Check status, exit code and truncation before interpreting output. Native reads must not send model prompts unless explicitly requested.
