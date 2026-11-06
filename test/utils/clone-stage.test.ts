@@ -4,7 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { cloneRecordFixture, clonePreviewFixture } from '../helpers/fixtures/clone.js';
+import {
+  cloneRecordFixture,
+  clonePreviewFixture,
+  cloneBedrockPlan,
+} from '../helpers/fixtures/clone.js';
 import { backupReceipt, backupVault, backupSource } from '../helpers/fixtures/backup.js';
 import { testTarget } from '../helpers/fixtures/command-context.js';
 import { StackNotFoundError } from '../../src/cli/utils/errors.js';
@@ -25,6 +29,11 @@ const mocks = vi.hoisted(() => ({
   state: vi.fn(),
   guard: vi.fn(),
   ssm: vi.fn(),
+  bedrock: vi.fn(),
+}));
+vi.mock('../../src/operations/recovery-bedrock.js', async (load) => ({
+  ...(await load<object>()),
+  ensureRecoveryBedrockAccess: mocks.bedrock,
 }));
 vi.mock('../../src/operations/deployment.js', () => ({ provisionInactiveTarget: mocks.provision }));
 vi.mock('../../src/aws/recovery-source.js', async (load) => ({
@@ -140,6 +149,28 @@ async function stage() {
   return stageClone(plan, recoveryTarget, { 'openrouter-api-key': 'explicit-target-key' });
 }
 describe('independent clone AWS operations', () => {
+  it('pins the clone request before shared IAM setup and never dispatches native work after IAM uncertainty', async () => {
+    plan.bedrock = cloneBedrockPlan();
+    plan.context.config.openclaw = {
+      apiProvider: 'amazon-bedrock',
+      authMode: 'instance-role',
+      bedrock: { region: plan.bedrock.intent.inferenceRegion },
+    };
+    plan.preview.providersInUse = ['amazon-bedrock'];
+    plan.preview.content.members[0].model = plan.bedrock.intent.models[0];
+    mocks.bedrock.mockImplementation(async ({ record }) => {
+      const saved = loadCloneRecord(plan.operationId);
+      expect(saved.delivery!.job.bedrock).toEqual(record.bedrock);
+      expect(saved.permissionCleanupPending).toBe(true);
+      expect(mocks.remote).not.toHaveBeenCalled();
+      throw new Error('uncertain IAM');
+    });
+    await expect(stageClone(plan, recoveryTarget, {})).rejects.toThrow(/did not complete/);
+    expect(mocks.bedrock).toHaveBeenCalledOnce();
+    expect(mocks.remote).not.toHaveBeenCalled();
+    expect(mocks.ssm).not.toHaveBeenCalled();
+    expect(loadCloneRecord(plan.operationId).delivery!.job.credentials.providers).toEqual([]);
+  });
   it('reports unknown Gateway state after an unconfirmed activation, without publishing worker details', async () => {
     await stage();
     mocks.remote.mockResolvedValueOnce({

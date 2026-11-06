@@ -4,7 +4,10 @@ import { OPENCLAW_PROVIDER_SETUP } from './install.js';
 export type ExplicitCloneCredentials = Partial<Record<ApiKeyProvider, string>>;
 /** No ambient environment or archived credentials are candidates. */
 export function explicitCloneCredentials(primary: Provider, values: ExplicitCloneCredentials) {
-  if (!isApiKeyProvider(primary) || !Object.hasOwn(values, primary))
+  if (
+    primary !== 'amazon-bedrock' &&
+    (!isApiKeyProvider(primary) || !Object.hasOwn(values, primary))
+  )
     throw new Error('Clone requires explicit credentials for the selected target provider');
   for (const [provider, value] of Object.entries(values))
     if (

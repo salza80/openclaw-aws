@@ -114,11 +114,15 @@ export function validateConfig(config: OpenClawConfig): void {
   }
 }
 
-/** Check new-instance inputs without making older configs unusable for lifecycle commands. */
-export function validateProvisioningConfig(config: OpenClawConfig): void {
+/** Fresh onboarding needs a selected model. An inactive clone will instead
+ * receive its entire reviewed native model policy before activation. */
+export function validateProvisioningConfig(
+  config: OpenClawConfig,
+  options: { clonedModelPolicy?: boolean } = {},
+): void {
   validateConfig(config);
   const errors: string[] = [];
-  if (config.openclaw?.apiProvider === 'amazon-bedrock') {
+  if (config.openclaw?.apiProvider === 'amazon-bedrock' && !options.clonedModelPolicy) {
     try {
       const model = nativeModelReference(config.openclaw.model);
       if (!model.startsWith('amazon-bedrock/')) throw new Error('Different provider');

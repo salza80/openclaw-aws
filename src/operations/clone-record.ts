@@ -64,7 +64,7 @@ export function loadCloneRecord(operationId: string): CloneRecord {
     'ready-inactive',
     'active',
   ]);
-  validateProvisioningConfig(base.config);
+  validateProvisioningConfig(base.config, { clonedModelPolicy: true });
   if (!base.account || !base.partition) throw new Error('Clone target account is not pinned');
   const preview = object(value.preview);
   const credentials = object(value.credentials);
@@ -74,13 +74,14 @@ export function loadCloneRecord(operationId: string): CloneRecord {
     !/^[a-f0-9]{64}$/.test(String(preview.contentDigest)) ||
     !/^[a-f0-9]{64}$/.test(String(preview.policyDigest)) ||
     !Array.isArray(credentials.providers) ||
-    !credentials.providers.length ||
     credentials.providers.some(
       (provider) =>
         typeof provider !== 'string' || !Object.hasOwn(OPENCLAW_PROVIDER_SETUP, provider),
     ) ||
     new Set(credentials.providers).size !== credentials.providers.length ||
-    !credentials.providers.includes(credentials.primary) ||
+    (credentials.primary === 'amazon-bedrock'
+      ? !base.bedrock
+      : !credentials.providers.includes(credentials.primary)) ||
     credentials.primary !== base.config.openclaw?.apiProvider ||
     JSON.stringify(credentials.cloudflare ?? null) !==
       JSON.stringify(base.config.openclaw?.cloudflare ?? null)

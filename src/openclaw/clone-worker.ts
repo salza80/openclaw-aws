@@ -33,7 +33,7 @@ export async function runCloneWorker(
   signal?: AbortSignal,
 ): Promise<CloneWorkerResult> {
   const job = parseCloneJob(input);
-  const context = await verifiedRestoreTarget(job, signal);
+  const context = await verifiedRestoreTarget(job, signal, { kind: 'clone' });
   const { root, work, operationId, owner, credentials, request, assertInactive, packageJson } =
     context;
   const digest = cloneRequestDigest(job);
@@ -66,6 +66,9 @@ export async function runCloneWorker(
         nativePackageJson: packageJson,
         configurationHash: ready.configurationHash,
         signal,
+        ...(job.bedrock
+          ? { bedrock: { plan: job.bedrock, deploymentRegion: job.target.region } }
+          : {}),
       });
       await assertInactive();
       return ready;
@@ -155,7 +158,12 @@ export async function runCloneWorker(
       content,
       policy,
       apiProvider: job.credentials.primary,
-      providerCredential: selected[job.credentials.primary]!,
+      ...(job.credentials.primary === 'amazon-bedrock'
+        ? {}
+        : { providerCredential: selected[job.credentials.primary]! }),
+      ...(job.bedrock
+        ? { bedrock: { plan: job.bedrock, deploymentRegion: job.target.region } }
+        : {}),
       additionalCredentials: selected,
       cloudflareAccountId: job.credentials.cloudflare?.accountId,
       cloudflareGatewayId: job.credentials.cloudflare?.gatewayId,

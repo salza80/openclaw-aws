@@ -25,8 +25,13 @@ export interface RestoreJob {
   pluginDirectory: string;
   bedrock?: BedrockRecoveryPlan;
 }
-export function parseRestoreJob(value: unknown): RestoreJob {
+export function parseRestoreJob(value: unknown, options: { kind?: 'clone' } = {}): RestoreJob {
   const row = object(value);
+  if (
+    (options.kind === 'clone' && row.kind !== 'clone') ||
+    (row.kind !== undefined && row.kind !== (options.kind ?? 'restore'))
+  )
+    throw new Error('Recovery request kind differs from the selected workflow');
   if (row.schemaVersion !== 1) throw new Error('Invalid restore job version');
   const bootstrap = parseRestoreBootstrap(row.bootstrap);
   const target = object(row.target);
@@ -59,7 +64,7 @@ export function parseRestoreJob(value: unknown): RestoreJob {
           account,
           partition: job.source.stackId.split(':')[1],
         });
-  if (!isDeepStrictEqual(bedrock?.intent, capture.credentials.bedrock))
+  if (options.kind !== 'clone' && !isDeepStrictEqual(bedrock?.intent, capture.credentials.bedrock))
     throw new Error('Recovery Bedrock setup differs from the saved native connection intent');
   return {
     schemaVersion: 1,

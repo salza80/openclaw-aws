@@ -36,6 +36,11 @@ import { inspectBackup } from './backup.js';
 import { isDeepStrictEqual } from 'node:util';
 import { cleanupInactiveRecovery } from './restore-cleanup.js';
 import { isApiKeyProvider } from '../openclaw/connections.js';
+import { cloneBedrockModels } from '../openclaw/clone-policy.js';
+import { BEDROCK_PLUGIN } from '../openclaw/bedrock-configuration.js';
+import { parseBedrockRecoveryIntent } from '../openclaw/bedrock-recovery-intent.js';
+import { parseBedrockRecoveryPlan } from '../openclaw/bedrock-recovery-plan.js';
+import { prepareRecoveryBedrock, ensureRecoveryBedrockAccess } from './recovery-bedrock.js';
 
 /** Whole-team knowledge clone intake. Source infrastructure may still be live;
  * source identity is not adopted, so no takeover/destruction check is required.
@@ -46,6 +51,7 @@ export async function prepareClone(options: {
   pointId: string;
   name: string;
   apiProvider: Provider;
+  bedrockRegion?: string;
   cloudflareAccountId?: string;
   cloudflareGatewayId?: string;
   region?: string;
@@ -57,12 +63,30 @@ export async function prepareClone(options: {
 }) {
   const name = validateProjectName(options.name);
   if (name !== true) throw new Error(String(name));
-  if (!Object.hasOwn(OPENCLAW_PROVIDER_SETUP, options.apiProvider))
+  if (options.apiProvider !== 'amazon-bedrock' && !isApiKeyProvider(options.apiProvider))
     throw new Error('Unsupported clone model provider');
   openClawProviderAuthArgs(options);
   const operationId = backupOperationId(options.operationId);
   options.signal?.throwIfAborted();
   const { point, preview } = await previewSavedClone(options);
+  const models = cloneBedrockModels(preview.policy, preview.content.members);
+  const wantsBedrock =
+    options.apiProvider === 'amazon-bedrock' ||
+    models.length > 0 ||
+    options.bedrockRegion !== undefined;
+  if (wantsBedrock && !options.bedrockRegion && !point.capture.credentials.bedrock?.inferenceRegion)
+    throw new Error(
+      'Clone Bedrock setup requires --bedrock-region or a saved managed inference region',
+    );
+  const intent = wantsBedrock
+    ? parseBedrockRecoveryIntent({
+        authMode: 'instance-role',
+        inferenceRegion:
+          options.bedrockRegion ?? point.capture.credentials.bedrock?.inferenceRegion,
+        models,
+        plugin: BEDROCK_PLUGIN,
+      })
+    : undefined;
   if (
     preview.providersInUse.includes('cloudflare-ai-gateway') &&
     options.apiProvider !== 'cloudflare-ai-gateway-api-key'
@@ -92,6 +116,9 @@ export async function prepareClone(options: {
     additionalStagingBytes,
     openclaw: {
       apiProvider: options.apiProvider,
+      ...(options.apiProvider === 'amazon-bedrock'
+        ? { authMode: 'instance-role' as const, bedrock: { region: intent!.inferenceRegion } }
+        : {}),
       ...(options.apiProvider === 'cloudflare-ai-gateway-api-key'
         ? {
             cloudflare: {
@@ -102,8 +129,9 @@ export async function prepareClone(options: {
         : {}),
     },
   });
+  const bedrock = await prepareRecoveryBedrock(plan.context, intent);
   options.signal?.throwIfAborted();
-  return { ...plan, schemaVersion: 1 as const, preview };
+  return { ...plan, schemaVersion: 1 as const, preview, ...(bedrock ? { bedrock } : {}) };
 }
 export type ClonePlan = Awaited<ReturnType<typeof prepareClone>>;
 
@@ -242,6 +270,15 @@ export async function resumeClone(
       if (record.activation.configurationHash !== record.result!.configurationHash)
         throw new Error('Clone activation configuration differs from staging');
       record.phase = 'active';
+      if (record.bedrock)
+        recordDeploymentState(ctx, status, {
+          bedrockConnection: {
+            authMode: 'instance-role',
+            inferenceRegion: record.bedrock.intent.inferenceRegion,
+            operationId: record.operationId,
+            checkedAt: new Date().toISOString(),
+          },
+        });
     } else {
       record.result = parseCloneWorkerResult(output, delivery.job);
       record.phase = 'ready-inactive';
@@ -267,12 +304,28 @@ export async function stageClone(
   const primary = ctx.config.openclaw?.apiProvider;
   if (
     !primary ||
-    !isApiKeyProvider(primary) ||
+    (primary !== 'amazon-bedrock' && !isApiKeyProvider(primary)) ||
     plan.operationId !== plan.bootstrap.operationId ||
     ctx.target.account !== recoveryTarget.account ||
     recoveryTarget.region !== plan.point.job.source.region
   )
     throw new Error('Clone plan and selected AWS target are inconsistent');
+  const bedrock =
+    plan.bedrock === undefined
+      ? undefined
+      : parseBedrockRecoveryPlan(plan.bedrock, {
+          account: ctx.target.account,
+          partition: ctx.target.arn.split(':')[1],
+        });
+  if (
+    !isDeepStrictEqual(
+      bedrock?.intent.models ?? [],
+      cloneBedrockModels(plan.preview.policy, plan.preview.content.members),
+    ) ||
+    (primary === 'amazon-bedrock' &&
+      (!bedrock || ctx.config.openclaw?.bedrock?.region !== bedrock.intent.inferenceRegion))
+  )
+    throw new Error('Clone Bedrock approval differs from its selected native model policy');
   const selected = explicitCloneCredentials(primary, values);
   const available = new Set(
     selected.providers.flatMap((provider) => [
@@ -280,6 +333,7 @@ export async function stageClone(
       ...(OPENCLAW_PROVIDER_SETUP[provider].providerAliases ?? []),
     ]),
   );
+  if (bedrock) available.add('amazon-bedrock');
   const missing = plan.preview.providersInUse.filter((provider) => !available.has(provider));
   if (missing.length)
     throw new Error(`Clone requires explicit compatible credentials for: ${missing.join(', ')}`);
@@ -295,6 +349,7 @@ export async function stageClone(
     name: ctx.name,
     config: ctx.config,
     bootstrap: plan.bootstrap,
+    ...(bedrock ? { bedrock } : {}),
     recovery: {
       uri: plan.point.vaultUri,
       region: recoveryTarget.region,
@@ -359,6 +414,8 @@ async function continueCloneStage(
   options: { progress?: (message: string) => void },
   environment?: Record<string, string>,
 ): Promise<CloneRecord> {
+  record.permissionCleanupPending = true;
+  saveCloneRecord(record);
   const lease = await prepareRecoveryDelivery({
     record,
     ctx,
@@ -372,11 +429,19 @@ async function continueCloneStage(
         kind: 'clone',
         preview: record.preview,
         credentials: record.credentials,
+        ...(record.bedrock ? { bedrock: record.bedrock } : {}),
       }),
   });
   record.delivery = lease.delivery;
   record.permissionCleanupPending = true;
   saveCloneRecord(record);
+  await ensureRecoveryBedrockAccess({
+    ctx,
+    record,
+    jobTarget: lease.delivery.job.target,
+    source: lease.target,
+    save: () => saveCloneRecord(record),
+  });
   if (environment) {
     const ssm = createSsmClient(ctx.target);
     try {

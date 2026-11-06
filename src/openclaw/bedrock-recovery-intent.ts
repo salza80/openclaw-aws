@@ -65,14 +65,11 @@ const modelReferences = (value: unknown): string[] => {
 /** Read only selected native references and the managed connection. Catalog
  * allowlists remain native policy; unused historical IAM grants are not cloned.
  * Alias lookup is configuration resolution, not an alternative model catalog. */
-export function savedBedrockRecoveryIntent(options: {
+export function selectedBedrockModels(options: {
   config: unknown;
-  home: string;
-  deploymentRegion: string;
-  environment?: Record<string, string>;
   members?: { id: string; model?: string }[];
   sessionModels?: string[];
-}): BedrockRecoveryIntent | undefined {
+}): string[] {
   const config = modelObject(options.config);
   const agents = record(config.agents),
     defaults = record(agents.defaults);
@@ -111,12 +108,24 @@ export function savedBedrockRecoveryIntent(options: {
       add(member.model, { ...aliases, ...record(configured?.models) });
     }
   for (const reference of options.sessionModels ?? []) add(reference);
+  return [...models].sort();
+}
+export function savedBedrockRecoveryIntent(options: {
+  config: unknown;
+  home: string;
+  deploymentRegion: string;
+  environment?: Record<string, string>;
+  members?: { id: string; model?: string }[];
+  sessionModels?: string[];
+}): BedrockRecoveryIntent | undefined {
+  const config = modelObject(options.config);
+  const models = selectedBedrockModels(options);
   const entry = record(record(record(config.plugins).entries)[BEDROCK_PLUGIN.id]);
   const discovery = record(record(entry.config).discovery);
   const providers = record(record(config.models).providers);
   const profiles = record(record(config.auth).profiles);
   if (
-    !models.size &&
+    !models.length &&
     discovery.enabled !== true &&
     !Object.hasOwn(providers, BEDROCK_PLUGIN.id) &&
     !Object.hasOwn(profiles, 'amazon-bedrock:instance-role')
@@ -134,7 +143,7 @@ export function savedBedrockRecoveryIntent(options: {
   return parseBedrockRecoveryIntent({
     authMode: 'instance-role',
     inferenceRegion: discovery.region,
-    models: [...models],
+    models,
     plugin: BEDROCK_PLUGIN,
   });
 }

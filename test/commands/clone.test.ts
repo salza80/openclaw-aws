@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cloneRecordFixture, clonePreviewFixture } from '../helpers/fixtures/clone.js';
+import {
+  cloneRecordFixture,
+  clonePreviewFixture,
+  cloneBedrockPlan,
+} from '../helpers/fixtures/clone.js';
 import { backupReceipt } from '../helpers/fixtures/backup.js';
 import { testTarget } from '../helpers/fixtures/command-context.js';
 const mocks = vi.hoisted(() => ({
@@ -60,6 +64,30 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 describe('clone CLI', () => {
+  it('supports keyless Bedrock and requests API keys only for copied API providers', async () => {
+    const plan = await mocks.prepare();
+    plan.bedrock = cloneBedrockPlan();
+    plan.preview.providersInUse = ['amazon-bedrock'];
+    mocks.prepare.mockResolvedValue(plan);
+    await runCloneCommand({ ...args, provider: 'bedrock', bedrockRegion: 'eu-central-1' });
+    expect(mocks.stage.mock.calls[0][2]).toEqual({});
+    expect(mocks.ssm).not.toHaveBeenCalled();
+    expect(() => cloneCredentialSources({ keyEnv: 'KEY' }, 'amazon-bedrock')).toThrow(
+      /cannot receive/,
+    );
+    plan.preview.providersInUse.push('openrouter');
+    await expect(runCloneCommand({ ...args, provider: 'bedrock' })).rejects.toThrow(
+      /explicit --credential-env/,
+    );
+    await runCloneCommand({
+      ...args,
+      provider: 'bedrock',
+      credentialEnv: ['openrouter=EXPLICIT_CLONE_TEST_KEY'],
+    });
+    expect(mocks.stage.mock.calls.at(-1)?.[2]).toEqual({
+      'openrouter-api-key': 'private-target-value',
+    });
+  });
   it('previews the whole team without credentials, approval or target provisioning', async () => {
     await runCloneCommand({ ...args, action: 'preview', yes: false });
     expect(mocks.stage).not.toHaveBeenCalled();

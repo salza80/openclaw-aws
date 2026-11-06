@@ -16,6 +16,13 @@ import type { BedrockRecoveryPlan } from './bedrock-recovery-plan.js';
 import { modelObject } from './model-contract.js';
 import { privateModelText } from './model-journal.js';
 import { assertDirectoryChain } from './restore-layout.js';
+import { restoredPluginInstalls } from './restore-plugins.js';
+
+export function assertRecoveryBedrockPlugin(registry: unknown, intent: BedrockRecoveryIntent) {
+  const plugin = restoredPluginInstalls(registry).find((entry) => entry.id === intent.plugin.id);
+  if (plugin?.spec !== intent.plugin.spec || plugin.integrity !== intent.plugin.integrity)
+    throw new Error('Recovery Bedrock plugin provenance differs from the reviewed artifact');
+}
 
 /** The recovery worker owns maintenance and proves the Gateway inactive. Only
  * managed noncredential selectors are rebased; operator/static AWS identities

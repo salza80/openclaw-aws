@@ -91,7 +91,7 @@ export async function prepareInactiveRecoveryTarget(options: {
     stack: { name: `OpenclawStack-${name}` },
     ...(options.openclaw ? { openclaw: structuredClone(options.openclaw) } : {}),
   };
-  if (options.kind === 'clone') validateProvisioningConfig(config);
+  if (options.kind === 'clone') validateProvisioningConfig(config, { clonedModelPolicy: true });
   const context: CommandContext = {
     name,
     config,

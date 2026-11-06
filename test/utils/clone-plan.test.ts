@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => ({
   capabilities: vi.fn(),
   region: vi.fn(),
   presence: vi.fn(),
+  bedrock: vi.fn(),
+}));
+vi.mock('../../src/operations/recovery-bedrock.js', async (load) => ({
+  ...(await load<object>()),
+  prepareRecoveryBedrock: mocks.bedrock,
 }));
 vi.mock('../../src/operations/clone-preview.js', () => ({ previewSavedClone: mocks.preview }));
 vi.mock('../../src/aws/target.js', async (load) => ({
@@ -31,6 +36,7 @@ vi.mock('../../src/cli/utils/config.js', () => ({
   getConfigRoot: () => '/fixture',
 }));
 import { prepareClone } from '../../src/operations/clone.js';
+import { cloneBedrockPlan } from '../helpers/fixtures/clone.js';
 const options = () => ({
   recoveryTarget: testTarget,
   vaultUri: backupReceipt.vaultUri,
@@ -74,6 +80,26 @@ beforeEach(() => {
   });
 });
 describe('inactive independent clone planning', () => {
+  it('resolves only selected policy routes for keyless clones, excluding saved conversation-only grants', async () => {
+    const value = await mocks.preview();
+    const bedrock = cloneBedrockPlan();
+    value.point.capture.credentials.bedrock = {
+      ...bedrock.intent,
+      models: [...bedrock.intent.models, 'amazon-bedrock/anthropic.old-session-v1:0'],
+    };
+    value.preview.policy.model = { primary: bedrock.intent.models[0] };
+    value.preview.providersInUse = ['amazon-bedrock'];
+    mocks.preview.mockResolvedValue(value);
+    mocks.bedrock.mockResolvedValue(bedrock);
+    const plan = await prepareClone({ ...options(), apiProvider: 'amazon-bedrock' });
+    expect(plan.bedrock).toEqual(bedrock);
+    expect(plan.context.config.openclaw).toEqual({
+      apiProvider: 'amazon-bedrock',
+      authMode: 'instance-role',
+      bedrock: { region: 'eu-central-1' },
+    });
+    expect(mocks.bedrock.mock.calls[0][1].models).toEqual(bedrock.intent.models);
+  });
   it('requires explicit Cloudflare endpoint setup before provisioning a mixed-provider clone', async () => {
     const value = await mocks.preview();
     value.preview.providersInUse = ['cloudflare-ai-gateway', 'openrouter'];

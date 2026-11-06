@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { object, textField } from './backup-contract.js';
 import { parseRestoreJob, type RestoreJob } from './restore-contract.js';
 import { OPENCLAW_PROVIDER_SETUP, openClawProviderAuthArgs } from './install.js';
-import type { ApiKeyProvider } from '../cli/types/index.js';
+import type { ApiKeyProvider, Provider } from '../cli/types/index.js';
 import { getApiKeyParamName } from '../cli/utils/api-keys.js';
 
 /** Recovery transport/runtime identity is shared; source identity adoption is not. */
@@ -10,14 +10,14 @@ export interface CloneJob extends RestoreJob {
   kind: 'clone';
   preview: { contentDigest: string; policyDigest: string };
   credentials: {
-    primary: ApiKeyProvider;
+    primary: Provider;
     providers: ApiKeyProvider[];
     cloudflare?: { accountId: string; gatewayId: string };
   };
 }
 export function parseCloneJob(value: unknown): CloneJob {
   const row = object(value);
-  const base = parseRestoreJob(row);
+  const base = parseRestoreJob(row, { kind: 'clone' });
   const preview = object(row.preview);
   const credentials = object(row.credentials);
   if (
@@ -25,14 +25,15 @@ export function parseCloneJob(value: unknown): CloneJob {
     !/^[a-f0-9]{64}$/.test(String(preview.contentDigest)) ||
     !/^[a-f0-9]{64}$/.test(String(preview.policyDigest)) ||
     !Array.isArray(credentials.providers) ||
-    !credentials.providers.length ||
     credentials.providers.length > Object.keys(OPENCLAW_PROVIDER_SETUP).length ||
     credentials.providers.some(
       (provider) =>
         typeof provider !== 'string' || !Object.hasOwn(OPENCLAW_PROVIDER_SETUP, provider),
     ) ||
     new Set(credentials.providers).size !== credentials.providers.length ||
-    !credentials.providers.includes(credentials.primary)
+    (credentials.primary === 'amazon-bedrock'
+      ? !base.bedrock
+      : !credentials.providers.includes(credentials.primary))
   )
     throw new Error(
       'Clone requires a bound whole-team preview and explicit target provider selection',
@@ -40,7 +41,7 @@ export function parseCloneJob(value: unknown): CloneJob {
   const providers = [...credentials.providers] as ApiKeyProvider[];
   if (base.backup.capture.members.some((member) => !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(member.id)))
     throw new Error('Clone requires supported native role IDs');
-  const primary = credentials.primary as ApiKeyProvider;
+  const primary = credentials.primary as Provider;
   const cloudflare =
     credentials.cloudflare === undefined ? undefined : object(credentials.cloudflare);
   const selected = {
