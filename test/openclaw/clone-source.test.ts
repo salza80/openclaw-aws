@@ -12,6 +12,7 @@ import {
 import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
+import { execa } from 'execa';
 import {
   archivedClonePath,
   prepareCloneConfigView,
@@ -37,7 +38,7 @@ beforeEach(async () => {
   state = path.join(staging, 'payload/state');
   view = path.join(root, 'view');
   await mkdir(state, { recursive: true });
-  await mkdir(view);
+  await mkdir(view, { mode: 0o700 });
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
@@ -51,6 +52,64 @@ const input = () => ({
 });
 
 describe('isolated archived clone configuration', () => {
+  it('ships a read-only bundled preview with no physical staging paths or source/operator credentials in the result', async () => {
+    const original = JSON.stringify({
+      agents: { ownership: 'explicit', entries: { main: { model: 'openrouter/auto' } } },
+    });
+    await writeFile(path.join(state, 'openclaw.json'), original);
+    await writeFile(path.join(state, '.env'), 'OPENROUTER_API_KEY=source-private-provider-key\n');
+    const workspace = path.join(staging, 'payload/workspace');
+    await mkdir(workspace, { recursive: true });
+    await writeFile(path.join(workspace, 'SOUL.md'), 'cloned persona');
+    await writeFile(path.join(workspace, '.env'), 'source-private-channel-key');
+    const request = path.join(view, 'request.json');
+    const result = path.join(view, 'result.json');
+    await writeFile(
+      request,
+      JSON.stringify({
+        ...input(),
+        schemaVersion: 1,
+        members,
+        nativePackageJson,
+        moves: [...input().moves, { source: workspace, destination: members[0].workspace }],
+      }),
+      { mode: 0o600 },
+    );
+    const args = [
+      path.resolve('dist/native-plugins/aws-s3/restore-worker.js'),
+      '--preview-clone',
+      request,
+      result,
+    ];
+    const options = {
+      env: {
+        HOME: path.join(root, 'operator'),
+        PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+        OPENAI_API_KEY: 'operator-private-provider-key',
+      },
+      extendEnv: false,
+      timeout: 120000,
+    };
+    await execa(process.execPath, args, options);
+    const raw = await readFile(result, 'utf8');
+    const preview = JSON.parse(raw);
+    expect(preview.scope).toBe('whole-team-knowledge');
+    expect(preview.providersInUse).toEqual(['openrouter']);
+    expect(preview.content.members[0].files.map((file: { path: string }) => file.path)).toEqual([
+      'SOUL.md',
+    ]);
+    expect(preview.content.members[0].omitted).toContainEqual({
+      path: '.env',
+      reason: 'credential-file',
+    });
+    expect(raw).not.toContain(staging);
+    expect(raw).not.toContain('private-provider-key');
+    expect(raw).not.toContain('source-private-channel-key');
+    expect(preview.content.members[0].files[0]).not.toHaveProperty('source');
+    expect(await readFile(path.join(state, 'openclaw.json'), 'utf8')).toBe(original);
+    await expect(execa(process.execPath, args, options)).rejects.toThrow();
+    expect(await readFile(result, 'utf8')).toBe(raw);
+  }, 180000);
   it('rewrites nested JSON5 includes while retaining native merge directives and never reading live absolute link targets', async () => {
     await mkdir(path.join(state, 'parts'));
     await writeFile(

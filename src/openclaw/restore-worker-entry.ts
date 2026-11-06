@@ -6,11 +6,12 @@ import { execa } from 'execa';
 import { parseRestoreJob } from './restore-contract.js';
 import { runRestoreWorker } from './restore-worker.js';
 import { runRestoreActivation } from './restore-activation.js';
+import { parseClonePreviewRequest, previewCloneStaging } from './clone-preview.js';
 
 async function main() {
   const [mode, inputFile, resultFile] = process.argv.slice(2);
   if (
-    !['--lock', '--run', '--lock-activate', '--activate'].includes(mode) ||
+    !['--lock', '--run', '--lock-activate', '--activate', '--preview-clone'].includes(mode) ||
     !inputFile ||
     !resultFile ||
     process.argv.length !== 5
@@ -30,6 +31,27 @@ async function main() {
     input = JSON.parse(await file.readFile('utf8'));
   } finally {
     await file.close();
+  }
+  if (mode === '--preview-clone') {
+    if (path.dirname(path.resolve(inputFile)) !== path.dirname(path.resolve(resultFile)))
+      throw new Error('Clone preview files must share a private operation directory');
+    const directory = await lstat(path.dirname(path.resolve(inputFile)));
+    if (
+      !directory.isDirectory() ||
+      directory.isSymbolicLink() ||
+      directory.uid !== process.getuid?.() ||
+      directory.mode & 0o077
+    )
+      throw new Error('Clone preview directory is not private');
+    const cancellation = new AbortController();
+    process.once('SIGTERM', () => cancellation.abort());
+    process.once('SIGINT', () => cancellation.abort());
+    const result = await previewCloneStaging(
+      parseClonePreviewRequest(input),
+      AbortSignal.any([cancellation.signal, AbortSignal.timeout(10 * 60 * 1000)]),
+    );
+    await writeFile(resultFile, JSON.stringify(result), { flag: 'wx', mode: 0o600 });
+    return;
   }
   const job = parseRestoreJob(input);
   const root = path.join(homedir(), '.openclaw-aws');
