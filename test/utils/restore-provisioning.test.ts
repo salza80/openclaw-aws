@@ -36,7 +36,11 @@ vi.mock('../../src/cli/utils/cdk.js', () => ({
   withCDKWorkspace: async (env: object, operation: (workspace: object) => Promise<unknown>) =>
     operation({ env, cwd: '/private/cdk-workspace' }),
 }));
-import { provisionRestoreTarget, deployDeployment } from '../../src/operations/deployment.js';
+import {
+  provisionRestoreTarget,
+  provisionInactiveTarget,
+  deployDeployment,
+} from '../../src/operations/deployment.js';
 import { StackNotFoundError } from '../../src/cli/utils/errors.js';
 const restore = {
   operationId: '11111111-1111-1111-1111-111111111111',
@@ -83,6 +87,25 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('inactive restore provisioning', () => {
+  it('uses the same masked bootstrap for clone setup while recording independent lineage before its callback can fail', async () => {
+    const pointId = '22222222-2222-2222-2222-222222222222';
+    await expect(
+      provisionInactiveTarget(ctx, { restore, clonedFrom: { pointId } }, async () => {
+        throw new Error('clone callback failed');
+      }),
+    ).rejects.toThrow('clone callback failed');
+    expect(mocks.state).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ stackId }),
+      { newlyCreated: true, clonedFrom: { operationId: restore.operationId, pointId } },
+    );
+    const writes = mocks.ssm.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command instanceof PutParameterCommand);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].input.Name).toBe('/openclaw/alpha/gateway-token');
+    expect(mocks.held).toBe(false);
+  });
   it('creates only a fresh Gateway credential and holds the lock through restoration', async () => {
     const finish = vi.fn(async (outputs) => {
       expect(mocks.held).toBe(true);

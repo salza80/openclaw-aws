@@ -15,9 +15,11 @@ import { pipeline } from 'node:stream/promises';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
+import { fileURLToPath } from 'node:url';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import type { AwsTarget } from '../aws/target.js';
 import { nativeStorageReadConfig } from './storage-config.js';
+import type { ClonePreview, ClonePreviewRequest } from './clone-preview.js';
 
 const helperSpec = new URL('../../templates/openclaw/native-helper/', import.meta.url);
 const pluginFiles = new URL('../../dist/native-plugins/aws-s3/', import.meta.url);
@@ -337,6 +339,68 @@ export async function runBackupHelper(options: {
     // Child failures contain environment/command/output. Never let them escape with secrets.
     throw new Error(
       'Native recovery operation failed; the recovery point was preserved. Check vault access, the retained key and compatibility before retrying',
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+/** Run our bundled read-only preview with the explicitly managed native runtime.
+ * Neither a global installation nor the operator's native config is consulted.
+ */
+export async function runClonePreviewHelper(options: {
+  request: Omit<ClonePreviewRequest, 'nativePackageJson'>;
+  cacheDirectory?: string;
+  signal?: AbortSignal;
+}): Promise<ClonePreview> {
+  const helper = await ensureBackupHelper({ cacheDirectory: options.cacheDirectory });
+  const directory = await mkdtemp(path.join(tmpdir(), 'openclaw-clone-preview-'));
+  try {
+    const input = path.join(directory, 'request.json');
+    const output = path.join(directory, 'result.json');
+    await writeFile(
+      input,
+      JSON.stringify({
+        ...options.request,
+        nativePackageJson: path.join(path.dirname(helper.entrypoint), 'package.json'),
+      }),
+      { mode: 0o600 },
+    );
+    await execa(
+      helper.node,
+      [fileURLToPath(new URL('restore-worker.js', pluginFiles)), '--preview-clone', input, output],
+      {
+        env: {
+          ...isolatedEnvironment(directory, helper.node),
+          OPENCLAW_DEFER_SHELL_ENV_FALLBACK: '1',
+        },
+        extendEnv: false,
+        timeout: 10 * 60 * 1000,
+        cancelSignal: options.signal,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    const info = await lstat(output);
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.mode & 0o077 ||
+      info.uid !== process.getuid?.() ||
+      info.size > 16 * 1024 * 1024
+    )
+      throw new Error('Unsafe clone preview result');
+    const result = JSON.parse(await readFile(output, 'utf8')) as ClonePreview;
+    if (
+      result.schemaVersion !== 1 ||
+      result.scope !== 'whole-team-knowledge' ||
+      !/^[a-f0-9]{64}$/.test(result.content?.digest) ||
+      !/^[a-f0-9]{64}$/.test(result.policyDigest)
+    )
+      throw new Error('Unsupported clone preview result');
+    return result;
+  } catch {
+    throw new Error(
+      'Managed clone preview failed; no AWS target was provisioned and the selected recovery point is unchanged',
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

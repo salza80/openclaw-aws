@@ -50,7 +50,7 @@ The archive and marker are pinned by actual S3 VersionId. The worker downloads, 
 
 `backup list`, `backup inspect <uuid>` and `backup verify <uuid>` require `--vault`, `--region` and optional `--profile`; they do not read local deployment configuration or source SSM keys. Listing confirms completed points against the native backup catalog using exact versions. Inspect reports filtered AWS/native metadata and prerequisites. Verify downloads and fully verifies the archive again from the clean helper, even when current S3 objects have later delete markers. Destroying a source removes only its verified recovery-access stack; the vault and key are independently retained.
 
-Backup creation/discovery/verification and fresh-host restoration use the same retained vault. Archive-and-destroy and independent cloning build on these operations; a standalone backup is not permission to delete the source automatically.
+Backup creation/discovery/verification, fresh-host restoration and [independent knowledge cloning](independent-clones.md) use the same retained vault. Archive-and-destroy builds on proven recovery; a standalone backup is not permission to delete the source automatically.
 
 ## Clean-client helper
 

@@ -217,6 +217,18 @@ describe('shared inactive AWS restore operation', () => {
     expect(mocks.remote.mock.calls[1][2][0]).toContain('--lock-activate');
     expect(mocks.provision).not.toHaveBeenCalled();
   });
+  it('reports uncertain Gateway state if an activation reply or rollback cannot be confirmed', async () => {
+    await readyForResume();
+    const normal = mocks.remote.getMockImplementation()!;
+    mocks.remote.mockImplementation(async (...args) => {
+      if (args[2][0].includes('restore-bootstrap.json')) return normal(...args);
+      throw new Error('private worker failure');
+    });
+    await expect(resumeRestore(plan.operationId, { activate: true })).rejects.toThrow(
+      'Gateway may be running',
+    );
+    expect(mocks.provision).not.toHaveBeenCalled();
+  });
   it('never recreates an absent target or adopts a bootstrap from another restore', async () => {
     await readyForResume();
     mocks.status.mockRejectedValueOnce(

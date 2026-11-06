@@ -14,7 +14,7 @@ export interface RestoreSecretOwner {
   operationId: string;
 }
 
-/** The caller supplies the verified instance-role client. Values never leave the worker.
+/** The caller supplies a client for the verified target account. Values stay private.
  * Every write is create-only; a retry may adopt only an identical value tagged to
  * this exact target stack and restore operation.
  */

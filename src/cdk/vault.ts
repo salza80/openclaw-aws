@@ -44,7 +44,12 @@ export interface RecoveryAccessProps extends StackProps {
   secretKmsKeyArn?: string;
   mode?: 'capture' | 'read';
   recoveryRegion?: string;
-  secretImport?: { deploymentName: string; deploymentId: string; operationId: string };
+  secretImport?: {
+    deploymentName: string;
+    deploymentId: string;
+    operationId: string;
+    readOnly?: true;
+  };
 }
 
 /** Attach only after verifying this role belongs to the selected source stack.
@@ -177,28 +182,33 @@ export class RecoveryAccessStack extends Stack {
         resource: 'parameter',
         resourceName: `openclaw/${deploymentName}/providers/*/api-key`,
       });
+      if (props.secretImport.readOnly !== undefined && props.secretImport.readOnly !== true)
+        throw new Error('Unsupported target credential access mode');
+      if (!props.secretImport.readOnly)
+        document.addStatements(
+          new PolicyStatement({
+            actions: ['ssm:PutParameter', 'ssm:AddTagsToResource'],
+            resources: [resource],
+            conditions: {
+              StringEquals: {
+                'aws:RequestTag/openclaw-aws:deployment-id': deploymentId,
+                'aws:RequestTag/openclaw-aws:restore-id': operationId,
+              },
+              'ForAllValues:StringEquals': {
+                'aws:TagKeys': ['openclaw-aws:deployment-id', 'openclaw-aws:restore-id'],
+              },
+            },
+          }),
+          // AWS documents ssm:Overwrite as a String condition, not a Bool.
+          // https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-policy-conditions.html
+          new PolicyStatement({
+            effect: Effect.DENY,
+            actions: ['ssm:PutParameter'],
+            resources: [resource],
+            conditions: { StringEquals: { 'ssm:Overwrite': 'true' } },
+          }),
+        );
       document.addStatements(
-        new PolicyStatement({
-          actions: ['ssm:PutParameter', 'ssm:AddTagsToResource'],
-          resources: [resource],
-          conditions: {
-            StringEquals: {
-              'aws:RequestTag/openclaw-aws:deployment-id': deploymentId,
-              'aws:RequestTag/openclaw-aws:restore-id': operationId,
-            },
-            'ForAllValues:StringEquals': {
-              'aws:TagKeys': ['openclaw-aws:deployment-id', 'openclaw-aws:restore-id'],
-            },
-          },
-        }),
-        // AWS documents ssm:Overwrite as a String condition, not a Bool.
-        // https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-policy-conditions.html
-        new PolicyStatement({
-          effect: Effect.DENY,
-          actions: ['ssm:PutParameter'],
-          resources: [resource],
-          conditions: { StringEquals: { 'ssm:Overwrite': 'true' } },
-        }),
         new PolicyStatement({ actions: ['ssm:ListTagsForResource'], resources: [resource] }),
       );
     }

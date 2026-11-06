@@ -1,27 +1,19 @@
-import fs from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
-import path from 'node:path';
+import { prepareInactiveRecoveryTarget } from './recovery-target.js';
+import { prepareRecoveryDelivery, executeRecoveryDelivery } from './recovery-delivery.js';
 import type { AwsTarget } from '../aws/target.js';
 import { resolveAwsTarget } from '../aws/target.js';
 import { inspectRecoveryPresence, type RecoveryPresence } from '../aws/recovery-presence.js';
 import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
 import type { CommandContext } from '../cli/utils/context.js';
-import type { OpenClawConfig } from '../cli/types/index.js';
-import { configExistsByName, getConfigPathByName, getConfigRoot } from '../cli/utils/config.js';
+import { configExistsByName, getConfigPathByName } from '../cli/utils/config.js';
 import { getStackStatus } from '../cli/utils/aws.js';
 import { StackNotFoundError } from '../cli/utils/errors.js';
-import { validateProjectName } from '../cli/utils/validation.js';
-import { validateAWSRegion, validateInstanceCapabilities } from '../cli/utils/aws-validation.js';
-import { assertRestoreSecretNamespace } from './deployment.js';
 import { backupOperationId, inspectBackup, verifyBackup, type BackupReceipt } from './backup.js';
 import { provisionRestoreTarget } from './deployment.js';
 import { saveConfigByName } from '../cli/utils/config.js';
-import { readRecoveryVault } from './vault.js';
-import { inspectRecoverySource, sourceHash, sourceAccessIdentity } from '../aws/recovery-source.js';
-import { ensureRecoveryStack, removeRecoveryAccessStack } from '../aws/auxiliary-stacks.js';
-import { uploadRecoveryArtifact } from '../aws/recovery-artifact.js';
+import { removeRecoveryAccessStack } from '../aws/auxiliary-stacks.js';
 import { recoveryRemoteCommand } from '../aws/recovery-delivery.js';
-import { recoveryStore } from '../aws/recovery-store.js';
 import { executeSsm } from '../aws/ssm.js';
 import { object } from '../openclaw/backup-contract.js';
 import { asUbuntu, shellQuote } from '../openclaw/commands.js';
@@ -58,75 +50,12 @@ export async function prepareRestore(options: {
 }): Promise<RestorePlan> {
   const operationId = backupOperationId(options.operationId);
   const point = await inspectBackup(options.recoveryTarget, options.vaultUri, options.pointId);
-  const name = options.name ?? point.source.stackName.replace(/^OpenclawStack-/, '');
-  const validation = validateProjectName(name);
-  if (validation !== true) throw new Error(String(validation));
-  if (
-    configExistsByName(name) ||
-    ['deployments', 'outputs'].some((directory) =>
-      fs.existsSync(path.join(getConfigRoot(), directory, `${name}.json`)),
-    )
-  )
-    throw new Error(
-      'Restore target has local configuration or deployment metadata; select an unused name or explicitly resolve the retained deployment',
-    );
-  const minimum = Math.max(
-    30,
-    // Native restore retains the downloaded archive while extracting data. The
-    // saved source capacity covers its data/runtime; reserve archive space too.
-    point.source.instance.minimumDiskGiB +
-      Math.ceil(point.capture.capture.location.storedBytes / 1024 ** 3) +
-      1,
-  );
-  const bootstrap = parseRestoreBootstrap({
+  const { context, bootstrap } = await prepareInactiveRecoveryTarget({
+    ...options,
+    kind: 'restore',
+    point,
     operationId,
-    runtime: point.capture.runtime,
-    volumeGiB: options.volumeGiB ?? minimum,
   });
-  if (bootstrap.volumeGiB < minimum)
-    throw new Error(
-      `Restore volume must be at least ${minimum} GiB for the saved disk and staged data`,
-    );
-  const target = await resolveAwsTarget({
-    region: options.region ?? point.job.source.region,
-    profile: options.profile ?? options.recoveryTarget.profile,
-  });
-  if (
-    target.account !== options.recoveryTarget.account ||
-    target.arn.split(':')[1] !== options.recoveryTarget.arn.split(':')[1]
-  )
-    throw new Error(
-      'Restore requires the recovery vault and target in the same AWS account and partition',
-    );
-  const config: OpenClawConfig = {
-    version: '1.0',
-    aws: { region: target.region, ...(target.profile ? { profile: target.profile } : {}) },
-    network: { useDefaultVpc: true },
-    instance: {
-      type: options.instanceType ?? point.source.instance.type,
-      name: `openclaw-${name}`,
-    },
-    features: { cloudWatchLogs: false },
-    stack: { name: `OpenclawStack-${name}` },
-  };
-  const context: CommandContext = {
-    name,
-    config,
-    configPath: getConfigPathByName(name),
-    target,
-    awsEnv: {},
-  };
-  try {
-    await getStackStatus(config.stack.name, target);
-    throw new Error(
-      'Restore target stack already exists; restore never replaces a live deployment',
-    );
-  } catch (error) {
-    if (!(error instanceof StackNotFoundError)) throw error;
-  }
-  await assertRestoreSecretNamespace(context);
-  await validateAWSRegion(target);
-  await validateInstanceCapabilities(config.instance.type, target);
   const sourcePresence = await inspectRecoveryPresence(options.recoveryTarget, point.job.source);
   // Full native decryption/inventory/database verification precedes any provisioning.
   await verifyBackup(options.recoveryTarget, options.vaultUri, options.pointId);
@@ -173,6 +102,8 @@ export async function stageRestore(
   if (configExistsByName(ctx.name)) throw new Error('Restore configuration name is already in use');
   const record: RestoreRecord = {
     schemaVersion: 1,
+    account: ctx.target.account,
+    partition: ctx.target.arn.split(':')[1],
     operationId: bootstrap.operationId,
     phase: 'provisioning',
     name: ctx.name,
@@ -222,6 +153,11 @@ export async function resumeRestore(
 ): Promise<RestoreRecord> {
   const record = loadRestoreRecord(operationId);
   const target = await resolveAwsTarget(record.config.aws);
+  if (
+    record.account &&
+    (target.account !== record.account || target.arn.split(':')[1] !== record.partition)
+  )
+    throw new Error('Current AWS profile differs from the pinned restore account/partition');
   const recoveryTarget = await resolveAwsTarget({
     region: record.recovery.region,
     profile: record.recovery.profile,
@@ -334,172 +270,93 @@ async function continueRestoreOnTarget(
   mode: 'stage' | 'activate',
 ): Promise<RestoreRecord> {
   const bootstrap = record.bootstrap;
-  const target = await inspectRecoverySource(ctx);
-  if (
-    !record.target ||
-    target.stackId !== record.target.stackId ||
-    target.instanceId !== record.target.instanceId
-  )
-    throw new Error('New restore target identity changed');
-  if (
-    record.delivery &&
-    (record.delivery.job.target.stackId !== target.stackId ||
-      record.delivery.job.target.instanceId !== target.instanceId ||
-      record.delivery.job.target.roleId !== target.role.id ||
-      !isDeepStrictEqual(record.delivery.job.backup, { job: point.job, capture: point.capture }))
-  )
-    throw new Error(
-      'Pinned restore delivery no longer matches its target or selected recovery point',
-    );
-  const vault = await readRecoveryVault(recoveryTarget, record.recovery.uri);
-  if (vault.id !== point.vaultId) throw new Error('Recovery vault identity changed since planning');
-  const access = {
-    kind: 'recovery-access' as const,
-    stackName: `OpenclawRecovery-${sourceHash(target.stackId)}-restore-${bootstrap.operationId}`,
-    identity: sourceAccessIdentity(target.stackId, target.role.id),
-    access: {
-      roleName: target.role.name,
-      bucket: point.job.settings.bucket,
-      dataPrefix: point.job.settings.prefix,
-      keyArn: vault.key.arn,
-      s3KmsKeyArn: vault.encryption.s3Key?.arn,
-      secretKmsKeyArn: vault.encryption.secretKey?.arn,
-      mode: 'read' as const,
-      recoveryRegion: recoveryTarget.region,
-      secretImport: {
-        deploymentName: ctx.name,
-        deploymentId: target.stackId,
-        operationId: bootstrap.operationId,
-      },
-    },
-  };
+  const lease = await prepareRecoveryDelivery({
+    record,
+    ctx,
+    recoveryTarget,
+    point,
+    kind: 'restore',
+    buildJob: parseRestoreJob,
+    progress: options.progress,
+  });
+  const { target, delivery, access } = lease;
+  const { job, artifact, request } = delivery;
+  record.delivery = delivery;
+  saveRestoreRecord(record);
   options.progress?.(
-    'Attaching temporary read-only recovery access and create-only target secret import...',
+    mode === 'activate'
+      ? 'Installing the native service and verifying health while integrations and restored work remain paused...'
+      : 'Restoring the verified native archive, reconciling credentials and validating every member with the Gateway inactive...',
   );
-  await ensureRecoveryStack(ctx.target, access);
-  const location = {
-    bucket: point.job.settings.bucket,
-    prefix: point.job.settings.prefix,
-  };
-  const artifact =
-    record.delivery?.artifact ?? (await uploadRecoveryArtifact(recoveryTarget, location));
-  const job =
-    record.delivery?.job ??
-    parseRestoreJob({
-      schemaVersion: 1,
-      bootstrap,
-      target: {
-        deploymentName: ctx.name,
-        stackId: target.stackId,
-        instanceId: target.instanceId,
-        roleId: target.role.id,
-        account: ctx.target.account,
-        region: ctx.target.region,
-      },
-      backup: { job: point.job, capture: point.capture },
-      pluginDirectory: `/home/ubuntu/.openclaw-aws/plugins/${artifact.digest}`,
-    });
-  const store = recoveryStore(recoveryTarget, `s3://${location.bucket}/${location.prefix}`);
-  try {
-    const requestName = `_operations/restore/${bootstrap.operationId}/request.json`;
-    const request = record.delivery
-      ? {
-          versionId: record.delivery.request.versionId,
-          checksumSHA256: Buffer.from(record.delivery.request.sha256, 'hex').toString('base64'),
-        }
-      : await store.putImmutable(requestName, job, {
-          signal: AbortSignal.timeout(30000),
-        });
-    record.delivery = {
-      job,
+  const remote = await executeRecoveryDelivery({
+    instanceId: target.instanceId,
+    target: ctx.target,
+    operationId: bootstrap.operationId,
+    activate: mode === 'activate',
+    command: recoveryRemoteCommand({
+      operationId: bootstrap.operationId,
+      region: recoveryTarget.region,
+      account: ctx.target.account,
+      bucket: point.job.settings.bucket,
+      pluginDirectory: job.pluginDirectory,
+      worker: 'restore-worker.js',
+      mode,
       artifact,
       request: {
-        key: `${location.prefix}/${requestName}`,
-        versionId: request.versionId,
-        sha256: Buffer.from(request.checksumSHA256, 'base64').toString('hex'),
+        ...request,
       },
+    }),
+  });
+  const result = object(JSON.parse(remote.stdout));
+  if (
+    result.ok !== true ||
+    result.schemaVersion !== 1 ||
+    result.operationId !== bootstrap.operationId ||
+    result.stackId !== target.stackId ||
+    result.instanceId !== target.instanceId ||
+    result.phase !== (mode === 'activate' ? 'active-held' : 'ready-inactive') ||
+    result.memberCount !== point.capture.members.length ||
+    !Number.isSafeInteger(result.heldSessionCount) ||
+    (result.heldSessionCount as number) < 0 ||
+    (mode === 'stage' &&
+      (!Array.isArray(result.providerParameters) ||
+        result.providerParameters.some(
+          (name) =>
+            typeof name !== 'string' ||
+            !new RegExp(`^/openclaw/${ctx.name}/providers/[a-z0-9-]+/api-key$`).test(name),
+        )))
+  )
+    throw new Error(
+      'Remote restore did not prove the selected target and required installation state',
+    );
+  if (mode === 'stage')
+    record.result = {
+      schemaVersion: 1,
+      operationId: bootstrap.operationId,
+      stackId: target.stackId,
+      instanceId: target.instanceId,
+      phase: 'ready-inactive',
+      memberCount: result.memberCount as number,
+      heldSessionCount: result.heldSessionCount as number,
+      providerParameters: result.providerParameters as string[],
     };
-    saveRestoreRecord(record);
-    options.progress?.(
-      mode === 'activate'
-        ? 'Installing the native service and verifying health while integrations and restored work remain paused...'
-        : 'Restoring the verified native archive, reconciling credentials and validating every member with the Gateway inactive...',
-    );
-    const remote = await executeSsm(
-      target.instanceId,
-      ctx.target,
-      [
-        recoveryRemoteCommand({
-          operationId: bootstrap.operationId,
-          region: recoveryTarget.region,
-          account: ctx.target.account,
-          bucket: location.bucket,
-          pluginDirectory: job.pluginDirectory,
-          worker: 'restore-worker.js',
-          mode,
-          artifact,
-          request: {
-            key: `${location.prefix}/${requestName}`,
-            versionId: request.versionId,
-            sha256: Buffer.from(request.checksumSHA256, 'base64').toString('hex'),
-          },
-        }),
-      ],
-      { executionSeconds: 45 * 60 },
-    );
-    const result = object(JSON.parse(remote.stdout));
-    if (
-      result.ok !== true ||
-      result.schemaVersion !== 1 ||
-      result.operationId !== bootstrap.operationId ||
-      result.stackId !== target.stackId ||
-      result.instanceId !== target.instanceId ||
-      result.phase !== (mode === 'activate' ? 'active-held' : 'ready-inactive') ||
-      result.memberCount !== point.capture.members.length ||
-      !Number.isSafeInteger(result.heldSessionCount) ||
-      (result.heldSessionCount as number) < 0 ||
-      (mode === 'stage' &&
-        (!Array.isArray(result.providerParameters) ||
-          result.providerParameters.some(
-            (name) =>
-              typeof name !== 'string' ||
-              !new RegExp(`^/openclaw/${ctx.name}/providers/[a-z0-9-]+/api-key$`).test(name),
-          )))
-    )
-      throw new Error(
-        'Remote restore did not prove the selected target and required installation state',
-      );
-    if (mode === 'stage')
-      record.result = {
-        schemaVersion: 1,
-        operationId: bootstrap.operationId,
-        stackId: target.stackId,
-        instanceId: target.instanceId,
-        phase: 'ready-inactive',
-        memberCount: result.memberCount as number,
-        heldSessionCount: result.heldSessionCount as number,
-        providerParameters: result.providerParameters as string[],
-      };
-    else {
-      if (result.healthy !== true)
-        throw new Error('Activated restore did not establish native health');
-      record.activation = {
-        schemaVersion: 1,
-        operationId: bootstrap.operationId,
-        stackId: target.stackId,
-        instanceId: target.instanceId,
-        phase: 'active-held',
-        healthy: true,
-        memberCount: result.memberCount as number,
-        heldSessionCount: result.heldSessionCount as number,
-      };
-    }
-    record.phase = mode === 'activate' ? 'active-held' : 'ready-inactive';
-    record.permissionCleanupPending = true;
-    saveRestoreRecord(record);
-  } finally {
-    store.close();
+  else {
+    if (result.healthy !== true)
+      throw new Error('Activated restore did not establish native health');
+    record.activation = {
+      schemaVersion: 1,
+      operationId: bootstrap.operationId,
+      stackId: target.stackId,
+      instanceId: target.instanceId,
+      phase: 'active-held',
+      healthy: true,
+      memberCount: result.memberCount as number,
+      heldSessionCount: result.heldSessionCount as number,
+    };
   }
+  record.phase = mode === 'activate' ? 'active-held' : 'ready-inactive';
+  record.permissionCleanupPending = true;
+  saveRestoreRecord(record);
   options.progress?.(
     mode === 'activate'
       ? 'Removing temporary recovery/import permissions; Gateway health is verified and restored work remains held.'
@@ -508,7 +365,7 @@ async function continueRestoreOnTarget(
   await removeRecoveryAccessStack(ctx.target, {
     stackName: access.stackName,
     identity: access.identity,
-    roleName: target.role.name,
+    roleName: access.roleName,
   });
   record.permissionCleanupPending = false;
   saveRestoreRecord(record);

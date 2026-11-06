@@ -188,6 +188,7 @@ type RestoreProvision = {
   mode: 'restore';
   restore: RestoreBootstrap;
   progress?: (message: string) => void;
+  clonedFrom?: { pointId: string };
 };
 
 /** The shared, noninteractive provisioning operation. Callers own input and approval. */
@@ -200,23 +201,37 @@ export async function deployDeployment(
   return withDeploymentLock(captured, () => provisionDeployment(captured, provided));
 }
 
-/** Keep the target lock through provisioning, native restoration and activation. */
-export async function provisionRestoreTarget<T>(
+/** Keep the target lock through inactive provisioning and native recovery setup. */
+export async function provisionInactiveTarget<T>(
   ctx: CommandContext,
-  options: { restore: RestoreBootstrap; progress?: (message: string) => void },
+  options: {
+    restore: RestoreBootstrap;
+    progress?: (message: string) => void;
+    clonedFrom?: { pointId: string };
+  },
   finish: (outputs: Record<string, string>) => Promise<T>,
 ): Promise<T> {
   const restore = parseRestoreBootstrap(options.restore);
+  if (
+    options.clonedFrom &&
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      options.clonedFrom.pointId,
+    )
+  )
+    throw new Error('Clone lineage requires a completed recovery point UUID');
   const captured = { ...ctx, config: structuredClone(ctx.config) };
   return withDeploymentLock(captured, async () => {
     const outputs = await provisionDeployment(captured, {
       mode: 'restore',
       restore,
       progress: options.progress,
+      clonedFrom: options.clonedFrom,
     });
     return finish(outputs);
   });
 }
+// Preserve the existing restore operation entrypoint and persisted behavior.
+export const provisionRestoreTarget = provisionInactiveTarget;
 
 export async function assertRestoreSecretNamespace(ctx: CommandContext) {
   if (validateProjectName(ctx.name) !== true) throw new AWSError('Invalid restore deployment name');
@@ -371,7 +386,16 @@ async function provisionDeployment(
       },
       {
         newlyCreated: true,
-        ...(restore ? { restoredFrom: { operationId: restore.operationId } } : {}),
+        ...(restore
+          ? options.mode === 'restore' && options.clonedFrom
+            ? {
+                clonedFrom: {
+                  operationId: restore.operationId,
+                  pointId: options.clonedFrom.pointId,
+                },
+              }
+            : { restoredFrom: { operationId: restore.operationId } }
+          : {}),
       },
     );
     return outputs;

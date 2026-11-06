@@ -6,11 +6,25 @@ import { execa } from 'execa';
 import { parseRestoreJob } from './restore-contract.js';
 import { runRestoreWorker } from './restore-worker.js';
 import { runRestoreActivation } from './restore-activation.js';
+import { parseClonePreviewRequest, previewCloneStaging } from './clone-preview.js';
+import { parseCloneJob } from './clone-contract.js';
+import { runCloneWorker } from './clone-worker.js';
+import { runCloneActivation } from './clone-activation.js';
 
 async function main() {
   const [mode, inputFile, resultFile] = process.argv.slice(2);
   if (
-    !['--lock', '--run', '--lock-activate', '--activate'].includes(mode) ||
+    ![
+      '--lock',
+      '--run',
+      '--lock-activate',
+      '--activate',
+      '--preview-clone',
+      '--lock-clone',
+      '--run-clone',
+      '--lock-activate-clone',
+      '--activate-clone',
+    ].includes(mode) ||
     !inputFile ||
     !resultFile ||
     process.argv.length !== 5
@@ -31,7 +45,34 @@ async function main() {
   } finally {
     await file.close();
   }
-  const job = parseRestoreJob(input);
+  if (mode === '--preview-clone') {
+    if (path.dirname(path.resolve(inputFile)) !== path.dirname(path.resolve(resultFile)))
+      throw new Error('Clone preview files must share a private operation directory');
+    const directory = await lstat(path.dirname(path.resolve(inputFile)));
+    if (
+      !directory.isDirectory() ||
+      directory.isSymbolicLink() ||
+      directory.uid !== process.getuid?.() ||
+      directory.mode & 0o077
+    )
+      throw new Error('Clone preview directory is not private');
+    const cancellation = new AbortController();
+    process.once('SIGTERM', () => cancellation.abort());
+    process.once('SIGINT', () => cancellation.abort());
+    const result = await previewCloneStaging(
+      parseClonePreviewRequest(input),
+      AbortSignal.any([cancellation.signal, AbortSignal.timeout(10 * 60 * 1000)]),
+    );
+    await writeFile(resultFile, JSON.stringify(result), { flag: 'wx', mode: 0o600 });
+    return;
+  }
+  const clone = [
+    '--lock-clone',
+    '--run-clone',
+    '--lock-activate-clone',
+    '--activate-clone',
+  ].includes(mode);
+  const job = clone ? parseCloneJob(input) : parseRestoreJob(input);
   const root = path.join(homedir(), '.openclaw-aws');
   const work = path.join(root, 'jobs', job.bootstrap.operationId);
   if (
@@ -49,7 +90,12 @@ async function main() {
     )
       throw new Error('Restore operation directory is not private');
   }
-  if (mode === '--lock' || mode === '--lock-activate') {
+  if (
+    mode === '--lock' ||
+    mode === '--lock-activate' ||
+    mode === '--lock-clone' ||
+    mode === '--lock-activate-clone'
+  ) {
     await execa(
       'flock',
       [
@@ -59,7 +105,13 @@ async function main() {
         path.join(root, 'host.lock'),
         process.execPath,
         process.argv[1],
-        mode === '--lock-activate' ? '--activate' : '--run',
+        mode === '--lock-activate-clone'
+          ? '--activate-clone'
+          : mode === '--lock-activate'
+            ? '--activate'
+            : clone
+              ? '--run-clone'
+              : '--run',
         inputFile,
         resultFile,
       ],
@@ -72,10 +124,13 @@ async function main() {
     process.once('SIGTERM', () => cancellation.abort());
     process.once('SIGINT', () => cancellation.abort());
     const run = mode === '--activate' ? runRestoreActivation : runRestoreWorker;
-    const result = await run(
-      job,
-      AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]),
-    );
+    const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]);
+    const result = clone
+      ? await (mode === '--activate-clone' ? runCloneActivation : runCloneWorker)(
+          parseCloneJob(job),
+          signal,
+        )
+      : await run(job, signal);
     await writeFile(resultFile, JSON.stringify({ ok: true, ...result }), { mode: 0o600 });
   } catch {
     await writeFile(
@@ -84,7 +139,9 @@ async function main() {
         ok: false,
         operationId: job.bootstrap.operationId,
         message:
-          'Restore failed; leave Gateway inactive and inspect the owned maintenance record, staging and retained resources before retrying.',
+          mode === '--activate' || mode === '--activate-clone'
+            ? 'Recovery activation failed; Gateway inactivity is unconfirmed. Inspect the target immediately and retain its owned maintenance records and resources.'
+            : 'Recovery staging failed; activation was not requested. Inspect the owned maintenance record, staging and retained resources before retrying.',
       }),
       { mode: 0o600 },
     );

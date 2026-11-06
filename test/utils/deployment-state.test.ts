@@ -53,6 +53,25 @@ describe('deployment identity and native observations', () => {
     expect(restored.desired.provider).toBe('native-restored');
     expect(recordDeploymentState(ctx, status).restoredFrom).toEqual(lineage);
   });
+  it('records independent clone lineage without claiming source identity was restored and retains it on inspection', () => {
+    const ctx = makeCommandContext();
+    const lineage = {
+      operationId: '11111111-1111-1111-1111-111111111111',
+      pointId: '22222222-2222-2222-2222-222222222222',
+    };
+    const cloned = recordDeploymentState(ctx, status, { newlyCreated: true, clonedFrom: lineage });
+    expect(cloned.clonedFrom).toEqual(lineage);
+    expect(cloned.restoredFrom).toBeUndefined();
+    expect(cloned.desired.provider).toBe('native-cloned');
+    expect(recordDeploymentState(ctx, status).clonedFrom).toEqual(lineage);
+    expect(() =>
+      recordDeploymentState(ctx, status, { clonedFrom: lineage, restoredFrom: lineage }),
+    ).toThrow('both');
+    expect(() =>
+      recordDeploymentState(ctx, status, { clonedFrom: { ...lineage, operationId: 'invalid' } }),
+    ).toThrow('UUIDs');
+    expect(loadDeploymentState(ctx)?.clonedFrom).toEqual(lineage);
+  });
   it('rejects mismatched or missing AWS identity without replacing the saved receipt', () => {
     const ctx = makeCommandContext();
     recordDeploymentState(ctx, status);

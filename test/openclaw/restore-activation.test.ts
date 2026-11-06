@@ -7,6 +7,7 @@ function fixture() {
     start: vi.fn(async () => {}),
     health: vi.fn(async () => {}),
     maskInactive: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
   };
 }
 describe('deliberate restored Gateway activation', () => {
@@ -31,7 +32,7 @@ describe('deliberate restored Gateway activation', () => {
     expect(host.start).not.toHaveBeenCalled();
   });
   it('restores the inactive mask after install, start, health or post-start validation failure', async () => {
-    for (const phase of ['unmaskAndInstall', 'start', 'health', 'validate'] as const) {
+    for (const phase of ['unmaskAndInstall', 'start', 'health', 'validate', 'commit'] as const) {
       const host = fixture();
       if (phase === 'validate')
         host.validate

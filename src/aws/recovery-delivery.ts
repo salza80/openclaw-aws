@@ -1,6 +1,55 @@
 import type { RecoveryArtifact } from './recovery-artifact.js';
 import { asUbuntu, shellQuote } from '../openclaw/commands.js';
 
+/** Activation uses installed pins without restoring source-vault IAM access. */
+export function installedRecoveryRemoteCommand(options: {
+  operationId: string;
+  pluginDirectory: string;
+  artifact: RecoveryArtifact;
+  requestSha256: string;
+  mode: 'activate' | 'activate-clone' | 'clone';
+}): string {
+  if (
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(options.operationId) ||
+    !['activate', 'activate-clone', 'clone'].includes(options.mode) ||
+    options.pluginDirectory !== `/home/ubuntu/.openclaw-aws/plugins/${options.artifact.digest}` ||
+    !/^[a-f0-9]{64}$/.test(options.requestSha256) ||
+    !/^[a-f0-9]{64}$/.test(options.artifact.digest) ||
+    !options.artifact.files.some((file) => file.name === 'restore-worker.js') ||
+    options.artifact.files.some(
+      (file) =>
+        !/^[A-Za-z0-9_.-]+$/.test(file.name) ||
+        ['.', '..'].includes(file.name) ||
+        !/^[a-f0-9]{64}$/.test(file.sha256),
+    )
+  )
+    throw new Error('Invalid installed recovery activation pins');
+  const work = `/home/ubuntu/.openclaw-aws/jobs/${options.operationId}`;
+  const files = [
+    ...options.artifact.files.map((file) => ({
+      path: `${options.pluginDirectory}/${file.name}`,
+      sha256: file.sha256,
+    })),
+    { path: `${work}/request.json`, sha256: options.requestSha256 },
+  ];
+  return asUbuntu(
+    [
+      'set -e',
+      'umask 077',
+      ...files.flatMap((file) => [
+        `test ! -L ${shellQuote(file.path)}`,
+        `printf '%s  %s\\n' ${shellQuote(file.sha256)} ${shellQuote(file.path)} | sha256sum --check --status`,
+      ]),
+      'set +e',
+      `env -i HOME=/home/ubuntu PATH="$PATH" OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw OPENCLAW_CONFIG_PATH=/home/ubuntu/.openclaw/openclaw.json AWS_CONFIG_FILE=/dev/null AWS_SHARED_CREDENTIALS_FILE=/dev/null AWS_EC2_METADATA_V1_DISABLED=true XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" node ${shellQuote(`${options.pluginDirectory}/restore-worker.js`)} ${options.mode === 'clone' ? '--lock-clone' : options.mode === 'activate-clone' ? '--lock-activate-clone' : '--lock-activate'} ${shellQuote(`${work}/request.json`)} ${shellQuote(`${work}/result.json`)} >${shellQuote(`${work}/private.log`)} 2>&1`,
+      'capture_status=$?',
+      'set -e',
+      `if [ -f ${shellQuote(`${work}/result.json`)} ]; then cat ${shellQuote(`${work}/result.json`)}; fi`,
+      'exit "$capture_status"',
+    ].join('\n'),
+  );
+}
+
 /** Root retrieves/checks nonsecret artifacts; Ubuntu alone executes the worker. */
 export function recoveryRemoteCommand(options: {
   operationId: string;
@@ -9,7 +58,7 @@ export function recoveryRemoteCommand(options: {
   bucket: string;
   pluginDirectory: string;
   worker: 'worker.js' | 'restore-worker.js';
-  mode?: 'stage' | 'activate';
+  mode?: 'stage' | 'activate' | 'clone';
   artifact: RecoveryArtifact;
   request: { key: string; versionId: string; sha256: string };
 }): string {
@@ -18,8 +67,9 @@ export function recoveryRemoteCommand(options: {
   if (!['worker.js', 'restore-worker.js'].includes(options.worker))
     throw new Error('Unsupported recovery worker');
   if (
-    (options.mode !== undefined && !['stage', 'activate'].includes(options.mode)) ||
-    (options.mode === 'activate' && options.worker !== 'restore-worker.js')
+    (options.mode !== undefined && !['stage', 'activate', 'clone'].includes(options.mode)) ||
+    ((options.mode === 'activate' || options.mode === 'clone') &&
+      options.worker !== 'restore-worker.js')
   )
     throw new Error('Unsupported recovery worker mode');
   const { artifact, request } = options;
@@ -82,7 +132,7 @@ export function recoveryRemoteCommand(options: {
       ),
       install('request.json', request.sha256, `${work}/request.json`),
       'set +e',
-      `${clean('/home/ubuntu')}${options.worker === 'restore-worker.js' ? ' OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw OPENCLAW_CONFIG_PATH=/home/ubuntu/.openclaw/openclaw.json' : ''} XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" node ${shellQuote(`${options.pluginDirectory}/${options.worker}`)} ${options.mode === 'activate' ? '--lock-activate' : '--lock'} ${shellQuote(`${work}/request.json`)} ${shellQuote(`${work}/result.json`)} >${shellQuote(`${work}/private.log`)} 2>&1`,
+      `${clean('/home/ubuntu')}${options.worker === 'restore-worker.js' ? ' OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw OPENCLAW_CONFIG_PATH=/home/ubuntu/.openclaw/openclaw.json' : ''} XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" node ${shellQuote(`${options.pluginDirectory}/${options.worker}`)} ${options.mode === 'activate' ? '--lock-activate' : options.mode === 'clone' ? '--lock-clone' : '--lock'} ${shellQuote(`${work}/request.json`)} ${shellQuote(`${work}/result.json`)} >${shellQuote(`${work}/private.log`)} 2>&1`,
       'capture_status=$?',
       'set -e',
       `if [ -f ${shellQuote(`${work}/result.json`)} ]; then cat ${shellQuote(`${work}/result.json`)}; fi`,

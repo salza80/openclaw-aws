@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 const mocks = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock('execa', () => ({ execa: mocks.run }));
-import { ensureBackupHelper, runBackupHelper } from '../../src/openclaw/backup-helper.js';
+import {
+  ensureBackupHelper,
+  runBackupHelper,
+  runClonePreviewHelper,
+} from '../../src/openclaw/backup-helper.js';
 import { testTarget } from '../helpers/fixtures/command-context.js';
 const directories: string[] = [];
 async function cache() {
@@ -41,6 +45,55 @@ afterEach(async () => {
 });
 
 describe('managed native recovery helper', () => {
+  it('runs bundled clone preview with the managed package and no ambient AWS/model environment, then removes private request/result files', async () => {
+    const directory = await cache();
+    await ensureBackupHelper({ cacheDirectory: directory });
+    const prior = mocks.run.getMockImplementation()!;
+    mocks.run.mockImplementation(
+      async (node: string, args: string[], options: { cwd?: string }) => {
+        if (!args.includes('--preview-clone')) return prior(node, args, options);
+        const request = JSON.parse(await readFile(args[2], 'utf8'));
+        expect(request.nativePackageJson.startsWith(directory)).toBe(true);
+        await writeFile(
+          args[3],
+          JSON.stringify({
+            schemaVersion: 1,
+            scope: 'whole-team-knowledge',
+            content: { digest: 'a'.repeat(64) },
+            policyDigest: 'b'.repeat(64),
+          }),
+          { mode: 0o600 },
+        );
+        return { stdout: '' };
+      },
+    );
+    vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'ambient-aws-secret');
+    vi.stubEnv('OPENROUTER_API_KEY', 'ambient-model-secret');
+    vi.stubEnv('NODE_OPTIONS', '--require unwanted-hook');
+    const result = await runClonePreviewHelper({
+      cacheDirectory: directory,
+      request: {
+        schemaVersion: 1,
+        configurationPath: '/home/ubuntu/.openclaw/openclaw.json',
+        members: [
+          {
+            id: 'main',
+            workspace: '/home/ubuntu/workspace',
+            agentDir: '/home/ubuntu/.openclaw/agents/main/agent',
+          },
+        ],
+        moves: [],
+        stagingDirectory: '/fixture/staging',
+      },
+    });
+    expect(result.scope).toBe('whole-team-knowledge');
+    const call = mocks.run.mock.calls.find(([, args]) => args.includes('--preview-clone'))!;
+    expect(call[2]).toMatchObject({ extendEnv: false });
+    for (const key of ['AWS_SECRET_ACCESS_KEY', 'OPENROUTER_API_KEY', 'NODE_OPTIONS'])
+      expect(call[2].env).not.toHaveProperty(key);
+    await expect(readFile(call[1][2])).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(call[1][3])).rejects.toMatchObject({ code: 'ENOENT' });
+  });
   it('installs the pinned lockfile and self-contained plugin once, without operator credentials', async () => {
     const directory = await cache();
     vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'ambient-private-value');
