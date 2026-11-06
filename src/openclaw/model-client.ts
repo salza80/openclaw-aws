@@ -11,7 +11,39 @@ const methods = new Set([
   'models.list',
   'sessions.list',
   'health',
+  'plugins.list',
+  'plugins.inspect',
+  'plugins.install',
+  'plugins.setEnabled',
 ]);
+/** Public native capability gate, parsed without retaining arbitrary errors or
+ * native output. Only the fixed reviewed install may acknowledge this token. */
+export class NativeCapabilityConsentRequired extends Error {
+  constructor(
+    public readonly pluginId: string,
+    public readonly reviewToken: string,
+  ) {
+    super('Native plugin capability consent is required');
+  }
+}
+function capabilityConsent(value: unknown): NativeCapabilityConsentRequired | undefined {
+  if (!value || typeof value !== 'object') return;
+  const details = (value as { error?: { details?: Record<string, unknown> } }).error?.details;
+  if (details?.capabilityConsentCode !== 'PLUGIN_CAPABILITY_CONSENT_REQUIRED') return;
+  if (details.persistence !== undefined) return;
+  if (
+    typeof details.pluginId !== 'string' ||
+    !/^[a-z0-9-]{1,128}$/.test(details.pluginId) ||
+    typeof details.reviewToken !== 'string' ||
+    !details.reviewToken ||
+    details.reviewToken.length > 8192 ||
+    [...details.reviewToken].some(
+      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+    )
+  )
+    return;
+  return new NativeCapabilityConsentRequired(details.pluginId, details.reviewToken);
+}
 export function modelClientEnvironment(options: {
   home: string;
   gatewayToken: string;
@@ -90,9 +122,13 @@ export function createNativeModelClient(options: {
         maxBuffer: 16 * 1024 * 1024,
         reject: false,
       });
-      if (result.exitCode !== 0 || result.failed || result.isCanceled || result.timedOut)
-        throw new Error('Native model command did not complete');
       const value: unknown = JSON.parse(result.stdout);
+      if (result.exitCode !== 0 || result.failed || result.isCanceled || result.timedOut) {
+        const consent =
+          !result.isCanceled && !result.timedOut ? capabilityConsent(value) : undefined;
+        if (consent) throw consent;
+        throw new Error('Native model command did not complete');
+      }
       if (
         !value ||
         typeof value !== 'object' ||
@@ -101,9 +137,11 @@ export function createNativeModelClient(options: {
       )
         throw new Error('Native model command returned an invalid response');
       return value;
-    } catch {
+    } catch (error) {
+      if (error instanceof NativeCapabilityConsentRequired) throw error;
       // Execa errors may embed native config/auth output. Never attach them as
       // public causes or print the command environment during reconciliation.
+      // eslint-disable-next-line preserve-caught-error -- Child errors may include credentials and private native output.
       throw new Error(
         'Native Gateway model request failed or was interrupted; private output was not published',
       );
@@ -112,7 +150,7 @@ export function createNativeModelClient(options: {
   const call = async (
     method: string,
     params: Record<string, unknown>,
-    timeout = 60000,
+    timeout = method === 'plugins.install' ? 240000 : 60000,
     signal = options.signal,
   ) => {
     if (!methods.has(method)) throw new Error('Unsupported native model control method');

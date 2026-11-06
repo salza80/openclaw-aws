@@ -61,7 +61,24 @@ export function parseModelJob(value: unknown): ModelJob {
   const operationId = modelText(row.operationId, 36);
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operationId))
     throw new Error('Model operation requires a UUID');
-  const target = modelObject(row.target);
+  const parsedTarget = parseModelHostTarget(row.target);
+  const scope = modelObject(row.scope);
+  exact(scope, scope.kind === 'default' ? ['kind'] : ['kind', 'agentId']);
+  const parsedScope = nativeModelScope(scope as unknown as ModelScope);
+  const runtime = parseModelRuntime(row.runtime);
+  const parsedAction = nativeModelAction(row.action);
+  return {
+    schemaVersion: 1,
+    operationId,
+    target: parsedTarget,
+    scope: parsedScope,
+    action: parsedAction,
+    bedrockRole: row.bedrockRole,
+    runtime,
+  };
+}
+export function parseModelHostTarget(input: unknown): ModelHostTarget {
+  const target = modelObject(input);
   exact(target, ['deploymentName', 'stackId', 'instanceId', 'roleId', 'account', 'region']);
   const deploymentName = modelText(target.deploymentName, 50);
   const account = modelText(target.account, 12);
@@ -80,23 +97,14 @@ export function parseModelJob(value: unknown): ModelJob {
     !/^AROA[A-Z0-9]{12,124}$/.test(roleId)
   )
     throw new Error('Model operation does not identify a supported immutable AWS host');
-  const scope = modelObject(row.scope);
-  exact(scope, scope.kind === 'default' ? ['kind'] : ['kind', 'agentId']);
-  const parsedScope = nativeModelScope(scope as unknown as ModelScope);
-  const runtime = modelObject(row.runtime);
+  return { deploymentName, stackId, instanceId, roleId, account, region };
+}
+export function parseModelRuntime(input: unknown): ModelJob['runtime'] {
+  const runtime = modelObject(input);
   exact(runtime, ['openclaw', 'node']);
   if (runtime.openclaw !== OPENCLAW_VERSION || runtime.node !== OPENCLAW_NODE_VERSION)
     throw new Error('Model operation requires the supported pinned native runtime');
-  const parsedAction = nativeModelAction(row.action);
-  return {
-    schemaVersion: 1,
-    operationId,
-    target: { deploymentName, stackId, instanceId, roleId, account, region },
-    scope: parsedScope,
-    action: parsedAction,
-    bedrockRole: row.bedrockRole,
-    runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
-  };
+  return { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION };
 }
 export function nativeModelAction(value: unknown): ModelAction {
   const action = modelObject(value);

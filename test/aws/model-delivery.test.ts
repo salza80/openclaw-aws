@@ -5,9 +5,24 @@ import {
   pinModelArtifact,
   modelArtifactFilenames,
 } from '../../src/aws/model-artifact.js';
-import { modelRemoteCommand } from '../../src/aws/model-delivery.js';
+import { modelRemoteCommand, bedrockRemoteCommand } from '../../src/aws/model-delivery.js';
+import { bedrockJob } from '../helpers/bedrock-operation.js';
 import { modelJob } from '../helpers/model-operation.js';
 describe('private Ubuntu model dispatch', () => {
+  it('delivers provider requests through the same root-pinned artifact and Ubuntu-only shared flock boundary', async () => {
+    const pin = pinModelArtifact(
+      createModelArtifact(
+        modelArtifactFilenames.map((name) => ({ name, body: Buffer.from(name) })),
+      ),
+    );
+    const command = bedrockRemoteCommand({ pin, job: bedrockJob, mode: 'execute' });
+    await execa('/bin/bash', ['--noprofile', '--norc', '-n'], { input: command });
+    expect(command).toContain('--bedrock-dispatch');
+    expect(command).toContain('sudo -H -u ubuntu');
+    expect(command).toContain('env -i HOME=/home/ubuntu');
+    expect(command).not.toContain('AWS_ACCESS_KEY_ID');
+    expect(Buffer.byteLength(command)).toBeLessThan(60000);
+  });
   it('checks root-owned artifact pins before Ubuntu-only immutable request installation and clean native execution', async () => {
     const pin = pinModelArtifact(
       createModelArtifact(

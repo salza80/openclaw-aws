@@ -4,6 +4,7 @@ vi.mock('execa', () => ({ execa: mocks.execa }));
 import {
   createNativeModelClient,
   modelClientEnvironment,
+  NativeCapabilityConsentRequired,
 } from '../../src/openclaw/model-client.js';
 const options = {
   home: '/home/ubuntu',
@@ -16,6 +17,37 @@ beforeEach(() => {
   mocks.execa.mockResolvedValue({ exitCode: 0, failed: false, stdout: '{"ok":true}' });
 });
 describe('private native model client', () => {
+  it('exposes only a bounded native capability gate and never treats persisted/interrupted failures as retryable consent', async () => {
+    const response = {
+      ok: false,
+      error: {
+        details: {
+          capabilityConsentCode: 'PLUGIN_CAPABILITY_CONSENT_REQUIRED',
+          pluginId: 'amazon-bedrock',
+          reviewToken: 'review-token',
+          privateDiagnostic: options.gatewayToken,
+        },
+      },
+    };
+    mocks.execa.mockResolvedValue({ exitCode: 1, failed: true, stdout: JSON.stringify(response) });
+    const promise = createNativeModelClient(options).call('plugins.install', {});
+    await expect(promise).rejects.toBeInstanceOf(NativeCapabilityConsentRequired);
+    await expect(promise).rejects.toMatchObject({
+      pluginId: 'amazon-bedrock',
+      reviewToken: 'review-token',
+    });
+    mocks.execa.mockResolvedValue({
+      exitCode: 1,
+      failed: true,
+      stdout: JSON.stringify({
+        ...response,
+        error: { details: { ...response.error.details, persistence: { operation: 'install' } } },
+      }),
+    });
+    await expect(
+      createNativeModelClient(options).call('plugins.install', {}),
+    ).rejects.not.toBeInstanceOf(NativeCapabilityConsentRequired);
+  });
   it('uses only the selected local Gateway, private token environment and home working directory', async () => {
     const client = createNativeModelClient(options);
     await client.call('config.get', {});

@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { open, lstat, unlink } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { open, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { CommandContext } from '../cli/utils/context.js';
@@ -36,6 +36,13 @@ import type { ModelWorkerMode } from '../openclaw/model-worker.js';
 import { assertDirectoryChain } from '../openclaw/restore-layout.js';
 import { withDeploymentLock } from './lock.js';
 import { recordDeploymentState } from './state.js';
+import {
+  controlFencePath,
+  readControlFence,
+  releaseControlFence,
+  writeControlRecord as writePrivateRecord,
+} from './control-fence.js';
+import type { ControlFence } from './control-fence.js';
 
 export interface ModelChangePlan {
   schemaVersion: 1;
@@ -285,63 +292,14 @@ async function saveIntent(plan: ModelChangePlan) {
     await directory.close();
   }
 }
-function pendingModelPath(plan: ModelChangePlan) {
-  const digest = createHash('sha256').update(JSON.stringify(plan.job.target)).digest('hex');
-  return path.join(getConfigRoot(), 'model-pending', `${digest}.json`);
-}
-const intentOwner = (plan: ModelChangePlan) => ({
+const intentOwner = (plan: ModelChangePlan): ControlFence => ({
   schemaVersion: 1,
   operationId: plan.job.operationId,
   requestDigest: modelJobDigest(plan.job),
   artifactDigest: plan.artifact.digest,
 });
-const missing = (error: unknown) =>
-  error instanceof Error && 'code' in error && error.code === 'ENOENT';
 async function pendingModel(plan: ModelChangePlan) {
-  const filename = pendingModelPath(plan);
-  try {
-    await assertDirectoryChain(path.dirname(filename), getConfigRoot(), false);
-    const row = await privateModelJson(filename);
-    exact(row, ['schemaVersion', 'operationId', 'requestDigest', 'artifactDigest']);
-    recordPath(modelText(row.operationId, 36));
-    if (
-      row.schemaVersion !== 1 ||
-      !/^[a-f0-9]{64}$/.test(modelText(row.requestDigest, 64)) ||
-      !/^[a-f0-9]{64}$/.test(modelText(row.artifactDigest, 64))
-    )
-      throw new Error('Invalid pending model ownership');
-    return row;
-  } catch (error) {
-    if (missing(error)) return undefined;
-    throw error;
-  }
-}
-async function writePrivateRecord(filename: string, value: object, adopt = false) {
-  await assertDirectoryChain(path.dirname(filename), getConfigRoot(), true);
-  if ((await lstat(path.dirname(filename))).mode & 0o077)
-    throw new Error('Model operation directory must be private');
-  let file;
-  try {
-    file = await open(filename, 'wx', 0o600);
-  } catch (error) {
-    if (!adopt || !(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST')
-      throw error;
-    if (!isDeepStrictEqual(await privateModelJson(filename), value))
-      throw new Error('Model outcome record has different ownership or state', { cause: error });
-    return;
-  }
-  try {
-    await file.writeFile(JSON.stringify(value));
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  const directory = await open(path.dirname(filename), 'r');
-  try {
-    await directory.sync();
-  } finally {
-    await directory.close();
-  }
+  return readControlFence(plan.job.target);
 }
 async function settleModelIntent(plan: ModelChangePlan, result: ModelResult) {
   if (
@@ -355,16 +313,7 @@ async function settleModelIntent(plan: ModelChangePlan, result: ModelResult) {
     { ...owner, phase: result.phase },
     true,
   );
-  const pending = await pendingModel(plan);
-  if (pending === undefined) return;
-  if (!isDeepStrictEqual(pending, owner)) return; // Never release another operation's local fence.
-  await unlink(pendingModelPath(plan));
-  const directory = await open(path.dirname(pendingModelPath(plan)), 'r');
-  try {
-    await directory.sync();
-  } finally {
-    await directory.close();
-  }
+  await releaseControlFence(plan.job.target, owner);
 }
 function recordConfirmedSelection(ctx: CommandContext, plan: ModelChangePlan, result: ModelResult) {
   if (result.phase !== 'complete' || plan.job.action.kind !== 'set') return;
@@ -405,12 +354,12 @@ export async function applyModelChange(
     const pending = await pendingModel(plan);
     if (pending)
       throw new Error(
-        `Model operation ID is already recorded and unresolved: ${pending.operationId}. Inspect/reconcile it before another model change on this host`,
+        `Model operation ID is already recorded and unresolved: ${pending.operationId}. Inspect/reconcile it before another model change on this host${pending.kind === 'bedrock-connection' ? ' using providers inspect' : ''}`,
       );
     // Reject an oversized/unsupported dispatch before claiming a local fence.
     modelRemoteCommand({ job: plan.job, pin: plan.artifact, mode: 'execute' });
     await saveIntent(plan);
-    await writePrivateRecord(pendingModelPath(plan), intentOwner(plan));
+    await writePrivateRecord(controlFencePath(plan.job.target), intentOwner(plan));
     try {
       const result = await dispatch(ctx, plan.job, plan.artifact, 'execute', options.signal);
       await settleModelIntent(plan, result);

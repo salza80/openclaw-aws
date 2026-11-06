@@ -67,6 +67,20 @@ beforeEach(() => {
   };
 });
 describe('native Bedrock provider configuration', () => {
+  it('rolls back acknowledged configuration if native provider acquisition fails before commit', async () => {
+    await expect(
+      configureNativeBedrock(client, {
+        ...options,
+        record,
+        verify: async () => {
+          throw Error(secret);
+        },
+      }),
+    ).rejects.toMatchObject({ outcome: 'rolled-back' });
+    expect(config).toEqual(previous);
+    expect(events.map((event) => event.phase)).toEqual(['intent', 'acknowledged', 'rolled-back']);
+    expect(JSON.stringify(events)).not.toContain(secret);
+  });
   it('enables role auth and native discovery while preserving existing providers, agents, credentials and plugin policy', async () => {
     expect(await run()).toMatchObject({
       phase: 'complete',

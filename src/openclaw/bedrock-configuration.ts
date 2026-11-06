@@ -169,6 +169,7 @@ export async function configureNativeBedrock(
     expectedHash: string;
     allowRestart: boolean;
     record(event: BedrockConfigurationEvent): Promise<void>;
+    verify?: () => Promise<void>;
   },
 ) {
   if (!options.allowRestart)
@@ -202,6 +203,7 @@ export async function configureNativeBedrock(
     const after = await snapshot(client);
     if (!matches(after.config, patch))
       throw new Error('Native Bedrock configuration changed during activation');
+    await options.verify?.();
     await options.record({ ...identity, phase: 'complete' });
     return {
       phase: 'complete' as const,

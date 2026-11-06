@@ -30,6 +30,9 @@ async function syncDirectory(directory: string) {
 /** Only bounded, unlinked-to-other-files, private regular files are control data.
  * NONBLOCK makes a substituted FIFO fail inspection instead of hanging a job. */
 export async function privateModelJson(filename: string): Promise<Record<string, unknown>> {
+  return modelObject(JSON.parse(await privateModelText(filename)));
+}
+export async function privateModelText(filename: string): Promise<string> {
   const file = await open(
     filename,
     constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
@@ -44,12 +47,12 @@ export async function privateModelJson(filename: string): Promise<Record<string,
       stat.size > 128 * 1024
     )
       throw new Error('Model operation file is unsafe');
-    return modelObject(JSON.parse(await file.readFile('utf8')));
+    return await file.readFile('utf8');
   } finally {
     await file.close();
   }
 }
-async function createJson(filename: string, value: object) {
+export async function createPrivateControlRecord(filename: string, value: object) {
   const serialized = JSON.stringify(value);
   if (Buffer.byteLength(serialized) > 128 * 1024)
     throw new Error('Model operation record exceeds its bound');
@@ -70,21 +73,30 @@ async function createJson(filename: string, value: object) {
  * separate from the append-only mutation journal and contains no credentials. */
 export async function installModelRequest(home: string, input: unknown) {
   const job = parseModelJob(input);
+  return installNativeControlRequest(home, 'model-requests', job);
+}
+export async function installNativeControlRequest(
+  home: string,
+  namespace: 'model-requests' | 'bedrock-requests',
+  job: { operationId: string },
+) {
   if (!path.isAbsolute(home) || path.resolve(home) !== home || home === '/')
     throw new Error('Invalid model request home');
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(job.operationId))
+    throw new Error('Invalid native control request ID');
   const root = path.join(home, '.openclaw-aws');
-  const directory = path.join(root, 'model-requests', job.operationId);
+  const directory = path.join(root, namespace, job.operationId);
   await assertDirectoryChain(directory, home, true);
-  for (const value of [root, path.join(root, 'model-requests'), directory]) {
+  for (const value of [root, path.join(root, namespace), directory]) {
     if ((await lstat(value)).mode & 0o077)
       throw new Error('Model delivery directories must be private');
   }
   const filename = path.join(directory, 'request.json');
   try {
-    await createJson(filename, job);
+    await createPrivateControlRecord(filename, job);
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error;
-    if (!isDeepStrictEqual(parseModelJob(await privateModelJson(filename)), job))
+    if (!isDeepStrictEqual(await privateModelJson(filename), job))
       throw new Error('Delivered model operation ID belongs to another request', { cause: error });
   }
   return filename;
@@ -147,7 +159,7 @@ export async function modelHostJournal(home: string, input: ModelJob, create: bo
   const request = path.join(work, 'request.json');
   if (create) {
     try {
-      await createJson(request, job);
+      await createPrivateControlRecord(request, job);
     } catch (error) {
       if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error;
       if (!isDeepStrictEqual(parseModelJob(await privateModelJson(request)), job))
@@ -233,7 +245,7 @@ export async function modelHostJournal(home: string, input: ModelJob, create: bo
       if ((await events()).length)
         throw new Error('Model operation has already started; inspect/reconcile it without replay');
       try {
-        await createJson(maintenance, owner);
+        await createPrivateControlRecord(maintenance, owner);
       } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'EEXIST')
           throw new Error(
@@ -249,7 +261,7 @@ export async function modelHostJournal(home: string, input: ModelJob, create: bo
       if (entries.length >= 16) throw new Error('Model journal exceeds its operation bound');
       const next = event({ ...value, checkedAt: new Date().toISOString() });
       validateHistory([...entries, next]);
-      await createJson(
+      await createPrivateControlRecord(
         path.join(work, `event-${String(entries.length).padStart(4, '0')}.json`),
         next,
       );
