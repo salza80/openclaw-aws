@@ -7,11 +7,21 @@ import { parseRestoreJob } from './restore-contract.js';
 import { runRestoreWorker } from './restore-worker.js';
 import { runRestoreActivation } from './restore-activation.js';
 import { parseClonePreviewRequest, previewCloneStaging } from './clone-preview.js';
+import { parseCloneJob } from './clone-contract.js';
+import { runCloneWorker } from './clone-worker.js';
 
 async function main() {
   const [mode, inputFile, resultFile] = process.argv.slice(2);
   if (
-    !['--lock', '--run', '--lock-activate', '--activate', '--preview-clone'].includes(mode) ||
+    ![
+      '--lock',
+      '--run',
+      '--lock-activate',
+      '--activate',
+      '--preview-clone',
+      '--lock-clone',
+      '--run-clone',
+    ].includes(mode) ||
     !inputFile ||
     !resultFile ||
     process.argv.length !== 5
@@ -53,7 +63,8 @@ async function main() {
     await writeFile(resultFile, JSON.stringify(result), { flag: 'wx', mode: 0o600 });
     return;
   }
-  const job = parseRestoreJob(input);
+  const clone = mode === '--lock-clone' || mode === '--run-clone';
+  const job = clone ? parseCloneJob(input) : parseRestoreJob(input);
   const root = path.join(homedir(), '.openclaw-aws');
   const work = path.join(root, 'jobs', job.bootstrap.operationId);
   if (
@@ -71,7 +82,7 @@ async function main() {
     )
       throw new Error('Restore operation directory is not private');
   }
-  if (mode === '--lock' || mode === '--lock-activate') {
+  if (mode === '--lock' || mode === '--lock-activate' || mode === '--lock-clone') {
     await execa(
       'flock',
       [
@@ -81,7 +92,7 @@ async function main() {
         path.join(root, 'host.lock'),
         process.execPath,
         process.argv[1],
-        mode === '--lock-activate' ? '--activate' : '--run',
+        mode === '--lock-activate' ? '--activate' : clone ? '--run-clone' : '--run',
         inputFile,
         resultFile,
       ],
@@ -94,10 +105,10 @@ async function main() {
     process.once('SIGTERM', () => cancellation.abort());
     process.once('SIGINT', () => cancellation.abort());
     const run = mode === '--activate' ? runRestoreActivation : runRestoreWorker;
-    const result = await run(
-      job,
-      AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]),
-    );
+    const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]);
+    const result = clone
+      ? await runCloneWorker(parseCloneJob(job), signal)
+      : await run(job, signal);
     await writeFile(resultFile, JSON.stringify({ ok: true, ...result }), { mode: 0o600 });
   } catch {
     await writeFile(

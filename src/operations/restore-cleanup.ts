@@ -9,7 +9,7 @@ import { resolveAwsTarget } from '../aws/target.js';
 import { removeSourceRecoveryAccess } from '../aws/recovery-source.js';
 import { deleteRestoreParameters } from '../aws/restore-cleanup.js';
 import { loadDeploymentState, assertDeploymentTarget, forgetRestoredDeployment } from './state.js';
-import { loadRestoreRecord } from './restore-record.js';
+import { loadRestoreRecord, type RestoreRecord } from './restore-record.js';
 import {
   getConfigPathByName,
   getOutputsPathByName,
@@ -29,14 +29,15 @@ import { withDeploymentLock } from './lock.js';
 /** Standard destroy has already verified/deleted the immutable stack identity. */
 export async function cleanupRestoredDeployment(ctx: CommandContext): Promise<boolean> {
   const state = loadDeploymentState(ctx);
-  if (!state?.restoredFrom) return false;
+  const lineage = state?.restoredFrom ?? state?.clonedFrom;
+  if (!state || !lineage) return false;
   assertDeploymentTarget(ctx);
   const client = createSsmClient(ctx.target);
   try {
     await deleteRestoreParameters(client, {
       deploymentName: ctx.name,
       deploymentId: state.identity.stackId,
-      operationId: state.restoredFrom.operationId,
+      operationId: lineage.operationId,
     });
   } finally {
     client.destroy();
@@ -47,6 +48,16 @@ export async function cleanupRestoredDeployment(ctx: CommandContext): Promise<bo
 /** Explicit cleanup also works after provisioning failed before local config existed. */
 export async function cleanupRestore(operationId: string): Promise<void> {
   const record = loadRestoreRecord(operationId);
+  return cleanupInactiveRecovery(record);
+}
+
+/** Clone and restore share immutable target/operation cleanup authority. */
+export async function cleanupInactiveRecovery(
+  record: Pick<RestoreRecord, 'operationId' | 'name' | 'config' | 'target'>,
+): Promise<void> {
+  const operationId = record.operationId;
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operationId))
+    throw new Error('Recovery cleanup requires a verified operation UUID');
   const target = await resolveAwsTarget(record.config.aws);
   const ctx: CommandContext = {
     name: record.name,

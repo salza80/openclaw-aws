@@ -50,6 +50,7 @@ const stackId = 'arn:aws:cloudformation:us-east-1:123456789012:stack/OpenclawSta
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.record = {
+    operationId: id,
     name: 'alpha',
     config: makeCommandContext().config,
     target: { stackId, instanceId: 'i-0123456789abcdef0' },

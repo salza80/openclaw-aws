@@ -8,7 +8,8 @@ import { execa } from 'execa';
 import type { Provider } from '../cli/types/index.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import { OPENCLAW_PROVIDER_SETUP, openClawProviderAuthArgs } from './install.js';
-import { object, parseMembers } from './backup-contract.js';
+import { object } from './backup-contract.js';
+import { verifyNativeClone } from './clone-validate.js';
 import { cloneContentDigest, type CloneContentPlan } from './clone-content.js';
 import type { CloneSourcePolicy } from './clone-policy.js';
 import { inactiveCloneConfig } from './clone-config.js';
@@ -274,32 +275,11 @@ export async function initializeNativeClone(options: {
         `${credential}\n`,
       );
   }
-  await native(['config', 'validate']);
-  const members = parseMembers(await native(['agents', 'list']));
-  if (
-    members.length !== options.content.members.length ||
-    options.content.members.some((expected) => {
-      const actual = members.find((member) => member.id === expected.id);
-      return (
-        !actual ||
-        actual.workspace !== expected.workspace ||
-        actual.agentDir !== expected.agentDir ||
-        (expected.model && actual.model !== expected.model)
-      );
-    })
-  )
-    throw new Error(
-      'Native clone roster or model selection differs from the reviewed content plan',
-    );
-  const audit = object(await native(['secrets', 'audit']));
-  if (
-    object(audit.resolution).resolvabilityComplete !== true ||
-    object(audit.summary).unresolvedRefCount !== 0
-  )
-    throw new Error('Fresh native clone credentials are not fully resolvable');
-  for (const member of members)
-    // Public auth/runtime checks only. --probe is deliberately absent.
-    await native(['models', 'status', '--agent', member.id, '--check']);
+  const verified = await verifyNativeClone({
+    members: options.content.members,
+    nativePackageJson: packageJson,
+    signal: options.signal,
+  });
   await options.assertInactive();
-  return { members, integrations: 'disconnected' as const, gateway: 'inactive' as const };
+  return { ...verified, integrations: 'disconnected' as const, gateway: 'inactive' as const };
 }

@@ -20,7 +20,12 @@ interface DeploymentState {
   desired: { version: string; nodeVersion: string; provider: string; model?: string };
   observed?: RuntimeObservation;
   restoredFrom?: { operationId: string; pointId?: string };
+  clonedFrom?: { operationId: string; pointId: string };
 }
+const validCloneLineage = (value: DeploymentState['clonedFrom']) =>
+  value !== undefined &&
+  /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value?.operationId) &&
+  /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value?.pointId);
 function statePath(ctx: CommandContext): string {
   return path.join(getConfigRoot(), 'deployments', `${ctx.name}.json`);
 }
@@ -29,7 +34,7 @@ export function forgetRestoredDeployment(ctx: CommandContext, operationId: strin
   const saved = loadDeploymentState(ctx);
   if (!saved) return;
   assertDeploymentTarget(ctx);
-  if (saved.restoredFrom?.operationId !== operationId)
+  if ((saved.restoredFrom?.operationId ?? saved.clonedFrom?.operationId) !== operationId)
     throw new AWSError('Local deployment metadata belongs to another operation');
   fs.unlinkSync(statePath(ctx));
 }
@@ -37,7 +42,13 @@ export function loadDeploymentState(ctx: CommandContext): DeploymentState | unde
   const filename = statePath(ctx);
   if (!fs.existsSync(filename)) return undefined;
   const value = JSON.parse(fs.readFileSync(filename, 'utf8')) as DeploymentState;
-  if (value.schemaVersion !== 1 || !value.identity?.stackId || !value.desired?.version) {
+  if (
+    value.schemaVersion !== 1 ||
+    !value.identity?.stackId ||
+    !value.desired?.version ||
+    (value.restoredFrom && value.clonedFrom) ||
+    (value.clonedFrom !== undefined && !validCloneLineage(value.clonedFrom))
+  ) {
     throw new AWSError('Invalid local deployment metadata; inspect it before proceeding');
   }
   return value;
@@ -68,9 +79,14 @@ export function recordDeploymentState(
     newlyCreated?: boolean;
     observed?: RuntimeObservation;
     restoredFrom?: { operationId: string; pointId?: string };
+    clonedFrom?: { operationId: string; pointId: string };
   } = {},
 ): DeploymentState {
   const stackId = status.stackId;
+  if (options.restoredFrom && options.clonedFrom)
+    throw new AWSError('A deployment cannot adopt both restored and cloned identity lineage');
+  if (options.clonedFrom !== undefined && !validCloneLineage(options.clonedFrom))
+    throw new AWSError('Clone deployment lineage requires operation and recovery point UUIDs');
   if (
     !stackId ||
     !stackId.startsWith('arn:') ||
@@ -97,19 +113,25 @@ export function recordDeploymentState(
       stackName: ctx.config.stack.name,
     },
     desired:
-      previous && !options.newlyCreated && !options.restoredFrom
+      previous && !options.newlyCreated && !options.restoredFrom && !options.clonedFrom
         ? previous.desired
         : {
             version: OPENCLAW_VERSION,
             nodeVersion: OPENCLAW_NODE_VERSION,
             provider: options.restoredFrom
               ? 'native-restored'
-              : (ctx.config.openclaw?.apiProvider ?? 'anthropic-api-key'),
+              : options.clonedFrom
+                ? 'native-cloned'
+                : (ctx.config.openclaw?.apiProvider ?? 'anthropic-api-key'),
             model: ctx.config.openclaw?.model,
           },
     observed: options.observed ?? (options.newlyCreated ? undefined : previous?.observed),
     restoredFrom:
-      options.restoredFrom ?? (options.newlyCreated ? undefined : previous?.restoredFrom),
+      options.restoredFrom ??
+      (options.newlyCreated || options.clonedFrom ? undefined : previous?.restoredFrom),
+    clonedFrom:
+      options.clonedFrom ??
+      (options.newlyCreated || options.restoredFrom ? undefined : previous?.clonedFrom),
   };
   const filename = statePath(ctx);
   fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });

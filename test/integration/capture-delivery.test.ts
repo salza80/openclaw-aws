@@ -19,29 +19,39 @@ function delivery(sha256: string) {
   );
 }
 describe('SSM artifact delivery on hosts with a private root AWS CLI', () => {
-  it('delivers the restore worker with pinned state paths without running downloaded code as root', async () => {
-    const script = recoveryRemoteCommand({
-      operationId: backupJob.operationId,
-      region: 'eu-central-1',
-      account: backupJob.source.account,
-      bucket: backupJob.settings.bucket,
-      pluginDirectory: backupJob.pluginDirectory,
-      worker: 'restore-worker.js',
-      artifact: {
-        digest: 'b'.repeat(64),
-        files: [
-          { name: 'restore-worker.js', key: 'tool', versionId: 'version', sha256: 'a'.repeat(64) },
-        ],
-      },
-      request: { key: 'request', versionId: 'version', sha256: 'a'.repeat(64) },
-    });
-    expect(script.slice(script.indexOf('sudo -H -u ubuntu'))).toContain(
-      'OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw',
-    );
-    expect(script).toContain('restore-worker.js');
-    expect(script.slice(0, script.indexOf('sudo -H -u ubuntu'))).not.toContain('node ');
-    await execa('/bin/bash', ['-n', '-c', script]);
-  });
+  it.each(['stage', 'clone'] as const)(
+    'delivers the %s recovery worker with pinned state paths without running downloaded code as root',
+    async (mode) => {
+      const script = recoveryRemoteCommand({
+        operationId: backupJob.operationId,
+        region: 'eu-central-1',
+        account: backupJob.source.account,
+        bucket: backupJob.settings.bucket,
+        pluginDirectory: backupJob.pluginDirectory,
+        worker: 'restore-worker.js',
+        mode,
+        artifact: {
+          digest: 'b'.repeat(64),
+          files: [
+            {
+              name: 'restore-worker.js',
+              key: 'tool',
+              versionId: 'version',
+              sha256: 'a'.repeat(64),
+            },
+          ],
+        },
+        request: { key: 'request', versionId: 'version', sha256: 'a'.repeat(64) },
+      });
+      expect(script.slice(script.indexOf('sudo -H -u ubuntu'))).toContain(
+        'OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw',
+      );
+      expect(script).toContain('restore-worker.js');
+      expect(script).toContain(mode === 'clone' ? '--lock-clone' : '--lock');
+      expect(script.slice(0, script.indexOf('sudo -H -u ubuntu'))).not.toContain('node ');
+      await execa('/bin/bash', ['-n', '-c', script]);
+    },
+  );
   it('retrieves/checks code before handing it to the unprivileged native worker', async () => {
     const script = delivery('a'.repeat(64));
     const handoff = script.indexOf('sudo -H -u ubuntu');
