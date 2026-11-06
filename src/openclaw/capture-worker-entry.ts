@@ -4,13 +4,22 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { parseBackupJob } from './backup-contract.js';
-import { runCaptureWorker } from './capture-worker.js';
+import { runCaptureWorker, runArchiveCaptureAction } from './capture-worker.js';
 
 // This process is launched through SSM. All native diagnostics stay in private
 // redirected files; only a deliberately small result file is returned to SSM.
 async function main() {
   const [mode, inputFile, resultFile] = process.argv.slice(2);
-  if (!['--lock', '--run'].includes(mode) || !inputFile || !resultFile || process.argv.length !== 5)
+  const actions = ['inspect', 'abort', 'commit'] as const;
+  const action = actions.find((action) =>
+    ['--lock-archive-' + action, '--archive-' + action].includes(mode),
+  );
+  if (
+    (!['--lock', '--run'].includes(mode) && !action) ||
+    !inputFile ||
+    !resultFile ||
+    process.argv.length !== 5
+  )
     throw new Error('Invalid capture worker invocation');
   const file = await open(inputFile, constants.O_RDONLY | constants.O_NOFOLLOW);
   let input: unknown;
@@ -38,7 +47,7 @@ async function main() {
     directory.uid !== process.getuid?.()
   )
     throw new Error('Capture management directory is not private');
-  if (mode === '--lock') {
+  if (mode === '--lock' || mode.startsWith('--lock-archive-')) {
     await execa(
       'flock',
       [
@@ -48,7 +57,7 @@ async function main() {
         path.join(root, 'host.lock'),
         process.execPath,
         process.argv[1],
-        '--run',
+        action ? '--archive-' + action : '--run',
         inputFile,
         resultFile,
       ],
@@ -60,10 +69,10 @@ async function main() {
     const cancellation = new AbortController();
     process.once('SIGTERM', () => cancellation.abort());
     process.once('SIGINT', () => cancellation.abort());
-    const result = await runCaptureWorker(
-      job,
-      AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]),
-    );
+    const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]);
+    const result = action
+      ? await runArchiveCaptureAction(job, action, signal)
+      : await runCaptureWorker(job, signal);
     await writeFile(resultFile, JSON.stringify({ ok: true, ...result }), { mode: 0o600 });
   } catch {
     await writeFile(

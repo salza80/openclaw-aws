@@ -9,6 +9,12 @@ export interface ArchiveSuspension {
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const prefix = 'openclaw-aws-archive:';
 const handoffBudgetMs = 30000;
+export class ArchiveSuspensionBusyError extends Error {
+  constructor() {
+    super('Gateway has active work; archive did not force suspension or stop it');
+    this.name = 'ArchiveSuspensionBusyError';
+  }
+}
 function record(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input))
     throw new Error('Native archive suspension returned an invalid result');
@@ -25,7 +31,8 @@ function validLease(lease: ArchiveSuspension) {
 }
 function idle(row: Record<string, unknown>, preparing: boolean) {
   if (row.status !== 'ready') {
-    if (row.status === 'busy' || row.status === 'draining')
+    if (row.status === 'busy') throw new ArchiveSuspensionBusyError();
+    if (row.status === 'draining')
       throw new Error('Gateway has active work; archive did not force suspension or stop it');
     throw new Error('Gateway suspension is unavailable or owned by another operation');
   }

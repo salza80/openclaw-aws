@@ -14,9 +14,16 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { nativeBackupHost, type NativeBackupHost } from './native-backup-host.js';
 import {
+  nativeArchiveCaptureControl,
+  type ArchiveCaptureControl,
+} from './archive-capture-control.js';
+import {
   assertMemberCoverage,
+  assertArchiveRoster,
+  backupJobDigest,
   object,
   parseBackupJob,
+  parseCapturedBackup,
   type BackupCaptureJob,
   type CapturedBackup,
   type NativeCaptureSummary,
@@ -42,10 +49,30 @@ export interface CaptureMaintenance {
   enter(initial: MaintenanceRecord): Promise<MaintenanceRecord>;
   release(): Promise<void>;
 }
-export function hostCaptureMaintenance(job: BackupCaptureJob): CaptureMaintenance {
+export function hostCaptureMaintenance(
+  job: BackupCaptureJob,
+): CaptureMaintenance & { inspect(): Promise<MaintenanceRecord | undefined> } {
   const directory = path.join(homedir(), '.openclaw-aws');
   const filename = path.join(directory, 'maintenance.json');
   return {
+    async inspect() {
+      let current;
+      try {
+        current = object(JSON.parse(await readFile(filename, 'utf8')));
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+        throw error;
+      }
+      if (
+        current.schemaVersion !== 1 ||
+        current.operationId !== job.operationId ||
+        current.stackId !== job.source.stackId ||
+        current.roleId !== job.source.roleId ||
+        !['active', 'inactive', 'failed'].includes(String(current.initial))
+      )
+        throw new Error('Another maintenance operation owns this host');
+      return current as unknown as MaintenanceRecord;
+    },
     async enter(initial) {
       await mkdir(directory, { recursive: true, mode: 0o700 });
       try {
@@ -175,19 +202,51 @@ export function roleCaptureStorage(job: BackupCaptureJob, signal?: AbortSignal):
       if (body.length > 128 * 1024)
         throw new Error('Capture metadata exceeds the supported receipt size');
       const relative = `_operations/${job.operationId}/capture.json`;
-      const published = await s3.send(
-        new PutObjectCommand({
-          ...common,
-          Key: key(relative),
-          Body: body,
-          ContentLength: body.length,
-          ChecksumSHA256: createHash('sha256').update(body).digest('base64'),
-          IfNoneMatch: '*',
-          ContentType: 'application/json',
-        }),
-        { abortSignal: requestSignal() },
-      );
-      return { key: relative, versionId: actualVersion(published.VersionId) };
+      let versionId: string | undefined;
+      try {
+        const published = await s3.send(
+          new PutObjectCommand({
+            ...common,
+            Key: key(relative),
+            Body: body,
+            ContentLength: body.length,
+            ChecksumSHA256: createHash('sha256').update(body).digest('base64'),
+            IfNoneMatch: '*',
+            ContentType: 'application/json',
+          }),
+          { abortSignal: requestSignal() },
+        );
+        versionId = actualVersion(published.VersionId);
+      } catch (error) {
+        if (
+          !result.gateway.held ||
+          !(error instanceof Error) ||
+          error.name !== 'PreconditionFailed'
+        )
+          throw error;
+        const existing = await s3.send(new GetObjectCommand({ ...common, Key: key(relative) }), {
+          abortSignal: requestSignal(),
+        });
+        try {
+          if (
+            existing.ContentLength !== body.length ||
+            !Buffer.from(await existing.Body!.transformToByteArray()).equals(body)
+          )
+            throw new Error(
+              'Existing archive capture receipt differs from this verified operation',
+              { cause: error },
+            );
+          versionId = actualVersion(existing.VersionId);
+        } finally {
+          if (
+            existing.Body &&
+            'destroy' in existing.Body &&
+            typeof existing.Body.destroy === 'function'
+          )
+            existing.Body.destroy();
+        }
+      }
+      return { key: relative, versionId };
     },
     close() {
       s3.destroy();
@@ -203,12 +262,16 @@ export async function captureInstallation(
   host: NativeBackupHost,
   storage: CaptureStorage,
   maintenance: CaptureMaintenance,
+  archive?: ArchiveCaptureControl,
 ) {
   let ownership: MaintenanceRecord | undefined;
   let restored = false;
   let captured: CapturedBackup | undefined;
   let failure: unknown;
+  let archiveStartedHere = false;
   try {
+    if (job.archive && !archive)
+      throw new Error('Archive capture requires its durable native service controller');
     await storage.identify();
     const initial = await host.gateway.inspect();
     ownership = await maintenance.enter({
@@ -218,46 +281,78 @@ export async function captureInstallation(
       roleId: job.source.roleId,
       initial,
     });
-    if (initial === 'active') await host.gateway.stop();
-    const { locationId } = await host.prepareStorage(await storage.passphrase());
-    const marker = await storage.marker(locationId);
-    const members = await host.members();
-    const capture = await host.capture();
-    if (capture.location.namespace !== job.namespace || capture.location.locationId !== locationId)
-      throw new Error('Native capture storage identity differs from the planned location');
-    assertMemberCoverage(capture, members);
-    const credentials = await host.credentials(capture, members);
-    const archive = await storage.archive(capture);
-    const archivePath = `backups/${job.namespace}/${capture.location.key}`;
-    const verification = await host.verify(capture.location.key, {
-      'openclaw-storage.json': marker.versionId,
-      [archivePath]: archive.versionId,
-    });
-    if (
-      verification.createdAt !== capture.createdAt ||
-      verification.assetCount !== capture.assets.length
-    )
-      throw new Error('Native readback verification does not match the captured archive');
-    captured = {
-      schemaVersion: 1,
-      operationId: job.operationId,
-      runtime: host.runtime,
-      capture,
-      members,
-      credentials,
-      verification,
-      objects: { 'openclaw-storage.json': marker, [archivePath]: archive },
-      omissions: [
-        'Native volatile queues, logs and managed runtime caches are omitted; restored session recovery and scheduled work require deliberate activation review.',
-      ],
-      gateway: { initial: ownership.initial, restored: false },
-    };
+    if (job.archive) {
+      captured = await archive!.resume();
+      if (!captured) {
+        archiveStartedHere = true;
+        await archive!.begin(ownership.initial);
+      }
+    } else if (initial === 'active') await host.gateway.stop();
+    if (!captured) {
+      const approvedMembers = job.archive ? await host.members() : undefined;
+      if (job.archive) {
+        assertArchiveRoster(job.archive.expectedMembers, approvedMembers!);
+        await archive!.assertHeld();
+      }
+      const { locationId } = await host.prepareStorage(await storage.passphrase());
+      const marker = await storage.marker(locationId);
+      const members = approvedMembers ?? (await host.members());
+      const capture = await host.capture();
+      if (
+        capture.location.namespace !== job.namespace ||
+        capture.location.locationId !== locationId
+      )
+        throw new Error('Native capture storage identity differs from the planned location');
+      assertMemberCoverage(capture, members);
+      const credentials = await host.credentials(capture, members);
+      const storedArchive = await storage.archive(capture);
+      const archivePath = `backups/${job.namespace}/${capture.location.key}`;
+      const verification = await host.verify(capture.location.key, {
+        'openclaw-storage.json': marker.versionId,
+        [archivePath]: storedArchive.versionId,
+      });
+      if (
+        verification.createdAt !== capture.createdAt ||
+        verification.assetCount !== capture.assets.length
+      )
+        throw new Error('Native readback verification does not match the captured archive');
+      const result: CapturedBackup = {
+        schemaVersion: 1,
+        operationId: job.operationId,
+        runtime: host.runtime,
+        capture,
+        members,
+        credentials,
+        verification,
+        objects: { 'openclaw-storage.json': marker, [archivePath]: storedArchive },
+        omissions: [
+          'Native volatile queues, logs and managed runtime caches are omitted; restored session recovery and scheduled work require deliberate activation review.',
+        ],
+        gateway: {
+          initial: ownership.initial,
+          restored: false,
+          ...(job.archive
+            ? {
+                held: {
+                  kind: 'archive' as const,
+                  operationId: job.operationId,
+                  requestDigest: backupJobDigest(job),
+                },
+              }
+            : {}),
+        },
+      };
+      const completed = job.archive ? parseCapturedBackup(result, job) : result;
+      if (job.archive) await archive!.verified(completed);
+      captured = completed;
+    }
   } catch (error) {
     failure = error;
   } finally {
-    if (ownership) {
+    if (ownership && (!job.archive || (archiveStartedHere && !captured))) {
       try {
-        if (ownership.initial === 'active') await host.gateway.start();
+        if (job.archive) await archive!.restore();
+        else if (ownership.initial === 'active') await host.gateway.start();
         restored = true;
         await maintenance.release();
       } catch {
@@ -269,7 +364,12 @@ export async function captureInstallation(
   if (captured) {
     captured.gateway.restored = restored;
     const result = await storage.publish(captured);
-    return { ...result, operationId: job.operationId, gatewayRestored: restored };
+    return {
+      ...result,
+      operationId: job.operationId,
+      gatewayRestored: restored,
+      ...(job.archive ? { gatewayHeld: true } : {}),
+    };
   }
   if (failure)
     throw new Error(
@@ -286,10 +386,46 @@ export async function runCaptureWorker(input: unknown, signal?: AbortSignal) {
   const job = parseBackupJob(input);
   const storage = roleCaptureStorage(job, signal);
   let host: NativeBackupHost | undefined;
+  let archive: ArchiveCaptureControl | undefined;
   try {
     host = await nativeBackupHost(job, { signal });
-    return await captureInstallation(job, host, storage, hostCaptureMaintenance(job));
+    if (job.archive) archive = await nativeArchiveCaptureControl(job, host, signal);
+    return await captureInstallation(job, host, storage, hostCaptureMaintenance(job), archive);
   } finally {
+    archive?.close();
     storage.close();
+  }
+}
+
+export async function runArchiveCaptureAction(
+  input: unknown,
+  action: 'inspect' | 'abort' | 'commit',
+  signal?: AbortSignal,
+) {
+  if (!['inspect', 'abort', 'commit'].includes(action))
+    throw new Error('Unsupported archive control action');
+  const job = parseBackupJob(input);
+  if (!job.archive) throw new Error('Archive control requires a whole-host capture request');
+  const host = await nativeBackupHost(job, { signal });
+  let archive: ArchiveCaptureControl | undefined;
+  try {
+    archive = await nativeArchiveCaptureControl(job, host, signal);
+    if (action === 'inspect') return { operationId: job.operationId, ...(await archive.inspect()) };
+    const maintenance = hostCaptureMaintenance(job);
+    if (!(await maintenance.inspect()))
+      throw new Error('Archive no longer owns source maintenance');
+    if (action === 'abort') {
+      await archive.restore();
+      await maintenance.release();
+      return { operationId: job.operationId, ...(await archive.inspect()) };
+    }
+    return {
+      operationId: job.operationId,
+      recordedPhase: 'destroy-committed',
+      ...(await archive.commit()),
+    };
+  } finally {
+    archive?.close();
+    await host.close();
   }
 }

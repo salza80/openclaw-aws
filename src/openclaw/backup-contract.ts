@@ -187,6 +187,12 @@ export function backupJobDigest(job: BackupCaptureJob) {
     .update(JSON.stringify(parseBackupJob(job)))
     .digest('hex');
 }
+export function archiveCaptureDigest(capture: CapturedBackup, job: BackupCaptureJob) {
+  if (!job.archive) throw new Error('Archive verification requires a whole-host request');
+  return createHash('sha256')
+    .update(JSON.stringify(parseCapturedBackup(capture, job)))
+    .digest('hex');
+}
 export function parseMembers(value: unknown): BackupMember[] {
   const members = list(value).map((entry) => {
     const row = object(entry);
