@@ -17,6 +17,7 @@ import {
   ensureRecoveryStack,
   recoveryTemplate,
   removeRecoveryAccessStack,
+  removeOwnedRolePolicyStack,
 } from '../../src/aws/auxiliary-stacks.js';
 import { testTarget } from '../helpers/fixtures/command-context.js';
 const target = {
@@ -96,43 +97,48 @@ describe('independent recovery stack lifecycle', () => {
       false,
     );
   });
-  it('removes only its owned role-policy stack and observes confirmed deletion', async () => {
-    const access = {
-      stackName: 'OpenclawRecovery-source-vault',
-      identity: 'source-role-id',
-      roleName: 'source-role',
-    };
-    const identity = {
-      StackName: access.stackName,
-      StackId: stackId.replace(plan.stackName, access.stackName),
-      StackStatus: 'CREATE_COMPLETE',
-      Tags: [
-        { Key: 'openclaw-aws:kind', Value: 'recovery-access' },
-        { Key: 'openclaw-aws:identity', Value: access.identity },
-      ],
-    };
-    mocks.send
-      .mockResolvedValueOnce({ Stacks: [identity] })
-      .mockResolvedValueOnce({
-        TemplateBody: {
-          Resources: {
-            Policy: {
-              Type: 'AWS::IAM::RolePolicy',
-              Properties: { RoleName: 'source-role', PolicyName: access.stackName },
+  it.each(['recovery-access', 'bedrock-access'] as const)(
+    'removes only its owned %s role-policy stack and observes confirmed deletion',
+    async (kind) => {
+      const access = {
+        stackName: 'OpenclawRecovery-source-vault',
+        identity: 'source-role-id',
+        roleName: 'source-role',
+      };
+      const identity = {
+        StackName: access.stackName,
+        StackId: stackId.replace(plan.stackName, access.stackName),
+        StackStatus: 'CREATE_COMPLETE',
+        Tags: [
+          { Key: 'openclaw-aws:kind', Value: kind },
+          { Key: 'openclaw-aws:identity', Value: access.identity },
+        ],
+      };
+      mocks.send
+        .mockResolvedValueOnce({ Stacks: [identity] })
+        .mockResolvedValueOnce({
+          TemplateBody: {
+            Resources: {
+              Policy: {
+                Type: 'AWS::IAM::RolePolicy',
+                Properties: { RoleName: 'source-role', PolicyName: access.stackName },
+              },
             },
           },
-        },
-      })
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ Stacks: [{ ...identity, StackStatus: 'DELETE_COMPLETE' }] });
-    await removeRecoveryAccessStack(target, access, { pollMs: 0 });
-    const commands = mocks.send.mock.calls.map(([command]) => command);
-    expect(commands[0]).toBeInstanceOf(DescribeStacksCommand);
-    expect(commands[1]).toBeInstanceOf(GetTemplateCommand);
-    expect(commands[1].input.TemplateStage).toBe('Processed');
-    expect(commands[2]).toBeInstanceOf(DeleteStackCommand);
-    expect(commands[2].input.StackName).toBe(identity.StackId);
-  });
+        })
+        .mockResolvedValueOnce({})
+        .mockResolvedValueOnce({ Stacks: [{ ...identity, StackStatus: 'DELETE_COMPLETE' }] });
+      if (kind === 'recovery-access')
+        await removeRecoveryAccessStack(target, access, { pollMs: 0 });
+      else await removeOwnedRolePolicyStack(target, { ...access, kind }, { pollMs: 0 });
+      const commands = mocks.send.mock.calls.map(([command]) => command);
+      expect(commands[0]).toBeInstanceOf(DescribeStacksCommand);
+      expect(commands[1]).toBeInstanceOf(GetTemplateCommand);
+      expect(commands[1].input.TemplateStage).toBe('Processed');
+      expect(commands[2]).toBeInstanceOf(DeleteStackCommand);
+      expect(commands[2].input.StackName).toBe(identity.StackId);
+    },
+  );
   it('refuses to remove a stack containing source compute or a different role policy', async () => {
     const access = {
       stackName: 'OpenclawRecovery-source-vault',

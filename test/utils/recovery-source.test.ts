@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   destroy: vi.fn(),
   status: vi.fn(),
   remove: vi.fn(),
+  removeOwned: vi.fn(),
   guard: vi.fn(),
 }));
 vi.mock('@aws-sdk/client-cloudformation', async (original) => ({
@@ -36,12 +37,16 @@ vi.mock('@aws-sdk/client-iam', async (original) => ({
 }));
 vi.mock('../../src/cli/utils/aws.js', () => ({ getStackStatus: mocks.status }));
 vi.mock('../../src/operations/state.js', () => ({ assertDeploymentTarget: mocks.guard }));
-vi.mock('../../src/aws/auxiliary-stacks.js', () => ({ removeRecoveryAccessStack: mocks.remove }));
+vi.mock('../../src/aws/auxiliary-stacks.js', () => ({
+  removeRecoveryAccessStack: mocks.remove,
+  removeOwnedRolePolicyStack: mocks.removeOwned,
+}));
 import {
   inspectRecoverySource,
   removeSourceRecoveryAccess,
   sourceAccessIdentity,
   sourceHash,
+  bedrockAccessStackName,
 } from '../../src/aws/recovery-source.js';
 import { makeCommandContext, testTarget } from '../helpers/fixtures/command-context.js';
 const target = {
@@ -201,6 +206,23 @@ describe('source recovery ownership', () => {
         Object.assign(new Error('denied second page'), { name: 'AccessDenied' }),
       );
     await expect(removeSourceRecoveryAccess(target, stackId)).rejects.toThrow('denied second page');
+    expect(mocks.remove).not.toHaveBeenCalled();
+  });
+  it('removes the exact owned Bedrock policy before host-role teardown, leaving other roles alone', async () => {
+    const own = bedrockAccessStackName(stackId, role.RoleId!);
+    const other = bedrockAccessStackName(stackId, 'DIFFERENTROLE');
+    mocks.iam.mockImplementation(async (command) =>
+      command instanceof GetRoleCommand
+        ? { Role: role }
+        : { PolicyNames: [own, other, 'unrelated-policy'] },
+    );
+    await removeSourceRecoveryAccess(target, stackId);
+    expect(mocks.removeOwned).toHaveBeenCalledExactlyOnceWith(target, {
+      kind: 'bedrock-access',
+      stackName: own,
+      identity: sourceAccessIdentity(stackId, role.RoleId!),
+      roleName: role.RoleName,
+    });
     expect(mocks.remove).not.toHaveBeenCalled();
   });
   it('handles an explicitly absent role during a partial teardown retry', async () => {

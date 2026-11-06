@@ -33,19 +33,20 @@ export type RecoveryStackPlan =
         | 'secretImport'
       >;
     };
-const tags = (plan: Pick<RecoveryStackPlan, 'kind' | 'identity'>) => [
+const tags = (plan: { kind: AuxiliaryKind; identity: string }) => [
   { Key: 'openclaw-aws:kind', Value: plan.kind },
   { Key: 'openclaw-aws:identity', Value: plan.identity },
 ];
+type AuxiliaryKind = RecoveryStackPlan['kind'] | 'bedrock-access';
 export function assertRecoveryStack(
   stack: Stack,
   target: AwsTarget,
-  plan: Pick<RecoveryStackPlan, 'kind' | 'identity' | 'stackName'>,
+  plan: { kind: AuxiliaryKind; identity: string; stackName: string },
 ) {
   if (
-    !stack.StackId ||
-    stack.StackId.split(':')[3] !== target.region ||
-    stack.StackId.split(':')[4] !== target.account ||
+    !stack.StackId?.startsWith(
+      `arn:${target.arn.split(':')[1]}:cloudformation:${target.region}:${target.account}:stack/${plan.stackName}/`,
+    ) ||
     stack.StackName !== plan.stackName ||
     !tags(plan).every((expected) =>
       stack.Tags?.some((tag) => tag.Key === expected.Key && tag.Value === expected.Value),
@@ -167,9 +168,23 @@ export async function ensureRecoveryStack(
 }
 
 /** Delete only a separately owned IAM-policy stack; never the vault or source resources. */
-export async function removeRecoveryAccessStack(
+export function removeRecoveryAccessStack(
   target: AwsTarget,
   plan: { stackName: string; identity: string; roleName: string },
+  options: { signal?: AbortSignal; pollMs?: number } = {},
+) {
+  return removeOwnedRolePolicyStack(target, { ...plan, kind: 'recovery-access' }, options);
+}
+
+/** Shared cleanup for independently owned recovery and model-access policies. */
+export async function removeOwnedRolePolicyStack(
+  target: AwsTarget,
+  plan: {
+    kind: 'recovery-access' | 'bedrock-access';
+    stackName: string;
+    identity: string;
+    roleName: string;
+  },
   options: { signal?: AbortSignal; pollMs?: number } = {},
 ) {
   const signal = options.signal
@@ -179,7 +194,7 @@ export async function removeRecoveryAccessStack(
   try {
     const stack = await describe(client, plan.stackName, signal);
     if (!stack) return;
-    assertRecoveryStack(stack, target, { ...plan, kind: 'recovery-access' });
+    assertRecoveryStack(stack, target, plan);
     const response = await client.send(
       new GetTemplateCommand({ StackName: stack.StackId, TemplateStage: 'Processed' }),
       { abortSignal: signal },
@@ -224,7 +239,7 @@ export async function removeRecoveryAccessStack(
     while (true) {
       const current = await describe(client, stack.StackId!, signal);
       if (!current) return;
-      assertRecoveryStack(current, target, { ...plan, kind: 'recovery-access' });
+      assertRecoveryStack(current, target, plan);
       if (current.StackId !== stack.StackId)
         throw new Error('Recovery access stack identity changed during removal');
       if (current.StackStatus === 'DELETE_COMPLETE') return;
