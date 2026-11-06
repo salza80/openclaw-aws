@@ -117,6 +117,28 @@ export async function runBedrockOperation(
       };
     }
     if (mode === 'accept-previous') {
+      if (latest && ['config-rolled-back', 'rolled-back'].includes(latest.phase)) {
+        const before = history.find((event) => event.phase === 'preflight-ready');
+        if (!journal || !before?.unrelatedHash || (!held && latest.phase !== 'rolled-back'))
+          throw new Error('Recorded rollback lacks its original proof or maintenance ownership');
+        // Only the native configuration transaction's durable verified rollback
+        // permits this path. An unchanged read cannot settle an in-flight write.
+        const current = await host.revision();
+        if (current.unrelatedHash !== before.unrelatedHash)
+          throw new Error(
+            'Native settings changed after rollback; previous-state acceptance refused',
+          );
+        if (latest.phase !== 'rolled-back') await journal.append({ phase: 'rolled-back' });
+        if (await journal.ownsMaintenance()) await journal.release();
+        return {
+          ...header,
+          phase: 'rolled-back',
+          maintenanceHeld: false,
+          reconciled: true,
+          message:
+            'Recorded native rollback and current original settings are verified. No provider write was repeated; installed plugin, role files and IAM grants remain for inspection.',
+        };
+      }
       if (!journal || history.some((event) => !['started', 'unchanged'].includes(event.phase)))
         throw new Error(
           'A started Bedrock plugin/configuration mutation cannot be certified unchanged',

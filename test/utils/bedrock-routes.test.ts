@@ -32,6 +32,18 @@ beforeEach(() => {
   vi.resetAllMocks();
 });
 describe('Bedrock IAM route metadata', () => {
+  it('rejects known non-streaming foundation models before returning a provisioning/IAM route', async () => {
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof GetFoundationModelCommand)
+        return { modelDetails: { modelArn: foundationArn, responseStreamingSupported: false } };
+      throw error('ResourceNotFoundException');
+    });
+    await expect(resolveBedrockRoute(testTarget, route().model, region)).rejects.toMatchObject({
+      kind: 'capability',
+      message: expect.stringContaining('response streaming'),
+    });
+    expect(mocks.destroy).toHaveBeenCalledOnce();
+  });
   it('resolves a bare foundation ID using read-only metadata and the selected target credentials', async () => {
     mocks.send.mockImplementation(async (command) => {
       if (command instanceof GetFoundationModelCommand)

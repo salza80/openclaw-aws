@@ -27,7 +27,7 @@ export interface OpenClawConfig {
   };
   openclaw?: {
     apiProvider: Provider;
-    /** Omitted on legacy API-key configurations. Never model Gateway auth. */
+    /** Optional for API-key setup. Gateway authentication is separate. */
     authMode?: 'api-key' | 'instance-role';
     bedrock?: { region: string };
     model?: string;

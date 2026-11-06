@@ -237,6 +237,11 @@ async function assertCatalogChoice(client: NativeModelClient, agentId: string, m
       'unchanged',
       'Native catalog reports unsupported tool use for this model',
     );
+  if (provider === 'amazon-bedrock' && field(match, 'supportsStreaming') === false)
+    throw new ModelControlError(
+      'unchanged',
+      'Native catalog reports unsupported response streaming for the Bedrock provider',
+    );
   if (field(match, 'manualSelectionAllowed') === false)
     throw new ModelControlError(
       'unchanged',

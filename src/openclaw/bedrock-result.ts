@@ -186,8 +186,13 @@ export function parseBedrockResult(
       throw new Error('Bedrock completion is not freshly verified');
   } else if (row.phase !== 'uncertain' && row.maintenanceHeld !== false)
     throw new Error('Terminal Bedrock refusal/rollback still holds maintenance');
-  if (mode === 'accept-previous' && (row.phase !== 'unchanged' || row.reconciled !== true))
-    throw new Error('Previous-state acceptance must fence an unchanged operation');
+  if (
+    mode === 'accept-previous' &&
+    (!['unchanged', 'rolled-back'].includes(String(row.phase)) || row.reconciled !== true)
+  )
+    throw new Error(
+      'Previous-state acceptance must certify unchanged settings or a recorded rollback',
+    );
   if (mode === 'accept-configured' && (row.phase !== 'complete' || row.reconciled !== true))
     throw new Error('Configured-state acceptance must certify the configured connection');
   if (row.phase === 'aborted' && mode !== 'abort')

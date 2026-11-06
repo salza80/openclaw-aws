@@ -62,6 +62,60 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 describe('durable Bedrock provider lifecycle', () => {
+  async function recordedRollback(terminal = false) {
+    const journal = await bedrockHostJournal(home, bedrockJob, true);
+    await journal.claim();
+    await journal.append({ phase: 'started' });
+    await journal.append({ phase: 'preflight-ready', unrelatedHash: 'a'.repeat(64) });
+    for (const phase of [
+      'plugin-intent',
+      'plugin-ready',
+      'environment-intent',
+      'environment-ready',
+    ] as const)
+      await journal.append({ phase });
+    for (const phase of ['config-intent', 'config-acknowledged', 'config-rolled-back'] as const)
+      await journal.append({ phase, beforeHash: 'plugin-revision' });
+    if (terminal) await journal.append({ phase: 'rolled-back' });
+    return journal;
+  }
+  it.each([false, true])(
+    'settles a verified native rollback after loss of its terminal receipt/release (terminal=%s), without writes',
+    async (terminal) => {
+      const journal = await recordedRollback(terminal);
+      expect(await runBedrockOperation(bedrockJob, host, 'accept-previous')).toMatchObject({
+        phase: 'rolled-back',
+        maintenanceHeld: false,
+        reconciled: true,
+      });
+      expect(await journal.ownsMaintenance()).toBe(false);
+      expect((await journal.events()).at(-1)?.phase).toBe('rolled-back');
+      expect(host.revision).toHaveBeenCalledOnce();
+      expect(host.configure).not.toHaveBeenCalled();
+      expect(host.installPlugin).not.toHaveBeenCalled();
+      expect(host.prepareEnvironment).not.toHaveBeenCalled();
+      expect(host.refresh).not.toHaveBeenCalled();
+      await expect(runBedrockOperation(bedrockJob, host)).rejects.toThrow(/already started/);
+    },
+  );
+  it('retains rollback ownership when current original settings or maintenance differ', async () => {
+    const journal = await recordedRollback();
+    vi.mocked(host.revision).mockResolvedValueOnce({
+      configHash: 'changed',
+      unrelatedHash: 'b'.repeat(64),
+    });
+    await expect(runBedrockOperation(bedrockJob, host, 'accept-previous')).rejects.toThrow(
+      /changed after rollback/,
+    );
+    expect(await journal.ownsMaintenance()).toBe(true);
+    await unlink(path.join(home, '.openclaw-aws/maintenance.json'));
+    const other = await modelHostJournal(home, modelJob, true);
+    await other.claim();
+    await expect(runBedrockOperation(bedrockJob, host, 'accept-previous')).rejects.toThrow(
+      /maintenance ownership/,
+    );
+    expect(await other.ownsMaintenance()).toBe(true);
+  });
   it('fences a never-started delivery only at its unchanged original native revision', async () => {
     vi.mocked(host.revision).mockResolvedValue({
       configHash: bedrockJob.expectedHash,
@@ -264,6 +318,9 @@ describe('durable Bedrock provider lifecycle', () => {
     await runBedrockOperation(bedrockJob, host);
     await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(
       /cannot cancel an in-flight/,
+    );
+    await expect(runBedrockOperation(bedrockJob, host, 'accept-previous')).rejects.toThrow(
+      /cannot be certified unchanged/,
     );
     expect(await (await bedrockHostJournal(home, bedrockJob, false)).ownsMaintenance()).toBe(true);
     expect(host.configure).toHaveBeenCalledOnce();

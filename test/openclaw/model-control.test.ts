@@ -25,6 +25,7 @@ let catalog: {
   id: string;
   available?: boolean;
   supportsTools?: boolean;
+  supportsStreaming?: boolean;
   unavailableReason?: string;
 }[];
 const scope = { kind: 'agent' as const, agentId: 'researcher' };
@@ -134,6 +135,20 @@ const mutations = () =>
 const change = (extra: Partial<Parameters<typeof changeModelSelection>[1]> = {}) =>
   changeModelSelection(client, { scope, model: 'openrouter/new', expectedHash: hash(), ...extra });
 describe('native persistent model control', () => {
+  it('refuses a Bedrock catalog entry explicitly lacking streaming before writing any intent', async () => {
+    catalog.push({
+      provider: 'amazon-bedrock',
+      id: 'non-streaming',
+      available: true,
+      supportsTools: true,
+      supportsStreaming: false,
+    });
+    await expect(change({ model: 'amazon-bedrock/non-streaming' })).rejects.toThrow(
+      /unsupported response streaming/,
+    );
+    expect(mutations()).toHaveLength(0);
+    expect(client.record).not.toHaveBeenCalled();
+  });
   it.each([undefined, null, 0])(
     'rejects missing/invalid published defaults instead of stringifying them: %s',
     async (value) => {

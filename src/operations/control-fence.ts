@@ -21,8 +21,8 @@ export function controlFencePath(target: ModelHostTarget) {
   const digest = createHash('sha256')
     .update(JSON.stringify(parseModelHostTarget(target)))
     .digest('hex');
-  // Retain the existing model-fence path/legacy ownership shape. Provider
-  // changes share this host rather than racing a separate local lock tree.
+  // Model and provider changes share one host fence, rather than racing
+  // separate local lock trees.
   return path.join(getConfigRoot(), 'model-pending', `${digest}.json`);
 }
 export async function readControlFence(target: ModelHostTarget): Promise<ControlFence | undefined> {

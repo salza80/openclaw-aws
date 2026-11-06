@@ -28,6 +28,8 @@ Repeat `--grant-model` for additional routes. The preview retains the host's exi
 
 The hosting deployment region and Bedrock inference region have separate meanings. A regional or cross-region inference profile is resolved through AWS metadata rather than guessed from its name. Discovery does not send a model prompt. Bedrock inference usage is billed through AWS.
 
+The native connection uses streaming Converse requests. A foundation model explicitly reporting no streaming support is rejected during route planning, before creating a host or updating IAM; native catalog entries explicitly lacking Bedrock streaming or tool support are also refused. Missing capability metadata remains unknown, and profile metadata/discovery does not establish model entitlement or successful inference. AWS documents the streaming check through `GetFoundationModel.responseStreamingSupported` in its [ConverseStream API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html).
+
 Use `--dry-run` to print the concrete immutable plan and discard its unexecuted IAM review. Declining a prompt also cancels that exact review. A create-review stack has no provisioned role policy; cancelling an update removes the change set, not the hosting stack.
 
 ## Ownership and setup
@@ -54,7 +56,7 @@ openclaw-aws providers reconcile --name research --operation-id <uuid> \
 
 Configured acceptance requires current applied IAM grants, exact plugin provenance, managed role environment, authenticated native health and fresh discovery. It does not repeat plugin/configuration writes. A historical complete receipt with unavailable current observation remains explicitly unavailable.
 
-If no native mutation started, `--accept previous` requires the original native revision and writes a terminal no-write receipt. This fences delayed original SSM delivery. It cannot roll back an already-started plugin/configuration mutation. Retained IAM review/applied-policy state still needs inspection; this acceptance alone is not proof that an interrupted CloudFormation action completed or was undone.
+If no native mutation started, `--accept previous` requires the original native revision and writes a terminal no-write receipt. This fences delayed original SSM delivery. It can also settle a durable native `config-rolled-back`/`rolled-back` receipt after a lost terminal response or maintenance release: current healthy settings must still match the saved preflight digest, and only this operation's hold is released. An unchanged read without that verified rollback receipt cannot settle a configuration write that may still be in flight. Neither path repeats a provider write. Retained plugin, role-file and IAM review/applied-policy state still needs inspection; this acceptance alone is not proof that an interrupted CloudFormation action completed or was undone.
 
 For a partial setup whose provider configuration remains unchanged, use:
 

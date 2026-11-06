@@ -95,7 +95,7 @@ export function validateBedrockRoute(input: BedrockRoute, identity: BedrockIdent
 
 export class BedrockMetadataError extends Error {
   constructor(
-    public readonly kind: 'access' | 'unavailable' | 'identifier' | 'connectivity',
+    public readonly kind: 'access' | 'unavailable' | 'identifier' | 'connectivity' | 'capability',
     message: string,
   ) {
     super(message);
@@ -193,7 +193,12 @@ export async function resolveBedrockRoute(
     const info = profile.status === 'fulfilled' ? profile.value : undefined;
     if (detail?.modelArn && info?.inferenceProfileArn)
       throw new Error('Bedrock identifier is ambiguous; select an explicit model/profile ARN');
-    if (detail?.modelArn)
+    if (detail?.modelArn) {
+      if (detail.responseStreamingSupported === false)
+        throw new BedrockMetadataError(
+          'capability',
+          'This Bedrock foundation model does not support response streaming required by the native provider; choose a compatible model before provisioning or changing permissions',
+        );
       return validateBedrockRoute(
         {
           model,
@@ -204,6 +209,7 @@ export async function resolveBedrockRoute(
         },
         identity,
       );
+    }
     if (info?.inferenceProfileArn) {
       if (
         info.status !== 'ACTIVE' ||
