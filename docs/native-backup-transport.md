@@ -12,6 +12,8 @@ The backend uses the AWS credential chain, including refreshable instance-role c
 
 Host capture explicitly selects `credentialSource: instance-role`, using refreshable IMDSv2 credentials. This prevents AWS credentials saved for model providers from changing backup authority. Clean-client recovery uses the selected operator credential snapshot instead. Code and the nonsecret job travel through exact S3 versions with SHA-256 checks; keys are fetched privately by the host role from the independent Secrets Manager version. Native diagnostics remain in private host job files, outside SSM inline output.
 
+SSM retrieves the nonsecret artifacts into a temporary root-owned directory, because existing bootstrap installations can have an AWS CLI executable private to root. It verifies every checksum before handing the directory to Ubuntu. Ubuntu installs the files atomically and executes the worker; downloaded code is never executed as root. The temporary delivery directory is removed on success or failure, and existing tool/credential permissions are preserved.
+
 The native storage SPI has no S3 VersionId field. The narrow `readVersions` setting supplies an exact-version, read-only view for verification and extraction. Unlisted objects cannot fall back to current state, and listing this view includes committed objects hidden behind later delete markers. This supplements native storage behavior without introducing another archive format or catalog.
 
 ## Independent recovery resources
