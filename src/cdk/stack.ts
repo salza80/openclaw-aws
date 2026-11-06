@@ -104,10 +104,20 @@ export class OpenClawStack extends Stack {
       resource: 'parameter',
       resourceName: gatewayTokenParamName.replace(/^\/+/, ''),
     });
+    const secretResources = props.restore
+      ? [
+          this.formatArn({
+            service: 'ssm',
+            resource: 'parameter',
+            resourceName: `openclaw/${config.projectName}/providers/*/api-key`,
+          }),
+          gatewayTokenParamArn,
+        ]
+      : [apiKeyParamArn, gatewayTokenParamArn];
     role.addToPolicy(
       new PolicyStatement({
         actions: ['ssm:GetParameter'],
-        resources: [apiKeyParamArn, gatewayTokenParamArn],
+        resources: secretResources,
       }),
     );
 
@@ -117,7 +127,7 @@ export class OpenClawStack extends Stack {
       new PolicyStatement({
         effect: Effect.DENY,
         actions: ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParameterHistory'],
-        notResources: [apiKeyParamArn, gatewayTokenParamArn],
+        notResources: secretResources,
       }),
     );
     const readinessPolicy = role.addToPrincipalPolicy(

@@ -75,7 +75,7 @@ function actions(statement: { Action: string | string[] }): string[] {
 
 describe('EC2 bootstrap', () => {
   it('provisions recorded restore capacity with an inactive compatible runtime', () => {
-    const { instance, script } = bootstrap(true, 't3a.small', {
+    const { instance, script, statements } = bootstrap(true, 't3a.small', {
       operationId: '11111111-1111-1111-1111-111111111111',
       volumeGiB: 60,
       runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
@@ -84,6 +84,18 @@ describe('EC2 bootstrap', () => {
     expect(instance.Properties.BlockDeviceMappings[0].Ebs.Encrypted).toBe(true);
     expect(script).toContain('phase restore-inactive');
     expect(script).not.toContain('onboard --non-interactive');
+    const read = statements.find(
+      (statement) =>
+        statement.Effect === 'Allow' && actions(statement).includes('ssm:GetParameter'),
+    );
+    const deny = statements.find(
+      (statement) => statement.Effect === 'Deny' && actions(statement).includes('ssm:GetParameter'),
+    );
+    expect(read.Resource.map(resolveString)).toEqual([
+      'arn:aws:ssm:us-east-1:123456789012:parameter/openclaw/test/providers/*/api-key',
+      'arn:aws:ssm:us-east-1:123456789012:parameter/openclaw/test/token',
+    ]);
+    expect(deny.NotResource).toEqual(read.Resource);
   });
   it('preserves valid AWS type names beyond the bundled CDK instance-class enum', () => {
     const { instance } = bootstrap(false, 't8i.small');

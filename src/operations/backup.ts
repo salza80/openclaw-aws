@@ -387,7 +387,9 @@ export async function createBackup(
 }
 
 export async function verifyBackup(target: AwsTarget, uri: string, id: string) {
-  const vault = await checkVault(target, uri);
+  // Recovery reads use the pinned key/object identities. A later change to
+  // bucket defaults or lifecycle must not prevent rescuing an older valid point.
+  const vault = await readRecoveryVault(target, uri);
   const receipt = await inspectBackup(target, uri, id);
   const verification = parseVerification(
     await runBackupHelper({

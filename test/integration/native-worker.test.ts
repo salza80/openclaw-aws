@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,9 +9,9 @@ import { localS3 } from '../helpers/s3-server.js';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 describe('actual native host capture adapter', () => {
   it('preserves native settings, uses instance-role storage despite model credentials and verifies the remote archive', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'openclaw-worker-native-'));
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'openclaw-worker-native-')));
     const server = await localS3();
-    const state = path.join(directory, 'state');
+    const state = path.join(directory, '.openclaw');
     const workspace = path.join(directory, 'workspace');
     const configPath = path.join(state, 'openclaw.json');
     await mkdir(state);
@@ -68,6 +68,7 @@ describe('actual native host capture adapter', () => {
     const script = `
       import {nativeBackupHost} from ${JSON.stringify(path.join(root, 'dist/openclaw/native-backup-host.js'))};
       import {captureInstallation} from ${JSON.stringify(path.join(root, 'dist/openclaw/capture-worker.js'))};
+      import {stageNativeRestore} from ${JSON.stringify(path.join(root, 'dist/openclaw/native-restore-host.js'))};
       import {createRequire} from 'node:module'; const {S3Client,HeadObjectCommand,GetObjectCommand}=createRequire(${JSON.stringify(path.join(root, 'package.json'))})('@aws-sdk/client-s3');
       const job=${JSON.stringify(job)};
       const host=await nativeBackupHost(job,{nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},gateway:{inspect:async()=> 'inactive',stop:async()=>{throw Error('Inactive Gateway must not be stopped')},start:async()=>{throw Error('Inactive Gateway must not be started')}}});
@@ -75,8 +76,12 @@ describe('actual native host capture adapter', () => {
       const client=new S3Client({region:job.source.region,credentials:{accessKeyId:'FIXTUREKEYOPERATOR',secretAccessKey:'fixture-secret'}});
       const common={Bucket:job.settings.bucket,ExpectedBucketOwner:job.source.account};
       const pin=async key=>{const r=await client.send(new HeadObjectCommand({...common,Key:job.settings.prefix+'/'+key}));return{versionId:r.VersionId,storedBytes:r.ContentLength}};
-      const storage={identify:async()=>{},passphrase:async()=> 'fixture-vault-key\\0\\n',marker:async id=>{const p=await pin('openclaw-storage.json'); const r=await client.send(new GetObjectCommand({...common,Key:job.settings.prefix+'/openclaw-storage.json',VersionId:p.versionId}));if(JSON.parse(await r.Body.transformToString()).locationId!==id)throw Error('marker mismatch');return p},archive:async capture=>pin('backups/'+job.namespace+'/'+capture.location.key),publish:async result=>{console.log(JSON.stringify(result));return{key:'capture.json',versionId:'fixture-result'}},close:()=>client.destroy()};
-      try{await captureInstallation(job,host,storage,{enter:async record=>record,release:async()=>{}})}finally{storage.close()}
+      let captured;
+      const storage={identify:async()=>{},passphrase:async()=> 'fixture-vault-key\\0\\n',marker:async id=>{const p=await pin('openclaw-storage.json'); const r=await client.send(new GetObjectCommand({...common,Key:job.settings.prefix+'/openclaw-storage.json',VersionId:p.versionId}));if(JSON.parse(await r.Body.transformToString()).locationId!==id)throw Error('marker mismatch');return p},archive:async capture=>pin('backups/'+job.namespace+'/'+capture.location.key),publish:async result=>{captured=result;console.log(JSON.stringify(result));return{key:'capture.json',versionId:'fixture-result'}},close:()=>client.destroy()};
+      try{await captureInstallation(job,host,storage,{enter:async record=>record,release:async()=>{}});
+        const staged=await stageNativeRestore({job,capture:captured,passphrase:'fixture-vault-key\\0\\n',pluginDirectory:job.pluginDirectory,stagingDirectory:${JSON.stringify(path.join(directory, 'restore-stage'))},nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},home:${JSON.stringify(directory)}});
+        if(staged.moves.length!==captured.capture.assets.length)throw Error('Native staged inventory mismatch');
+      }finally{storage.close()}
     `;
     try {
       const result = await execa(process.execPath, ['--input-type=module', '-e', script], {

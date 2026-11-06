@@ -158,4 +158,93 @@ describe('independent recovery infrastructure', () => {
         }),
     ).toThrow();
   });
+  it('allows cross-region recovery reads without capture writes or encryption permissions', () => {
+    const template = Template.fromStack(
+      new RecoveryAccessStack(new App(), 'ReadAccess', {
+        env: { ...env, region: 'us-east-1' },
+        recoveryRegion: env.region,
+        mode: 'read',
+        roleName: 'target-role',
+        bucket: 'private-backups',
+        dataPrefix: 'vault/native/source-1',
+        keyArn: 'arn:aws:secretsmanager:eu-central-1:123456789012:secret:key',
+        s3KmsKeyArn: 'arn:aws:kms:eu-central-1:123456789012:key/fixture',
+      }),
+    );
+    const serialized = JSON.stringify(template.toJSON());
+    expect(serialized).toContain('s3:GetObjectVersion');
+    expect(serialized).toContain('kms:Decrypt');
+    expect(serialized).toContain('s3.eu-central-1.');
+    for (const action of [
+      's3:PutObject',
+      's3:DeleteObject',
+      's3:AbortMultipartUpload',
+      'kms:Encrypt',
+      'kms:GenerateDataKey',
+    ])
+      expect(serialized).not.toContain(`"${action}"`);
+    expect(
+      () =>
+        new RecoveryAccessStack(new App(), 'WrongMode', {
+          env: { ...env, region: 'us-east-1' },
+          recoveryRegion: env.region,
+          roleName: 'target-role',
+          bucket: 'private-backups',
+          dataPrefix: 'vault/native/source-1',
+          keyArn: 'arn:aws:secretsmanager:eu-central-1:123456789012:secret:key',
+        }),
+    ).toThrow('region');
+  });
+  it('imports only tagged new target provider secrets and explicitly denies overwrites', () => {
+    const deploymentId =
+      'arn:aws:cloudformation:eu-central-1:123456789012:stack/OpenclawStack-restored/fixture';
+    const secretImport = {
+      deploymentName: 'restored',
+      deploymentId,
+      operationId: '11111111-1111-1111-1111-111111111111',
+    };
+    const props = {
+      env,
+      roleName: 'target-role',
+      bucket: 'private-backups',
+      dataPrefix: 'vault/native/source-1',
+      keyArn: 'arn:aws:secretsmanager:eu-central-1:123456789012:secret:key',
+      mode: 'read' as const,
+      secretImport,
+    };
+    const template = Template.fromStack(new RecoveryAccessStack(new App(), 'Import', props));
+    const [policy] = Object.values(template.findResources('AWS::IAM::RolePolicy'));
+    const statements = policy.Properties.PolicyDocument.Statement;
+    const allow = statements.find(
+      (s: { Action: string[]; Effect: string }) =>
+        s.Effect === 'Allow' && Array.isArray(s.Action) && s.Action.includes('ssm:PutParameter'),
+    );
+    expect(JSON.stringify(allow.Resource)).toContain(
+      'parameter/openclaw/restored/providers/*/api-key',
+    );
+    expect(allow.Condition.StringEquals).toEqual({
+      'aws:RequestTag/openclaw-aws:deployment-id': deploymentId,
+      'aws:RequestTag/openclaw-aws:restore-id': secretImport.operationId,
+    });
+    expect(statements).toContainEqual(
+      expect.objectContaining({
+        Effect: 'Deny',
+        Action: 'ssm:PutParameter',
+        Condition: { StringEquals: { 'ssm:Overwrite': 'true' } },
+      }),
+    );
+    expect(JSON.stringify(allow)).not.toContain('gateway-token');
+    for (const extra of [
+      { deploymentName: '../other' },
+      { deploymentId: deploymentId.replace('restored/', 'other/') },
+      { operationId: 'bad' },
+    ])
+      expect(
+        () =>
+          new RecoveryAccessStack(new App(), 'InvalidImport', {
+            ...props,
+            secretImport: { ...secretImport, ...extra },
+          }),
+      ).toThrow('restore target');
+  });
 });

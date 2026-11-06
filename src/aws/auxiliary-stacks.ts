@@ -22,7 +22,15 @@ export type RecoveryStackPlan =
       identity: string;
       access: Pick<
         RecoveryAccessProps,
-        'roleName' | 'bucket' | 'dataPrefix' | 'keyArn' | 's3KmsKeyArn' | 'secretKmsKeyArn'
+        | 'roleName'
+        | 'bucket'
+        | 'dataPrefix'
+        | 'keyArn'
+        | 's3KmsKeyArn'
+        | 'secretKmsKeyArn'
+        | 'mode'
+        | 'recoveryRegion'
+        | 'secretImport'
       >;
     };
 const tags = (plan: Pick<RecoveryStackPlan, 'kind' | 'identity'>) => [
