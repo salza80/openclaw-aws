@@ -20,7 +20,13 @@ export interface OpenClawBootstrapOptions {
 // Public config values remain compatible while upstream auth choices and env names evolve.
 export const OPENCLAW_PROVIDER_SETUP: Record<
   Provider,
-  { envVar: string; authChoice: string; providerId: string; tokenProvider?: string }
+  {
+    envVar: string;
+    authChoice: string;
+    providerId: string;
+    providerAliases?: readonly string[];
+    tokenProvider?: string;
+  }
 > = {
   'anthropic-api-key': {
     envVar: 'ANTHROPIC_API_KEY',
@@ -61,6 +67,7 @@ export const OPENCLAW_PROVIDER_SETUP: Record<
   'kimi-code-api-key': {
     envVar: 'KIMI_API_KEY',
     providerId: 'kimi',
+    providerAliases: ['kimi-coding'],
     authChoice: 'kimi-code-api-key',
   },
   'synthetic-api-key': {
@@ -88,6 +95,7 @@ export const OPENCLAW_PROVIDER_SETUP: Record<
   'opencode-zen-api-key': {
     envVar: 'OPENCODE_API_KEY',
     providerId: 'opencode',
+    providerAliases: ['opencode-zen'],
     authChoice: 'opencode-zen',
   },
 };

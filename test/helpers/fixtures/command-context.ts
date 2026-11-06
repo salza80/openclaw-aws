@@ -6,7 +6,7 @@ export const testTarget: AwsTarget = Object.freeze({
   region: 'us-east-1',
   profile: 'test',
   account: '123456789012',
-  arn: 'arn:test',
+  arn: 'arn:aws:sts::123456789012:assumed-role/test/session',
   userId: 'test',
   credentials: async () => ({ accessKeyId: 'TEST', secretAccessKey: 'TEST' }),
   environment: async () => ({

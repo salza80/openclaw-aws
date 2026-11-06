@@ -9,6 +9,7 @@ import { runRestoreActivation } from './restore-activation.js';
 import { parseClonePreviewRequest, previewCloneStaging } from './clone-preview.js';
 import { parseCloneJob } from './clone-contract.js';
 import { runCloneWorker } from './clone-worker.js';
+import { runCloneActivation } from './clone-activation.js';
 
 async function main() {
   const [mode, inputFile, resultFile] = process.argv.slice(2);
@@ -21,6 +22,8 @@ async function main() {
       '--preview-clone',
       '--lock-clone',
       '--run-clone',
+      '--lock-activate-clone',
+      '--activate-clone',
     ].includes(mode) ||
     !inputFile ||
     !resultFile ||
@@ -63,7 +66,12 @@ async function main() {
     await writeFile(resultFile, JSON.stringify(result), { flag: 'wx', mode: 0o600 });
     return;
   }
-  const clone = mode === '--lock-clone' || mode === '--run-clone';
+  const clone = [
+    '--lock-clone',
+    '--run-clone',
+    '--lock-activate-clone',
+    '--activate-clone',
+  ].includes(mode);
   const job = clone ? parseCloneJob(input) : parseRestoreJob(input);
   const root = path.join(homedir(), '.openclaw-aws');
   const work = path.join(root, 'jobs', job.bootstrap.operationId);
@@ -82,7 +90,12 @@ async function main() {
     )
       throw new Error('Restore operation directory is not private');
   }
-  if (mode === '--lock' || mode === '--lock-activate' || mode === '--lock-clone') {
+  if (
+    mode === '--lock' ||
+    mode === '--lock-activate' ||
+    mode === '--lock-clone' ||
+    mode === '--lock-activate-clone'
+  ) {
     await execa(
       'flock',
       [
@@ -92,7 +105,13 @@ async function main() {
         path.join(root, 'host.lock'),
         process.execPath,
         process.argv[1],
-        mode === '--lock-activate' ? '--activate' : clone ? '--run-clone' : '--run',
+        mode === '--lock-activate-clone'
+          ? '--activate-clone'
+          : mode === '--lock-activate'
+            ? '--activate'
+            : clone
+              ? '--run-clone'
+              : '--run',
         inputFile,
         resultFile,
       ],
@@ -107,7 +126,10 @@ async function main() {
     const run = mode === '--activate' ? runRestoreActivation : runRestoreWorker;
     const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]);
     const result = clone
-      ? await runCloneWorker(parseCloneJob(job), signal)
+      ? await (mode === '--activate-clone' ? runCloneActivation : runCloneWorker)(
+          parseCloneJob(job),
+          signal,
+        )
       : await run(job, signal);
     await writeFile(resultFile, JSON.stringify({ ok: true, ...result }), { mode: 0o600 });
   } catch {

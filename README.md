@@ -332,7 +332,7 @@ Capture briefly stops the Gateway, uses native OpenClaw encryption and full remo
 
 The first backup release supports our pinned OpenClaw/Node installation and default native service paths; it does not silently upgrade older instances. Native runtime caches and volatile queues are omitted. Restored sessions can still contain interrupted work that OpenClaw would automatically resume; review recovery, channels and schedules before starting restored state. External secret commands, uncaptured credential files and unresolved native references prevent full recovery certification. Destroy removes the source's separately attached backup access policy before its IAM role; denied cleanup stops destruction. Vault creation alone does not create a recovery point. See [native backup integration](docs/native-backup-transport.md) for installation, key retention, operator permissions and verification boundaries.
 
-The restore workflow under development uses an explicit completed backup ID and independent vault:
+The restore workflow uses an explicit completed backup ID and independent vault:
 
 ```sh
 openclaw-aws restore --from <backup-uuid> --vault s3://my-vault/recovery --region eu-central-1 --name recovered --yes
@@ -344,6 +344,21 @@ openclaw-aws restore cleanup --operation-id <restore-uuid> --yes
 ```
 
 Staging creates an inactive host; activation starts a validated Gateway with channels, schedules, hooks and restored sessions still paused. Add `--activate` to the first command to request both steps. `--target-region`, `--target-profile`, `--instance-type` and `--volume-gib` override the new target settings within the same account. The disk includes space for staged extraction. Resume verifies an existing operation and reuses its exact code/request versions; it does not create another instance when the original target is missing. Inspection reports the saved operation state. Cleanup verifies operation ownership and removes imported provider keys as well as the Gateway credential; the independent backup remains. After activation, review pairing and integrations in the native dashboard and restore selected archived conversations or create a new thread to deliberately restart reviewed work. See the [reconnection runbook](docs/native-backup-transport.md#reconnection-and-reviewed-work). The fresh-host AWS acceptance drill is deferred; the complete EC2 restore path has not yet been demonstrated.
+
+### Independent knowledge clones
+
+Clone a saved installation into one new EC2/Gateway host with fresh native ownership and credentials. The original can remain live. All saved agent roles share the new host; their valid IDs, internal delegation relationships, supported model settings, workspace memory and file-backed skills are preserved. History, source credentials and opaque native stores are excluded.
+
+```sh
+openclaw-aws clone preview --from <backup-uuid> --vault s3://my-vault/recovery --region eu-central-1 --name research-copy --json
+openclaw-aws clone --from <backup-uuid> --vault s3://my-vault/recovery --region eu-central-1 --name research-copy --key-env MY_OPENROUTER_KEY --yes
+openclaw-aws clone activate --operation-id <clone-uuid> --yes
+openclaw-aws clone inspect --operation-id <clone-uuid> --json
+openclaw-aws clone resume --operation-id <clone-uuid> --yes
+openclaw-aws clone cleanup --operation-id <clone-uuid> --yes
+```
+
+Preview lists selected/omitted content before creating target resources. Supply new model credentials explicitly through a named environment variable, private interactive entry, or deliberate SSM reuse (`--reuse-ssm /source/api-key`). Mixed-provider teams need an explicit credential for each used provider; saved model choices are preserved. The default primary credential provider is OpenRouter. Staging leaves the Gateway masked; `--activate` requests activation after safety validation and removal of source-backup/key access. Channels, external connections, schedules, hooks and indexing remain disconnected. See the [clone runbook](docs/independent-clones.md) for policy, recovery, IAM permissions and reconnection. Local/native validation is covered; live EC2 clone acceptance has not been run.
 
 ## Configuration
 

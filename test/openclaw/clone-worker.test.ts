@@ -39,8 +39,8 @@ vi.mock('@aws-sdk/client-ssm', async (load) => ({
     destroy = mocks.close;
   },
 }));
-import { runCloneWorker, parseCloneWorkerResult } from '../../src/openclaw/clone-worker.js';
-import { parseCloneJob } from '../../src/openclaw/clone-contract.js';
+import { runCloneWorker } from '../../src/openclaw/clone-worker.js';
+import { parseCloneJob, parseCloneWorkerResult } from '../../src/openclaw/clone-contract.js';
 import { clonePolicyDigest } from '../../src/openclaw/clone-preview.js';
 let root: string;
 const policy = {

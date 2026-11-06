@@ -53,12 +53,20 @@ export async function cleanupRestore(operationId: string): Promise<void> {
 
 /** Clone and restore share immutable target/operation cleanup authority. */
 export async function cleanupInactiveRecovery(
-  record: Pick<RestoreRecord, 'operationId' | 'name' | 'config' | 'target'>,
+  record: Pick<
+    RestoreRecord,
+    'operationId' | 'name' | 'config' | 'target' | 'account' | 'partition'
+  >,
 ): Promise<void> {
   const operationId = record.operationId;
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operationId))
     throw new Error('Recovery cleanup requires a verified operation UUID');
   const target = await resolveAwsTarget(record.config.aws);
+  if (
+    record.account &&
+    (target.account !== record.account || target.arn.split(':')[1] !== record.partition)
+  )
+    throw new Error('Current AWS profile differs from the pinned recovery account/partition');
   const ctx: CommandContext = {
     name: record.name,
     config: record.config,

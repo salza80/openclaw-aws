@@ -2,8 +2,14 @@ import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { GetParameterCommand, ListTagsForResourceCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { parseCloneJob, cloneRequestDigest, type CloneJob } from './clone-contract.js';
-import { object } from './backup-contract.js';
+import {
+  parseCloneJob,
+  cloneRequestDigest,
+  cloneTargetMembers,
+  parseCloneWorkerResult,
+  type CloneJob,
+  type CloneWorkerResult,
+} from './clone-contract.js';
 import {
   verifiedRestoreTarget,
   ownedRestoreRecord,
@@ -18,66 +24,6 @@ import { initializeNativeClone } from './clone-native.js';
 import { verifyNativeClone } from './clone-validate.js';
 import { getApiKeyParamName } from '../cli/utils/api-keys.js';
 import type { Provider } from '../cli/types/index.js';
-
-export interface CloneWorkerResult {
-  schemaVersion: 1;
-  kind: 'clone';
-  operationId: string;
-  stackId: string;
-  instanceId: string;
-  phase: 'ready-inactive';
-  memberCount: number;
-  fileCount: number;
-  contentDigest: string;
-  policyDigest: string;
-  configurationHash: string;
-  providerParameters: string[];
-}
-
-export function cloneTargetMembers(job: CloneJob) {
-  return job.backup.capture.members.map((member) => ({
-    ...member,
-    workspace: `/home/ubuntu/.openclaw/workspaces/${member.id}`,
-    agentDir: `/home/ubuntu/.openclaw/agents/${member.id}/agent`,
-  }));
-}
-export function parseCloneWorkerResult(value: unknown, job: CloneJob): CloneWorkerResult {
-  const ready = object(value);
-  const names = job.credentials.providers.map((provider) =>
-    getApiKeyParamName(job.target.deploymentName, provider),
-  );
-  if (
-    ready.schemaVersion !== 1 ||
-    ready.kind !== 'clone' ||
-    ready.operationId !== job.bootstrap.operationId ||
-    ready.stackId !== job.target.stackId ||
-    ready.instanceId !== job.target.instanceId ||
-    ready.phase !== 'ready-inactive' ||
-    ready.contentDigest !== job.preview.contentDigest ||
-    ready.policyDigest !== job.preview.policyDigest ||
-    ready.memberCount !== job.backup.capture.members.length ||
-    !Number.isSafeInteger(ready.fileCount) ||
-    (ready.fileCount as number) < 0 ||
-    !Array.isArray(ready.providerParameters) ||
-    JSON.stringify(ready.providerParameters) !== JSON.stringify(names) ||
-    !/^[a-f0-9]{64}$/.test(String(ready.configurationHash))
-  )
-    throw new Error('Clone completion receipt differs from this request');
-  return {
-    schemaVersion: 1,
-    kind: 'clone',
-    operationId: job.bootstrap.operationId,
-    stackId: job.target.stackId,
-    instanceId: job.target.instanceId,
-    phase: 'ready-inactive',
-    memberCount: job.backup.capture.members.length,
-    fileCount: ready.fileCount as number,
-    contentDigest: job.preview.contentDigest,
-    policyDigest: job.preview.policyDigest,
-    configurationHash: ready.configurationHash as string,
-    providerParameters: names,
-  };
-}
 
 /** The shared entrypoint holds flock; source extraction is never installed as
  * native identity. Every credential is read from this new target's owned SSM paths.

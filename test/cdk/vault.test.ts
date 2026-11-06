@@ -247,4 +247,41 @@ describe('independent recovery infrastructure', () => {
           }),
       ).toThrow('restore target');
   });
+  it('gives clone hosts tag inspection and decrypt access without provider-secret writes', () => {
+    const template = Template.fromStack(
+      new RecoveryAccessStack(new App(), 'CloneRead', {
+        env,
+        roleName: 'target-role',
+        bucket: 'private-backups',
+        dataPrefix: 'vault/native/source-1',
+        keyArn: 'arn:aws:secretsmanager:eu-central-1:123456789012:secret:key',
+        mode: 'read',
+        s3KmsKeyArn: 'arn:aws:kms:eu-central-1:123456789012:key/fixture',
+        secretImport: {
+          deploymentName: 'restored',
+          deploymentId:
+            'arn:aws:cloudformation:eu-central-1:123456789012:stack/OpenclawStack-restored/fixture',
+          operationId: '11111111-1111-1111-1111-111111111111',
+          readOnly: true,
+        },
+      }),
+    );
+    const [policy] = Object.values(template.findResources('AWS::IAM::RolePolicy'));
+    const tags = policy.Properties.PolicyDocument.Statement.find(
+      (statement: { Action: string }) => statement.Action === 'ssm:ListTagsForResource',
+    );
+    expect(JSON.stringify(tags.Resource)).toContain(
+      'parameter/openclaw/restored/providers/*/api-key',
+    );
+    const serialized = JSON.stringify(template.toJSON());
+    expect(serialized).toContain('kms:Decrypt');
+    for (const write of [
+      'ssm:PutParameter',
+      'ssm:AddTagsToResource',
+      's3:PutObject',
+      's3:DeleteObject',
+      'kms:Encrypt',
+    ])
+      expect(serialized).not.toContain(JSON.stringify(write));
+  });
 });

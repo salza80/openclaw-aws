@@ -10,6 +10,7 @@ import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import { OPENCLAW_PROVIDER_SETUP, openClawProviderAuthArgs } from './install.js';
 import { object } from './backup-contract.js';
 import { verifyNativeClone } from './clone-validate.js';
+import { explicitCloneCredentials } from './clone-credentials.js';
 import { cloneContentDigest, type CloneContentPlan } from './clone-content.js';
 import type { CloneSourcePolicy } from './clone-policy.js';
 import { inactiveCloneConfig } from './clone-config.js';
@@ -40,32 +41,17 @@ export async function initializeNativeClone(options: {
   const packageJson =
     options.nativePackageJson ??
     path.resolve(path.dirname(process.execPath), '../lib/node_modules/openclaw/package.json');
-  const setup = OPENCLAW_PROVIDER_SETUP[options.apiProvider];
+  if (!/^[a-f0-9]{48}$/.test(options.gatewayToken))
+    throw new Error('Clone requires a fresh Gateway credential');
   if (
-    !setup ||
-    !options.providerCredential ||
-    /[\0\r\n]/.test(options.providerCredential) ||
-    Buffer.byteLength(options.providerCredential) > 4096 ||
-    !/^[a-f0-9]{48}$/.test(options.gatewayToken)
+    options.additionalCredentials?.[options.apiProvider] !== undefined &&
+    options.additionalCredentials[options.apiProvider] !== options.providerCredential
   )
-    throw new Error('Clone requires explicit supported fresh provider and Gateway credentials');
-  const providerEnvironment: Record<string, string> = {
-    [setup.envVar]: options.providerCredential,
-  };
-  for (const [provider, credential] of Object.entries(options.additionalCredentials ?? {})) {
-    if (
-      !Object.hasOwn(OPENCLAW_PROVIDER_SETUP, provider) ||
-      typeof credential !== 'string' ||
-      !credential ||
-      /[\0\r\n]/.test(credential) ||
-      Buffer.byteLength(credential) > 4096
-    )
-      throw new Error('An explicitly supplied clone provider credential is unsupported');
-    const name = OPENCLAW_PROVIDER_SETUP[provider as Provider].envVar;
-    if (providerEnvironment[name] !== undefined && providerEnvironment[name] !== credential)
-      throw new Error('Explicit clone provider credentials disagree');
-    providerEnvironment[name] = credential;
-  }
+    throw new Error('Explicit clone provider credentials disagree');
+  const { environment: providerEnvironment } = explicitCloneCredentials(options.apiProvider, {
+    ...options.additionalCredentials,
+    [options.apiProvider]: options.providerCredential,
+  });
   if (
     process.version !== `v${OPENCLAW_NODE_VERSION}` ||
     JSON.parse(await readFile(packageJson, 'utf8')).version !== OPENCLAW_VERSION

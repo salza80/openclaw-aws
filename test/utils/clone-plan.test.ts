@@ -52,6 +52,7 @@ beforeEach(() => {
     preview: {
       schemaVersion: 1,
       scope: 'whole-team-knowledge',
+      providersInUse: ['openrouter'],
       policyDigest: 'b'.repeat(64),
       policy: { schemaVersion: 1, agents: [{ id: 'main' }], credentialPaths: [], omissions: [] },
       content: {
@@ -73,6 +74,13 @@ beforeEach(() => {
   });
 });
 describe('inactive independent clone planning', () => {
+  it('requires explicit Cloudflare endpoint setup before provisioning a mixed-provider clone', async () => {
+    const value = await mocks.preview();
+    value.preview.providersInUse = ['cloudflare-ai-gateway', 'openrouter'];
+    mocks.preview.mockResolvedValue(value);
+    await expect(prepareClone(options())).rejects.toThrow('primary clone provider');
+    expect(mocks.status).not.toHaveBeenCalled();
+  });
   it('allows a live source and reserves space for extracted source plus all selected workspace/skill copies', async () => {
     const before = JSON.stringify(backupReceipt);
     const plan = await prepareClone(options());

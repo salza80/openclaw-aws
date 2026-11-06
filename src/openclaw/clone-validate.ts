@@ -4,6 +4,8 @@ import path from 'node:path';
 import { homedir } from 'node:os';
 import { execa } from 'execa';
 import { object, parseMembers, type BackupMember } from './backup-contract.js';
+type ConfigSdk = typeof import('openclaw/plugin-sdk/config-mutation');
+type NativeConfig = NonNullable<Parameters<ConfigSdk['replaceConfigFile']>[0]['sourceConfig']>;
 
 /** Public, non-inference checks usable after setup, on lost-reply adoption and
  * during deliberate activation. No source native state is loaded.
@@ -13,6 +15,7 @@ export async function verifyNativeClone(options: {
   nativePackageJson: string;
   configurationHash?: string;
   signal?: AbortSignal;
+  validateConfig?: (config: NativeConfig) => void;
 }) {
   const home = homedir();
   const state = path.join(home, '.openclaw');
@@ -25,12 +28,14 @@ export async function verifyNativeClone(options: {
   const hash = before.snapshot.hash;
   if (
     !before.snapshot.valid ||
+    !before.snapshot.sourceConfig ||
     before.snapshot.path !== configPath ||
     !hash ||
     !/^[a-f0-9]{64}$/.test(hash) ||
     (options.configurationHash !== undefined && options.configurationHash !== hash)
   )
     throw new Error('Native clone configuration differs from its certified setup');
+  options.validateConfig?.(before.snapshot.sourceConfig!);
   const env = {
     HOME: home,
     PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
