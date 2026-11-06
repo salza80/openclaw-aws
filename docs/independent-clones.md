@@ -35,7 +35,11 @@ Creation repeats preview and displays its concrete EC2/disk/account/region plan.
 
 Do not pass literal keys as argument values. Ambient provider environment variables and the archive's `.env` or auth databases are never implicit credential candidates. SSM reuse must resolve a SecureString. The operator imports values create-only into the new target's provider namespace with exact stack/operation tags; a retry adopts only an identical value with the same ownership. Records, request objects, argv and public diagnostics carry provider names/references, never key values.
 
-If a saved route uses Cloudflare AI Gateway, select `--provider cloudflare-ai-gateway` and explicit target `--cloudflare-account-id` / `--cloudflare-gateway-id`; supply any OpenRouter/direct-provider credentials separately. Custom provider endpoints and unsupported native runtimes need supported explicit setup rather than automatic source configuration adoption. Bedrock setup is delivered separately under #14.
+Use `--provider bedrock` for instance-role setup without a primary API key. Retain the saved managed inference region or choose `--bedrock-region`; a source without that region requires the explicit option. AWS deployment and inference regions are independent. A mixed Bedrock/OpenRouter clone still needs an explicit `--credential-env openrouter=COPY_OPENROUTER_KEY` or equivalent SSM reference. Copied models remain unchanged by the setup-provider choice.
+
+Bedrock preview resolves exact invocation/backing ARNs from the selected default/agent/fallback policy. Source conversations and historical IAM grants are excluded. The target gets its own separately scoped role-policy stack, pinned official plugin and credential-free target-region profile through shared recovery helpers. Permission intent is durable before IAM execution; uncertain IAM outcomes require verified adoption or owned cleanup. Revoking temporary source-vault access preserves persistent Bedrock permissions. Native health/discovery does not send model prompts or certify paid inference access.
+
+If a saved route uses Cloudflare AI Gateway, select `--provider cloudflare-ai-gateway` and explicit target `--cloudflare-account-id` / `--cloudflare-gateway-id`; supply any OpenRouter/direct-provider credentials separately. Custom provider endpoints and unsupported native runtimes need supported explicit setup rather than automatic source configuration adoption.
 
 ## Copied and reset
 

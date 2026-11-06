@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { execa } from 'execa';
-import type { Provider } from '../cli/types/index.js';
+import type { Provider, ApiKeyProvider } from '../cli/types/index.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import { OPENCLAW_PROVIDER_SETUP, openClawProviderAuthArgs } from './install.js';
 import { object } from './backup-contract.js';
@@ -16,6 +16,14 @@ import type { CloneSourcePolicy } from './clone-policy.js';
 import { inactiveCloneConfig } from './clone-config.js';
 import { restoredEnvironmentText } from './restore-reconciliation.js';
 import { assertDirectoryChain } from './restore-layout.js';
+import type { BedrockRecoveryPlan } from './bedrock-recovery-plan.js';
+import { bedrockRoleProfile, prepareBedrockRoleProfile } from './bedrock-profile.js';
+import {
+  prepareInactiveRecoveryBedrock,
+  assertRecoveryBedrockPlugin,
+} from './recovery-bedrock-native.js';
+import { cloneBedrockModels } from './clone-policy.js';
+import { isDeepStrictEqual } from 'node:util';
 
 /** Fresh native identity creation only. The caller owns the maintenance lock,
  * has installed the reviewed content and keeps the Gateway masked. Interrupted
@@ -25,9 +33,10 @@ export async function initializeNativeClone(options: {
   content: CloneContentPlan;
   policy: CloneSourcePolicy;
   apiProvider: Provider;
-  providerCredential: string;
+  providerCredential?: string;
   /** Extra explicitly supplied credentials for a roster using several providers. */
-  additionalCredentials?: Partial<Record<Provider, string>>;
+  additionalCredentials?: Partial<Record<ApiKeyProvider, string>>;
+  bedrock?: { plan: BedrockRecoveryPlan; deploymentRegion: string };
   gatewayToken: string;
   cloudflareAccountId?: string;
   cloudflareGatewayId?: string;
@@ -44,13 +53,25 @@ export async function initializeNativeClone(options: {
   if (!/^[a-f0-9]{48}$/.test(options.gatewayToken))
     throw new Error('Clone requires a fresh Gateway credential');
   if (
+    (options.apiProvider === 'amazon-bedrock' &&
+      (options.providerCredential !== undefined || !options.bedrock)) ||
+    !isDeepStrictEqual(
+      options.bedrock?.plan.intent.models ?? [],
+      cloneBedrockModels(options.policy, options.content.members),
+    )
+  )
+    throw new Error('Clone role connection differs from the approved native model policy');
+  if (
+    options.apiProvider !== 'amazon-bedrock' &&
     options.additionalCredentials?.[options.apiProvider] !== undefined &&
     options.additionalCredentials[options.apiProvider] !== options.providerCredential
   )
     throw new Error('Explicit clone provider credentials disagree');
   const { environment: providerEnvironment } = explicitCloneCredentials(options.apiProvider, {
     ...options.additionalCredentials,
-    [options.apiProvider]: options.providerCredential,
+    ...(options.apiProvider === 'amazon-bedrock'
+      ? {}
+      : { [options.apiProvider]: options.providerCredential }),
   });
   if (
     process.version !== `v${OPENCLAW_NODE_VERSION}` ||
@@ -96,6 +117,10 @@ export async function initializeNativeClone(options: {
       if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
     }
   }
+  if (options.bedrock)
+    await prepareBedrockRoleProfile(home, options.bedrock.deploymentRegion, {
+      serviceEnvironment: true,
+    });
   const first =
     // Native `agents add` reserves main after another first agent exists.
     // Bootstrap it first when present; reconcile the saved coordinator later.
@@ -113,6 +138,9 @@ export async function initializeNativeClone(options: {
     AWS_CONFIG_FILE: '/dev/null',
     AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
     AWS_EC2_METADATA_V1_DISABLED: 'true',
+    ...(options.bedrock
+      ? bedrockRoleProfile(home, options.bedrock.deploymentRegion).environment
+      : {}),
     ...providerEnvironment,
     OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
   };
@@ -125,6 +153,9 @@ export async function initializeNativeClone(options: {
     await file.writeFile(
       restoredEnvironmentText({
         ...providerEnvironment,
+        ...(options.bedrock
+          ? bedrockRoleProfile(home, options.bedrock.deploymentRegion).environment
+          : {}),
         OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
       }),
     );
@@ -214,6 +245,21 @@ export async function initializeNativeClone(options: {
       throw new Error('Native clone agent creation differs from the reviewed role mapping');
   }
   const require = createRequire(packageJson);
+  if (options.bedrock) {
+    await native(
+      [
+        'plugins',
+        'install',
+        options.bedrock.plan.intent.plugin.spec,
+        '--pin',
+        '--no-enable',
+        '--accept-capabilities',
+      ],
+      undefined,
+      false,
+    );
+    assertRecoveryBedrockPlugin(await native(['plugins', 'registry']), options.bedrock.plan.intent);
+  }
   const sdk = (await import(
     pathToFileURL(require.resolve('openclaw/plugin-sdk/config-mutation')).href
   )) as typeof import('openclaw/plugin-sdk/config-mutation');
@@ -225,12 +271,22 @@ export async function initializeNativeClone(options: {
     !before.snapshot.hash
   )
     throw new Error('Fresh native clone configuration is unavailable');
-  const config = inactiveCloneConfig({
+  let config = inactiveCloneConfig({
     fresh: before.snapshot.sourceConfig,
     content: options.content,
     policy: options.policy,
     gatewayToken: options.gatewayToken,
   });
+  if (options.bedrock) {
+    const prepared = await prepareInactiveRecoveryBedrock({
+      config,
+      environment: providerEnvironment,
+      home,
+      deploymentRegion: options.bedrock.deploymentRegion,
+      plan: options.bedrock.plan,
+    });
+    config = prepared.config as typeof config;
+  }
   await options.assertInactive();
   await sdk.replaceConfigFile({
     sourceConfig: config,
@@ -265,6 +321,7 @@ export async function initializeNativeClone(options: {
     members: options.content.members,
     nativePackageJson: packageJson,
     signal: options.signal,
+    bedrock: options.bedrock,
   });
   await options.assertInactive();
   return { ...verified, integrations: 'disconnected' as const, gateway: 'inactive' as const };

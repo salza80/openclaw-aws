@@ -9,6 +9,7 @@ import {
   DeleteStackCommand,
   DescribeStacksCommand,
   GetTemplateCommand,
+  ListChangeSetsCommand,
   type Stack,
 } from '@aws-sdk/client-cloudformation';
 import type { RecoveryAccessProps } from '../cdk/vault.js';
@@ -33,19 +34,20 @@ export type RecoveryStackPlan =
         | 'secretImport'
       >;
     };
-const tags = (plan: Pick<RecoveryStackPlan, 'kind' | 'identity'>) => [
+const tags = (plan: { kind: AuxiliaryKind; identity: string }) => [
   { Key: 'openclaw-aws:kind', Value: plan.kind },
   { Key: 'openclaw-aws:identity', Value: plan.identity },
 ];
+type AuxiliaryKind = RecoveryStackPlan['kind'] | 'bedrock-access';
 export function assertRecoveryStack(
   stack: Stack,
   target: AwsTarget,
-  plan: Pick<RecoveryStackPlan, 'kind' | 'identity' | 'stackName'>,
+  plan: { kind: AuxiliaryKind; identity: string; stackName: string },
 ) {
   if (
-    !stack.StackId ||
-    stack.StackId.split(':')[3] !== target.region ||
-    stack.StackId.split(':')[4] !== target.account ||
+    !stack.StackId?.startsWith(
+      `arn:${target.arn.split(':')[1]}:cloudformation:${target.region}:${target.account}:stack/${plan.stackName}/`,
+    ) ||
     stack.StackName !== plan.stackName ||
     !tags(plan).every((expected) =>
       stack.Tags?.some((tag) => tag.Key === expected.Key && tag.Value === expected.Value),
@@ -167,9 +169,23 @@ export async function ensureRecoveryStack(
 }
 
 /** Delete only a separately owned IAM-policy stack; never the vault or source resources. */
-export async function removeRecoveryAccessStack(
+export function removeRecoveryAccessStack(
   target: AwsTarget,
   plan: { stackName: string; identity: string; roleName: string },
+  options: { signal?: AbortSignal; pollMs?: number } = {},
+) {
+  return removeOwnedRolePolicyStack(target, { ...plan, kind: 'recovery-access' }, options);
+}
+
+/** Shared cleanup for independently owned recovery and model-access policies. */
+export async function removeOwnedRolePolicyStack(
+  target: AwsTarget,
+  plan: {
+    kind: 'recovery-access' | 'bedrock-access';
+    stackName: string;
+    identity: string;
+    roleName: string;
+  },
   options: { signal?: AbortSignal; pollMs?: number } = {},
 ) {
   const signal = options.signal
@@ -179,43 +195,88 @@ export async function removeRecoveryAccessStack(
   try {
     const stack = await describe(client, plan.stackName, signal);
     if (!stack) return;
-    assertRecoveryStack(stack, target, { ...plan, kind: 'recovery-access' });
-    const response = await client.send(
-      new GetTemplateCommand({ StackName: stack.StackId, TemplateStage: 'Processed' }),
-      { abortSignal: signal },
-    );
-    const template =
-      typeof response.TemplateBody === 'string'
-        ? JSON.parse(response.TemplateBody)
-        : response.TemplateBody;
-    const resources =
-      template && typeof template === 'object'
-        ? (
-            template as {
-              Resources?: Record<
-                string,
-                {
-                  Type?: string;
-                  DeletionPolicy?: string;
-                  Condition?: unknown;
-                  Properties?: { RoleName?: string; PolicyName?: string };
-                }
-              >;
-            }
-          ).Resources
-        : undefined;
-    const entries = resources ? Object.values(resources) : [];
-    if (
-      entries.length !== 1 ||
-      entries[0].Type !== 'AWS::IAM::RolePolicy' ||
-      (entries[0].DeletionPolicy !== undefined && entries[0].DeletionPolicy !== 'Delete') ||
-      entries[0].Condition !== undefined ||
-      entries[0].Properties?.RoleName !== plan.roleName ||
-      entries[0].Properties?.PolicyName !== plan.stackName
-    )
-      throw new Error(
-        'Recovery access stack contains unexpected resources; automatic removal refused',
+    assertRecoveryStack(stack, target, plan);
+    const reviews: (string | undefined)[] = [];
+    if (stack.StackStatus === 'REVIEW_IN_PROGRESS') {
+      if (plan.kind !== 'bedrock-access')
+        throw new Error('Unexpected review-only access stack; cleanup requires inspection');
+      let next: string | undefined;
+      const seen = new Set<string>();
+      do {
+        const listed = await client.send(
+          new ListChangeSetsCommand({ StackName: stack.StackId, NextToken: next }),
+          { abortSignal: signal },
+        );
+        if (!listed.Summaries) throw new Error('Bedrock review inventory is incomplete');
+        for (const review of listed.Summaries) {
+          if (
+            review.StackId !== stack.StackId ||
+            review.StackName !== plan.stackName ||
+            !review.ChangeSetId?.startsWith(
+              `arn:${stack.StackId!.split(':')[1]}:cloudformation:${target.region}:${target.account}:changeSet/`,
+            ) ||
+            review.Status !== 'CREATE_COMPLETE' ||
+            review.ExecutionStatus !== 'AVAILABLE' ||
+            reviews.includes(review.ChangeSetId) ||
+            reviews.length >= 32
+          )
+            throw new Error(
+              'Bedrock review may be executing or has unexpected ownership; source resources were preserved',
+            );
+          reviews.push(review.ChangeSetId);
+        }
+        next = listed.NextToken;
+        if (next && seen.has(next)) throw new Error('Bedrock review pagination repeated');
+        if (next) seen.add(next);
+      } while (next);
+      if (!reviews.length) throw new Error('Bedrock review has no verified prepared template');
+    } else {
+      if (stack.StackStatus?.endsWith('_IN_PROGRESS') && stack.StackStatus !== 'DELETE_IN_PROGRESS')
+        throw new Error('Owned access stack is changing; source resources were preserved');
+      reviews.push(undefined);
+    }
+    for (const changeSetId of reviews) {
+      const response = await client.send(
+        new GetTemplateCommand({
+          StackName: stack.StackId,
+          TemplateStage: 'Processed',
+          ...(changeSetId ? { ChangeSetName: changeSetId } : {}),
+        }),
+        { abortSignal: signal },
       );
+      const template =
+        typeof response.TemplateBody === 'string'
+          ? JSON.parse(response.TemplateBody)
+          : response.TemplateBody;
+      const resources =
+        template && typeof template === 'object'
+          ? (
+              template as {
+                Resources?: Record<
+                  string,
+                  {
+                    Type?: string;
+                    DeletionPolicy?: string;
+                    Condition?: unknown;
+                    Properties?: { RoleName?: string; PolicyName?: string };
+                  }
+                >;
+              }
+            ).Resources
+          : undefined;
+      const entries = resources ? Object.values(resources) : [];
+      if (
+        entries.length !== 1 ||
+        entries[0].Type !== 'AWS::IAM::RolePolicy' ||
+        (entries[0].DeletionPolicy !== undefined && entries[0].DeletionPolicy !== 'Delete') ||
+        entries[0].Condition !== undefined ||
+        entries[0].Properties?.RoleName !== plan.roleName ||
+        entries[0].Properties?.PolicyName !== plan.stackName
+      )
+        throw new Error(
+          'Recovery access stack contains unexpected resources; automatic removal refused',
+        );
+    }
     if (stack.StackStatus !== 'DELETE_IN_PROGRESS')
       await client.send(
         new DeleteStackCommand({ StackName: stack.StackId, ClientRequestToken: randomUUID() }),
@@ -224,7 +285,7 @@ export async function removeRecoveryAccessStack(
     while (true) {
       const current = await describe(client, stack.StackId!, signal);
       if (!current) return;
-      assertRecoveryStack(current, target, { ...plan, kind: 'recovery-access' });
+      assertRecoveryStack(current, target, plan);
       if (current.StackId !== stack.StackId)
         throw new Error('Recovery access stack identity changed during removal');
       if (current.StackStatus === 'DELETE_COMPLETE') return;

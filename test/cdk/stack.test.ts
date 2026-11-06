@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { OpenClawStack } from '../../src/cdk/stack.js';
 import type { RestoreBootstrap } from '../../src/aws/restore-bootstrap.js';
 import { OPENCLAW_VERSION, OPENCLAW_NODE_VERSION } from '../../src/cli/constants.js';
+import type { Provider } from '../../src/cli/types/index.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -39,6 +40,7 @@ function bootstrap(
   enableCloudWatchLogs = false,
   instanceType = 't3.small',
   restore?: RestoreBootstrap,
+  provider: Provider = 'anthropic-api-key',
 ) {
   vi.spyOn(MachineImage, 'lookup').mockReturnValue(
     MachineImage.genericLinux({ 'us-east-1': 'ami-0123456789abcdef0' }),
@@ -46,8 +48,8 @@ function bootstrap(
   const stack = new OpenClawStack(new App(), 'TestStack', {
     restore,
     env: { account: '123456789012', region: 'us-east-1' },
-    apiProvider: 'anthropic-api-key',
-    apiKeyParamName: '/openclaw/test/key',
+    apiProvider: provider,
+    ...(provider === 'amazon-bedrock' ? {} : { apiKeyParamName: '/openclaw/test/key' }),
     gatewayTokenParamName: '/openclaw/test/token',
     useDefaultVpc: false,
     config: {
@@ -74,6 +76,23 @@ function actions(statement: { Action: string | string[] }): string[] {
 }
 
 describe('EC2 bootstrap', () => {
+  it('gives a keyless runtime only its actual Gateway parameter read, with no invented model-key ARN', () => {
+    const { script, statements } = bootstrap(false, 't3.small', undefined, 'amazon-bedrock');
+    const read = statements.find(
+      (statement) =>
+        statement.Effect === 'Allow' && actions(statement).includes('ssm:GetParameter'),
+    );
+    const resources = Array.isArray(read.Resource) ? read.Resource : [read.Resource];
+    expect(resources.map(resolveString)).toEqual([
+      'arn:aws:ssm:us-east-1:123456789012:parameter/openclaw/test/token',
+    ]);
+    const deny = statements.find(
+      (statement) => statement.Effect === 'Deny' && actions(statement).includes('ssm:GetParameter'),
+    );
+    expect(deny.NotResource).toEqual(read.Resource);
+    expect(script).toContain("auth_args=('--auth-choice' 'skip')");
+    expect(script).not.toContain("fetch_parameter '/openclaw/test/key'");
+  });
   it('provisions recorded restore capacity with an inactive compatible runtime', () => {
     const { stack, instance, script, statements } = bootstrap(true, 't3a.small', {
       operationId: '11111111-1111-1111-1111-111111111111',

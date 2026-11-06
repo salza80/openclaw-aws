@@ -1,6 +1,8 @@
 import type { OpenClawConfig } from '../types/index.js';
 import { ValidationError } from './errors.js';
 import { API_PROVIDERS } from '../constants.js';
+import { initialModelConnection } from '../../openclaw/connections.js';
+import { nativeModelReference } from '../../openclaw/model-control.js';
 
 export function validateConfig(config: OpenClawConfig): void {
   const errors: string[] = [];
@@ -76,7 +78,14 @@ export function validateConfig(config: OpenClawConfig): void {
   }
 
   if (config.openclaw) {
-    if (
+    if (config.openclaw.apiProvider === 'amazon-bedrock' && config.openclaw.model !== undefined) {
+      try {
+        if (!nativeModelReference(config.openclaw.model).startsWith('amazon-bedrock/'))
+          throw new Error('Different provider');
+      } catch {
+        errors.push('Invalid openclaw.model; use an amazon-bedrock/model reference');
+      }
+    } else if (
       config.openclaw.model !== undefined &&
       (typeof config.openclaw.model !== 'string' ||
         config.openclaw.model.length > 256 ||
@@ -84,8 +93,16 @@ export function validateConfig(config: OpenClawConfig): void {
     ) {
       errors.push('Invalid openclaw.model; use a native provider/model reference');
     }
-    if (!API_PROVIDERS.some(({ value }) => value === config.openclaw?.apiProvider)) {
+    if (
+      config.openclaw.apiProvider !== 'amazon-bedrock' &&
+      !API_PROVIDERS.some(({ value }) => value === config.openclaw?.apiProvider)
+    ) {
       errors.push('Invalid openclaw.apiProvider');
+    }
+    try {
+      initialModelConnection(config);
+    } catch {
+      errors.push('Provider authentication mode or Bedrock inference region is invalid');
     }
   }
 
@@ -97,10 +114,24 @@ export function validateConfig(config: OpenClawConfig): void {
   }
 }
 
-/** Check new-instance inputs without making older configs unusable for lifecycle commands. */
-export function validateProvisioningConfig(config: OpenClawConfig): void {
+/** Fresh onboarding needs a selected model. An inactive clone will instead
+ * receive its entire reviewed native model policy before activation. */
+export function validateProvisioningConfig(
+  config: OpenClawConfig,
+  options: { clonedModelPolicy?: boolean } = {},
+): void {
   validateConfig(config);
   const errors: string[] = [];
+  if (config.openclaw?.apiProvider === 'amazon-bedrock' && !options.clonedModelPolicy) {
+    try {
+      const model = nativeModelReference(config.openclaw.model);
+      if (!model.startsWith('amazon-bedrock/')) throw new Error('Different provider');
+    } catch {
+      errors.push(
+        'New Bedrock deployments require an explicit amazon-bedrock/model-or-inference-profile reference',
+      );
+    }
+  }
   if (config.openclaw?.apiProvider === 'cloudflare-ai-gateway-api-key') {
     const cloudflare = config.openclaw.cloudflare;
     if (

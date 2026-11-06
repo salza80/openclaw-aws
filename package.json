@@ -58,6 +58,7 @@
     "release": "changeset publish"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock": "^3.1163.0",
     "@aws-sdk/client-cloudformation": "^3.1161.0",
     "@aws-sdk/client-ec2": "^3.1161.0",
     "@aws-sdk/client-iam": "^3.1163.0",

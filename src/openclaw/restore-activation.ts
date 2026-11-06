@@ -20,6 +20,9 @@ import {
   adoptRecoveryActivation,
 } from './recovery-activation-control.js';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { parse as parseDotenv } from 'dotenv';
+import { privateModelText } from './model-journal.js';
+import { assertRecoveryBedrockNative } from './recovery-bedrock-native.js';
 
 export interface RestoreActivationResult {
   schemaVersion: 1;
@@ -88,6 +91,14 @@ export async function runRestoreActivation(
     if (!snapshot.snapshot.valid || !snapshot.snapshot.sourceConfig)
       throw new Error('Restored configuration is not valid');
     assertInactiveRecoveryConfig(snapshot.snapshot.sourceConfig, gatewayToken);
+    if (job.bedrock)
+      await assertRecoveryBedrockNative({
+        config: snapshot.snapshot.sourceConfig,
+        environment: parseDotenv(await privateModelText(path.join(home, '.openclaw/.env'))),
+        home,
+        deploymentRegion: job.target.region,
+        intent: job.bedrock.intent,
+      });
     const held = await inspectRestoredSessionHolds({
       owner,
       members: job.backup.capture.members,
@@ -103,6 +114,14 @@ export async function runRestoreActivation(
     packageJson,
     gatewayToken,
     signal,
+    ...(job.bedrock
+      ? {
+          bedrock: {
+            deploymentRegion: job.target.region,
+            inferenceRegion: job.bedrock.intent.inferenceRegion,
+          },
+        }
+      : {}),
     validate,
     assertInactive: context.assertInactive,
     commit: async () => {

@@ -2,6 +2,14 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { parse as parseDotenv } from 'dotenv';
+import type { BedrockRecoveryPlan } from './bedrock-recovery-plan.js';
+import { bedrockRoleProfile } from './bedrock-profile.js';
+import { privateModelText } from './model-journal.js';
+import {
+  assertRecoveryBedrockNative,
+  assertRecoveryBedrockPlugin,
+} from './recovery-bedrock-native.js';
 import { execa } from 'execa';
 import { object, parseMembers, type BackupMember } from './backup-contract.js';
 type ConfigSdk = typeof import('openclaw/plugin-sdk/config-mutation');
@@ -16,6 +24,7 @@ export async function verifyNativeClone(options: {
   configurationHash?: string;
   signal?: AbortSignal;
   validateConfig?: (config: NativeConfig) => void;
+  bedrock?: { plan: BedrockRecoveryPlan; deploymentRegion: string };
 }) {
   const home = homedir();
   const state = path.join(home, '.openclaw');
@@ -36,6 +45,14 @@ export async function verifyNativeClone(options: {
   )
     throw new Error('Native clone configuration differs from its certified setup');
   options.validateConfig?.(before.snapshot.sourceConfig!);
+  if (options.bedrock)
+    await assertRecoveryBedrockNative({
+      config: before.snapshot.sourceConfig,
+      environment: parseDotenv(await privateModelText(path.join(state, '.env'))),
+      home,
+      deploymentRegion: options.bedrock.deploymentRegion,
+      intent: options.bedrock.plan.intent,
+    });
   const env = {
     HOME: home,
     PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
@@ -47,6 +64,9 @@ export async function verifyNativeClone(options: {
     AWS_CONFIG_FILE: '/dev/null',
     AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
     AWS_EC2_METADATA_V1_DISABLED: 'true',
+    ...(options.bedrock
+      ? bedrockRoleProfile(home, options.bedrock.deploymentRegion).environment
+      : {}),
   };
   const native = async (args: string[]) => {
     try {
@@ -69,6 +89,8 @@ export async function verifyNativeClone(options: {
     }
   };
   await native(['config', 'validate']);
+  if (options.bedrock)
+    assertRecoveryBedrockPlugin(await native(['plugins', 'registry']), options.bedrock.plan.intent);
   const members = parseMembers(await native(['agents', 'list']));
   if (
     members.length !== options.members.length ||

@@ -8,6 +8,28 @@ import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import { AWSError } from '../cli/utils/errors.js';
 import { asUbuntu } from '../openclaw/commands.js';
 import { executeSsm } from '../aws/ssm.js';
+import { validAwsRegion } from '../aws/regions.js';
+import {
+  nativeModelReference,
+  nativeModelScope,
+  type ModelScope,
+} from '../openclaw/model-control.js';
+
+interface ConfirmedModelIntent {
+  model: string;
+  operationId: string;
+  checkedAt: string;
+}
+interface ModelSelections {
+  default?: ConfirmedModelIntent;
+  agents: Record<string, ConfirmedModelIntent>;
+}
+export interface ConfirmedBedrockConnection {
+  authMode: 'instance-role';
+  inferenceRegion: string;
+  operationId: string;
+  checkedAt: string;
+}
 
 export interface RuntimeObservation {
   version: string;
@@ -19,6 +41,8 @@ interface DeploymentState {
   identity: { stackId: string; account: string; region: string; stackName: string };
   desired: { version: string; nodeVersion: string; provider: string; model?: string };
   observed?: RuntimeObservation;
+  modelSelections?: ModelSelections;
+  bedrockConnection?: ConfirmedBedrockConnection;
   restoredFrom?: { operationId: string; pointId?: string };
   clonedFrom?: { operationId: string; pointId: string };
 }
@@ -26,6 +50,73 @@ const validCloneLineage = (value: DeploymentState['clonedFrom']) =>
   value !== undefined &&
   /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value?.operationId) &&
   /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value?.pointId);
+function confirmedModelIntent(value: unknown): ConfirmedModelIntent {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new AWSError('Invalid local model intent');
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).some((key) => !['model', 'operationId', 'checkedAt'].includes(key)) ||
+    typeof row.operationId !== 'string' ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(row.operationId) ||
+    typeof row.checkedAt !== 'string' ||
+    row.checkedAt.length > 64 ||
+    !Number.isFinite(Date.parse(row.checkedAt))
+  )
+    throw new AWSError('Invalid local model intent');
+  return {
+    model: nativeModelReference(row.model),
+    operationId: row.operationId,
+    checkedAt: row.checkedAt,
+  };
+}
+function modelSelections(value: unknown): ModelSelections {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new AWSError('Invalid local model selections');
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).some((key) => !['default', 'agents'].includes(key)) ||
+    !row.agents ||
+    typeof row.agents !== 'object' ||
+    Array.isArray(row.agents) ||
+    Object.keys(row.agents).length > 10000
+  )
+    throw new AWSError('Invalid local model selection scopes');
+  const agents = Object.fromEntries(
+    Object.entries(row.agents).map(([id, intent]) => {
+      nativeModelScope({ kind: 'agent', agentId: id });
+      return [id, confirmedModelIntent(intent)];
+    }),
+  );
+  return {
+    ...(row.default !== undefined ? { default: confirmedModelIntent(row.default) } : {}),
+    agents,
+  };
+}
+function bedrockConnection(value: unknown): ConfirmedBedrockConnection {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new AWSError('Invalid local Bedrock connection intent');
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).some(
+      (key) => !['authMode', 'inferenceRegion', 'operationId', 'checkedAt'].includes(key),
+    ) ||
+    row.authMode !== 'instance-role' ||
+    typeof row.inferenceRegion !== 'string' ||
+    !validAwsRegion(row.inferenceRegion) ||
+    typeof row.operationId !== 'string' ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(row.operationId) ||
+    typeof row.checkedAt !== 'string' ||
+    row.checkedAt.length > 64 ||
+    !Number.isFinite(Date.parse(row.checkedAt))
+  )
+    throw new AWSError('Invalid local Bedrock connection intent');
+  return {
+    authMode: 'instance-role',
+    inferenceRegion: row.inferenceRegion,
+    operationId: row.operationId,
+    checkedAt: row.checkedAt,
+  };
+}
 function statePath(ctx: CommandContext): string {
   return path.join(getConfigRoot(), 'deployments', `${ctx.name}.json`);
 }
@@ -51,6 +142,8 @@ export function loadDeploymentState(ctx: CommandContext): DeploymentState | unde
   ) {
     throw new AWSError('Invalid local deployment metadata; inspect it before proceeding');
   }
+  if (value.modelSelections !== undefined) modelSelections(value.modelSelections);
+  if (value.bedrockConnection !== undefined) bedrockConnection(value.bedrockConnection);
   return value;
 }
 /** Check saved ownership before any targeted mutation or secret cleanup. */
@@ -74,12 +167,14 @@ export function assertDeploymentTarget(ctx: CommandContext, status?: DeploymentS
 
 export function recordDeploymentState(
   ctx: CommandContext,
-  status: DeploymentStatus,
+  status: Pick<DeploymentStatus, 'stackId' | 'stackName'>,
   options: {
     newlyCreated?: boolean;
     observed?: RuntimeObservation;
     restoredFrom?: { operationId: string; pointId?: string };
     clonedFrom?: { operationId: string; pointId: string };
+    modelSelection?: ConfirmedModelIntent & { scope: ModelScope };
+    bedrockConnection?: ConfirmedBedrockConnection;
   } = {},
 ): DeploymentState {
   const stackId = status.stackId;
@@ -104,6 +199,23 @@ export function recordDeploymentState(
       'The AWS deployment identity differs from the saved deployment; inspect the selected profile, account, region and stack before continuing',
     );
   }
+  let selections =
+    options.newlyCreated || options.restoredFrom || options.clonedFrom
+      ? undefined
+      : previous?.modelSelections;
+  if (options.modelSelection) {
+    const { scope: inputScope, ...input } = options.modelSelection;
+    const scope = nativeModelScope(inputScope);
+    const intent = confirmedModelIntent(input);
+    selections = { ...(selections ?? { agents: {} }), agents: { ...selections?.agents } };
+    if (scope.kind === 'default') selections.default = intent;
+    else selections.agents[scope.agentId] = intent;
+  }
+  const connection = options.bedrockConnection
+    ? bedrockConnection(options.bedrockConnection)
+    : options.newlyCreated || options.restoredFrom || options.clonedFrom
+      ? undefined
+      : previous?.bedrockConnection;
   const value: DeploymentState = {
     schemaVersion: 1,
     identity: {
@@ -126,6 +238,8 @@ export function recordDeploymentState(
             model: ctx.config.openclaw?.model,
           },
     observed: options.observed ?? (options.newlyCreated ? undefined : previous?.observed),
+    ...(selections ? { modelSelections: selections } : {}),
+    ...(connection ? { bedrockConnection: connection } : {}),
     restoredFrom:
       options.restoredFrom ??
       (options.newlyCreated || options.clonedFrom ? undefined : previous?.restoredFrom),
@@ -166,14 +280,27 @@ console.log(JSON.stringify({version,model:models.resolvedDefault}));`;
   } catch {
     throw new AWSError('Native runtime inspection returned invalid JSON');
   }
+  let validModel = false;
+  if (typeof value.model === 'string' && value.model.length <= 2048) {
+    if (value.model.includes('/')) {
+      try {
+        nativeModelReference(value.model);
+        validModel = true;
+      } catch {
+        /* Unsupported native reference. */
+      }
+    } else validModel = /^[A-Za-z0-9][A-Za-z0-9._:@+-]*$/.test(value.model);
+  }
   if (
     typeof value.version !== 'string' ||
     !/^[0-9]{4}\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(value.version) ||
-    typeof value.model !== 'string' ||
-    value.model.length > 256 ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/.test(value.model)
+    !validModel
   ) {
     throw new AWSError('Native runtime inspection returned an unsupported version/model result');
   }
-  return { version: value.version, model: value.model, checkedAt: new Date().toISOString() };
+  return {
+    version: value.version,
+    model: value.model as string,
+    checkedAt: new Date().toISOString(),
+  };
 }

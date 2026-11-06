@@ -11,6 +11,9 @@ import {
 } from '../../src/operations/restore-record.js';
 import { backupReceipt } from '../helpers/fixtures/backup.js';
 import { restoreDeliveryFixture } from '../helpers/fixtures/restore-delivery.js';
+import { BEDROCK_PLUGIN } from '../../src/openclaw/bedrock-configuration.js';
+import { bedrockAccessStackName } from '../../src/aws/recovery-source.js';
+import { createHash } from 'node:crypto';
 let directory: string;
 let record: RestoreRecord;
 beforeEach(async () => {
@@ -41,6 +44,79 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 describe('private resumable restore records', () => {
+  it('retains the exact target-role permission review and refuses changed saved connection intent', () => {
+    record.account = '123456789012';
+    record.partition = 'aws';
+    const target = record.delivery!.job.target;
+    target.roleId = 'AROATARGETROLE000001';
+    const model = 'amazon-bedrock/provider.saved',
+      arn = 'arn:aws:bedrock:eu-central-1::foundation-model/provider.saved';
+    const intent = {
+      authMode: 'instance-role' as const,
+      inferenceRegion: 'eu-central-1',
+      models: [model],
+      plugin: BEDROCK_PLUGIN,
+    };
+    record.bedrock = {
+      intent,
+      selection: {
+        discoveryRegion: intent.inferenceRegion,
+        routes: [
+          {
+            model,
+            region: intent.inferenceRegion,
+            kind: 'foundation-model',
+            invocationArn: arn,
+            modelArns: [arn],
+          },
+        ],
+      },
+    };
+    record.delivery!.job.bedrock = record.bedrock;
+    record.delivery!.job.backup.capture.credentials.bedrock = intent;
+    record.delivery!.request.sha256 = createHash('sha256')
+      .update(JSON.stringify(record.delivery!.job))
+      .digest('hex');
+    const name = bedrockAccessStackName(target.stackId, target.roleId);
+    record.bedrockIam = {
+      phase: 'started',
+      access: {
+        stackName: name,
+        stackId: `arn:aws:cloudformation:${target.region}:${target.account}:stack/${name}/policy`,
+        changeSetId: `arn:aws:cloudformation:${target.region}:${target.account}:changeSet/restore/fixture`,
+        templateDigest: 'a'.repeat(64),
+        noChanges: false,
+        source: {
+          stackId: target.stackId,
+          instanceId: target.instanceId,
+          role: {
+            id: target.roleId,
+            name: 'host',
+            arn: `arn:aws:iam::${target.account}:role/host`,
+          },
+          profile: {
+            id: 'AIPAHOSTPROFILE000001',
+            arn: `arn:aws:iam::${target.account}:instance-profile/host`,
+          },
+        },
+      },
+    };
+    saveRestoreRecord(record, true);
+    expect(loadRestoreRecord(record.operationId)).toEqual(record);
+    record.bedrock.intent.models = [];
+    saveRestoreRecord(record);
+    expect(() => loadRestoreRecord(record.operationId)).toThrow();
+  });
+  it('keeps the previous committed journal when flushing a replacement fails', () => {
+    saveRestoreRecord(record, true);
+    record.phase = 'restoring';
+    const flush = vi.spyOn(fs, 'fsyncSync').mockImplementationOnce(() => {
+      throw new Error('flush failed');
+    });
+    expect(() => saveRestoreRecord(record)).toThrow(/flush failed/);
+    flush.mockRestore();
+    expect(loadRestoreRecord(record.operationId).phase).toBe('ready-inactive');
+  });
   it('retains exact code/request versions and hashes in a private create-only record', () => {
     saveRestoreRecord(record, true);
     expect(loadRestoreRecord(record.operationId)).toEqual(record);

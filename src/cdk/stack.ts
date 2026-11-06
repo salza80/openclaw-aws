@@ -29,7 +29,7 @@ export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
   apiProvider: Provider;
   model?: string;
-  apiKeyParamName: string;
+  apiKeyParamName?: string;
   gatewayTokenParamName: string;
   useDefaultVpc: boolean;
   cloudflareAccountId?: string;
@@ -100,11 +100,13 @@ export class OpenClawStack extends Stack {
     });
     const logGrant = logGroup?.grantWrite(role);
 
-    const apiKeyParamArn = Stack.of(this).formatArn({
-      service: 'ssm',
-      resource: 'parameter',
-      resourceName: apiKeyParamName.replace(/^\/+/, ''),
-    });
+    const apiKeyParamArn = apiKeyParamName
+      ? Stack.of(this).formatArn({
+          service: 'ssm',
+          resource: 'parameter',
+          resourceName: apiKeyParamName.replace(/^\/+/, ''),
+        })
+      : undefined;
     const gatewayTokenParamArn = Stack.of(this).formatArn({
       service: 'ssm',
       resource: 'parameter',
@@ -119,7 +121,7 @@ export class OpenClawStack extends Stack {
           }),
           gatewayTokenParamArn,
         ]
-      : [apiKeyParamArn, gatewayTokenParamArn];
+      : [...(apiKeyParamArn ? [apiKeyParamArn] : []), gatewayTokenParamArn];
     role.addToPolicy(
       new PolicyStatement({
         actions: ['ssm:GetParameter'],

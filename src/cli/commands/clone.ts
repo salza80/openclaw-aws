@@ -9,10 +9,12 @@ import { backupOperationId } from '../../operations/backup.js';
 import { OPENCLAW_PROVIDER_SETUP } from '../../openclaw/install.js';
 import type { ExplicitCloneCredentials } from '../../openclaw/clone-credentials.js';
 import { explicitCloneCredentials } from '../../openclaw/clone-credentials.js';
-import type { Provider } from '../types/index.js';
+import type { Provider, ApiKeyProvider } from '../types/index.js';
+import { isApiKeyProvider } from '../../openclaw/connections.js';
 import { providerChoice } from '../utils/providers.js';
 import { createSsmClient } from '../utils/aws-clients.js';
 import { handleError, ValidationError } from '../utils/errors.js';
+import { recoveryBedrockSummary } from '../../operations/recovery-bedrock.js';
 
 interface CloneArgs {
   action?: string;
@@ -24,6 +26,7 @@ interface CloneArgs {
   targetProfile?: string;
   name?: string;
   provider?: string;
+  bedrockRegion?: string;
   cloudflareAccountId?: string;
   cloudflareGatewayId?: string;
   instanceType?: string;
@@ -37,10 +40,14 @@ interface CloneArgs {
   yes?: boolean;
   json?: boolean;
 }
-type CredentialSource = { provider: Provider; kind: 'env' | 'ssm'; reference: string };
+type CredentialSource = { provider: ApiKeyProvider; kind: 'env' | 'ssm'; reference: string };
 export function cloneCredentialSources(argv: CloneArgs, primary: Provider): CredentialSource[] {
   const sources: CredentialSource[] = [];
   const add = (provider: Provider, kind: 'env' | 'ssm', reference: string) => {
+    if (!isApiKeyProvider(provider))
+      throw new ValidationError(
+        'An instance-role provider cannot receive an API-key credential source',
+      );
     if (sources.some((source) => source.provider === provider))
       throw new ValidationError('Select exactly one explicit credential source per provider');
     if (
@@ -105,9 +112,10 @@ async function credentials(
       values[source.provider] = value;
     }
   }
-  const needed = new Set<Provider>([primary]);
+  const needed = new Set<ApiKeyProvider>(isApiKeyProvider(primary) ? [primary] : []);
   for (const nativeId of required) {
-    const provider = (Object.keys(OPENCLAW_PROVIDER_SETUP) as Provider[]).find(
+    if (nativeId === 'amazon-bedrock') continue;
+    const provider = (Object.keys(OPENCLAW_PROVIDER_SETUP) as ApiKeyProvider[]).find(
       (provider) =>
         OPENCLAW_PROVIDER_SETUP[provider].providerId === nativeId ||
         OPENCLAW_PROVIDER_SETUP[provider].providerAliases?.includes(nativeId),
@@ -161,6 +169,17 @@ function publicRecord(record: CloneRecord) {
     scope: 'whole-team-knowledge',
     report: record.report,
     permissionCleanupPending: record.permissionCleanupPending ?? false,
+    ...(record.bedrock
+      ? {
+          bedrock: {
+            inferenceRegion: record.bedrock.intent.inferenceRegion,
+            invocationRouteCount: record.bedrock.selection.routes.length,
+            recordedIamPhase: record.bedrockIam?.phase,
+            policyStack: record.bedrockIam?.access.stackName,
+            changeSetId: record.bedrockIam?.access.changeSetId,
+          },
+        }
+      : {}),
   };
 }
 function show(record: CloneRecord, json: boolean, inspection = false) {
@@ -211,6 +230,7 @@ export async function runCloneCommand(argv: CloneArgs) {
         pointId: argv.from,
         name: argv.name,
         apiProvider: primary,
+        bedrockRegion: argv.bedrockRegion,
         cloudflareAccountId: argv.cloudflareAccountId,
         cloudflareGatewayId: argv.cloudflareGatewayId,
         region: argv.targetRegion,
@@ -232,6 +252,7 @@ export async function runCloneCommand(argv: CloneArgs) {
       instanceType: plan.context.config.instance.type,
       volumeGiB: plan.bootstrap.volumeGiB,
       preview: plan.preview,
+      ...(plan.bedrock ? { bedrock: plan.bedrock } : {}),
     };
     if (action === 'preview') {
       if (argv.json) console.log(JSON.stringify(summary, null, 2));
@@ -240,6 +261,7 @@ export async function runCloneCommand(argv: CloneArgs) {
           `Whole-team knowledge preview: ${plan.preview.content.members.map((member) => member.id).join(', ')}\nProviders in use: ${plan.preview.providersInUse.join(', ')}\nNew target: ${plan.context.name}, ${plan.context.config.instance.type}, ${plan.bootstrap.volumeGiB} GiB in ${plan.context.target.region}`,
         );
         for (const omission of plan.preview.policy.omissions) console.log(omission);
+        if (plan.bedrock) console.log(recoveryBedrockSummary(plan.bedrock));
         console.log(
           'No AWS target resources were created. Use --json for selected and omitted file details.',
         );
@@ -258,7 +280,7 @@ export async function runCloneCommand(argv: CloneArgs) {
     if (
       !(await approve(
         argv,
-        `Clone whole-team knowledge from ${argv.from} as '${plan.context.name}' in AWS ${plan.context.target.account}/${plan.context.target.region}. Create one ${plan.context.config.instance.type} EC2/Gateway host, a ${plan.bootstrap.volumeGiB} GiB encrypted disk and its IAM/network resources. Preserve source role IDs/model choices with fresh native identities and explicitly selected credentials; the source may remain live. ${argv.activate ? 'Activate after validation with automatic integrations disconnected.' : 'Leave the Gateway masked for separate activation.'} Operation: ${plan.operationId}. Compute/storage remain billable until cleanup.\n${report}\n${plan.preview.policy.omissions.join('\n')}\nExplicit credential references: ${sources.map((source) => `${source.provider} via ${source.kind} ${source.reference}`).join(', ') || 'interactive entry required'}`,
+        `Clone whole-team knowledge from ${argv.from} as '${plan.context.name}' in AWS ${plan.context.target.account}/${plan.context.target.region}. Create one ${plan.context.config.instance.type} EC2/Gateway host, a ${plan.bootstrap.volumeGiB} GiB encrypted disk and its IAM/network resources. Preserve source role IDs/model choices with fresh native identities and explicitly selected credentials; the source may remain live. ${argv.activate ? 'Activate after validation with automatic integrations disconnected.' : 'Leave the Gateway masked for separate activation.'} Operation: ${plan.operationId}. Compute/storage remain billable until cleanup.\n${report}\n${plan.preview.policy.omissions.join('\n')}\n${plan.bedrock ? recoveryBedrockSummary(plan.bedrock) : ''}\nExplicit API-key references: ${sources.map((source) => `${source.provider} via ${source.kind} ${source.reference}`).join(', ') || (primary === 'amazon-bedrock' ? 'none selected; any copied API-key provider requires its own explicit credential' : 'interactive entry required')}`,
       ))
     )
       return;
@@ -291,6 +313,7 @@ export async function runCloneCommand(argv: CloneArgs) {
     argv.targetProfile ||
     argv.name ||
     argv.provider ||
+    argv.bedrockRegion ||
     argv.cloudflareAccountId ||
     argv.cloudflareGatewayId ||
     argv.instanceType ||
@@ -401,6 +424,11 @@ export const cloneCommand: CommandModule<{}, CloneArgs> = {
           'Primary credential provider (default openrouter); saved model choices are preserved',
       })
       .option('cloudflare-account-id', { type: 'string' })
+      .option('bedrock-region', {
+        type: 'string',
+        describe:
+          'Explicit target inference region; defaults to the saved Bedrock connection region',
+      })
       .option('cloudflare-gateway-id', { type: 'string' })
       .option('instance-type', { type: 'string' })
       .option('volume-gib', { type: 'number' })

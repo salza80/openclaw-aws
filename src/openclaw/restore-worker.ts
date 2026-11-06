@@ -61,6 +61,8 @@ export async function runRestoreWorker(
       ssm,
       assertInactive,
       signal,
+      deploymentRegion: job.target.region,
+      ...(job.bedrock ? { bedrock: job.bedrock } : {}),
     });
     const result: RestoreWorkerResult = {
       schemaVersion: 1,

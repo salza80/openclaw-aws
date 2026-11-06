@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   capabilities: vi.fn(),
   region: vi.fn(),
   exists: vi.fn(),
+  bedrockRoute: vi.fn(),
 }));
 vi.mock('../../src/operations/backup.js', async (load) => ({
   ...(await load<object>()),
@@ -23,6 +24,10 @@ vi.mock('../../src/aws/target.js', async (load) => ({
   resolveAwsTarget: mocks.resolve,
 }));
 vi.mock('../../src/aws/recovery-presence.js', () => ({ inspectRecoveryPresence: mocks.presence }));
+vi.mock('../../src/aws/bedrock-routes.js', async (original) => ({
+  ...(await original<object>()),
+  resolveBedrockRoute: mocks.bedrockRoute,
+}));
 vi.mock('../../src/operations/deployment.js', () => ({
   assertRestoreSecretNamespace: mocks.namespace,
 }));
@@ -38,6 +43,7 @@ vi.mock('../../src/cli/utils/config.js', () => ({
 }));
 import { prepareRestore } from '../../src/operations/restore.js';
 import { StackNotFoundError } from '../../src/cli/utils/errors.js';
+import { BEDROCK_PLUGIN } from '../../src/openclaw/bedrock-configuration.js';
 const target = { ...makeCommandContext().target, region: 'eu-central-1', profile: 'recovery' };
 const options = {
   recoveryTarget: target,
@@ -59,6 +65,31 @@ beforeEach(() => {
   vi.spyOn(fs, 'existsSync').mockReturnValue(false);
 });
 describe('fresh-client restore intake', () => {
+  it('reviews saved Bedrock inference routes before any host exists and keeps AWS deployment/inference regions separate', async () => {
+    const point = structuredClone(backupReceipt);
+    const model = 'amazon-bedrock/provider.saved';
+    point.capture.credentials.bedrock = {
+      authMode: 'instance-role',
+      inferenceRegion: 'us-east-1',
+      models: [model],
+      plugin: BEDROCK_PLUGIN,
+    };
+    mocks.inspect.mockResolvedValue(point);
+    const arn = 'arn:aws:bedrock:us-east-1::foundation-model/provider.saved';
+    mocks.bedrockRoute.mockResolvedValue({
+      model,
+      region: 'us-east-1',
+      kind: 'foundation-model',
+      invocationArn: arn,
+      modelArns: [arn],
+    });
+    const plan = await prepareRestore(options);
+    expect(plan.context.target.region).toBe('eu-central-1');
+    expect(plan.bedrock?.intent).toEqual(point.capture.credentials.bedrock);
+    expect(plan.prerequisites.join('\n')).toContain(arn);
+    expect(mocks.bedrockRoute).toHaveBeenCalledWith(plan.context.target, model, 'us-east-1');
+    expect(plan.context.config.openclaw).toBeUndefined();
+  });
   it('reserves the downloaded archive alongside extracted data instead of trusting the old disk size alone', async () => {
     const point = structuredClone(backupReceipt);
     point.capture.capture.location.storedBytes = 20 * 1024 ** 3;

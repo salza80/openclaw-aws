@@ -11,12 +11,14 @@ import { recoveryArtifactFilenames, type RecoveryArtifact } from '../aws/recover
 import { parseVaultUri } from '../aws/recovery-store.js';
 import type { RestoreJob } from '../openclaw/restore-contract.js';
 import { object, textField } from '../openclaw/backup-contract.js';
+import { parseBedrockRecoveryPlan } from '../openclaw/bedrock-recovery-plan.js';
+import { parseRecoveryBedrockIam, type RecoveryBedrockState } from './recovery-bedrock.js';
 export interface RecoveryDelivery<T extends RestoreJob = RestoreJob> {
   job: T;
   artifact: RecoveryArtifact;
   request: { key: string; versionId: string; sha256: string };
 }
-export interface RecoveryRecordBase<T extends string = string> {
+export interface RecoveryRecordBase<T extends string = string> extends RecoveryBedrockState {
   schemaVersion: 1;
   operationId: string;
   phase: T;
@@ -53,14 +55,31 @@ export function saveRecoveryRecord(
   const filename = recoveryRecordPath(kind, record.operationId);
   fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });
   const body = JSON.stringify(record, null, 2);
-  if (create) fs.writeFileSync(filename, body, { flag: 'wx', mode: 0o600 });
+  const write = (destination: string) => {
+    const file = fs.openSync(destination, 'wx', 0o600);
+    try {
+      fs.writeFileSync(file, body);
+      fs.fsyncSync(file);
+    } finally {
+      fs.closeSync(file);
+    }
+  };
+  if (create) write(filename);
   else {
     const temporary = `${filename}.${randomUUID()}.tmp`;
     try {
-      fs.writeFileSync(temporary, body, { flag: 'wx', mode: 0o600 });
+      write(temporary);
       fs.renameSync(temporary, filename);
     } finally {
       fs.rmSync(temporary, { force: true });
+    }
+  }
+  for (const directory of [path.dirname(filename), path.dirname(path.dirname(filename))]) {
+    const file = fs.openSync(directory, 'r');
+    try {
+      fs.fsyncSync(file);
+    } finally {
+      fs.closeSync(file);
     }
   }
 }
@@ -141,6 +160,27 @@ export function parseRecoveryRecordBase<T extends string>(
       throw new Error('Invalid permission cleanup state');
     record.permissionCleanupPending = value.permissionCleanupPending;
   }
+  if (value.bedrock !== undefined) {
+    if (!record.account || !record.partition)
+      throw new Error('Bedrock recovery requires a pinned target account/partition');
+    record.bedrock = parseBedrockRecoveryPlan(value.bedrock, {
+      account: record.account,
+      partition: record.partition,
+    });
+  }
+  if (value.bedrockIam !== undefined) {
+    if (!record.bedrock || !record.target || !record.account)
+      throw new Error('Bedrock IAM review has no owned recovery target/plan');
+    const role = object(object(object(value.bedrockIam).access).source).role;
+    record.bedrockIam = parseRecoveryBedrockIam(value.bedrockIam, record.bedrock, {
+      deploymentName: name,
+      stackId: record.target.stackId,
+      instanceId: record.target.instanceId,
+      roleId: textField(object(role).id, 128),
+      account: record.account,
+      region: config.aws.region,
+    });
+  }
   return record;
 }
 export function parseRecoveryDelivery<T extends RestoreJob>(
@@ -164,6 +204,7 @@ export function parseRecoveryDelivery<T extends RestoreJob>(
     job.target.stackId !== record.target.stackId ||
     job.target.instanceId !== record.target.instanceId ||
     job.target.deploymentName !== name ||
+    !isDeepStrictEqual(job.bedrock, record.bedrock) ||
     !isDeepStrictEqual(job.bootstrap, bootstrap) ||
     !/^[a-f0-9]{64}$/.test(String(artifact.digest)) ||
     !Array.isArray(artifact.files) ||

@@ -35,7 +35,7 @@ export async function runCloneActivation(
   signal?: AbortSignal,
 ): Promise<CloneActivationResult> {
   const job = parseCloneJob(input);
-  const context = await verifiedRestoreTarget(job, signal, { allowActive: true });
+  const context = await verifiedRestoreTarget(job, signal, { allowActive: true, kind: 'clone' });
   const { root, work, operationId, packageJson, home } = context;
   const digest = cloneRequestDigest(job);
   const ready = parseCloneWorkerResult(
@@ -85,6 +85,9 @@ export async function runCloneActivation(
       nativePackageJson: packageJson,
       configurationHash: ready.configurationHash,
       signal,
+      ...(job.bedrock
+        ? { bedrock: { plan: job.bedrock, deploymentRegion: job.target.region } }
+        : {}),
       validateConfig(config) {
         assertInactiveRecoveryConfig(config, gatewayToken);
         if (
@@ -108,6 +111,14 @@ export async function runCloneActivation(
     packageJson,
     gatewayToken,
     signal,
+    ...(job.bedrock
+      ? {
+          bedrock: {
+            deploymentRegion: job.target.region,
+            inferenceRegion: job.bedrock.intent.inferenceRegion,
+          },
+        }
+      : {}),
     validate,
     assertInactive: context.assertInactive,
     commit: async () => {

@@ -298,9 +298,10 @@ async function inspectRuntime(
   const state = recordDeploymentState(ctx, status, { observed });
   if (observed) {
     console.log(`Native OpenClaw: ${observed.version}; model: ${observed.model}`);
+    const desiredModel = state.modelSelections?.default?.model ?? state.desired.model;
     if (
       observed.version !== state.desired.version ||
-      (state.desired.model && state.desired.model !== observed.model)
+      (desiredModel && desiredModel !== observed.model)
     ) {
       console.log(
         'Native runtime differs from the recorded desired settings. No settings were changed.',

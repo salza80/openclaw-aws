@@ -47,9 +47,9 @@ export async function ownedRestoreRecord(filename: string, value: object) {
 export async function verifiedRestoreTarget(
   input: RestoreJob,
   signal?: AbortSignal,
-  options: { allowActive?: boolean } = {},
+  options: { allowActive?: boolean; kind?: 'clone' } = {},
 ) {
-  const job = parseRestoreJob(input);
+  const job = parseRestoreJob(input, options);
   const operationId = job.bootstrap.operationId;
   const packageJson = path.resolve(
     path.dirname(process.execPath),

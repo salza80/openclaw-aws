@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   state: vi.fn(),
   guard: vi.fn(),
   environment: vi.fn(),
+  initialBedrock: vi.fn(),
+  finishBedrock: vi.fn(),
   held: false,
 }));
 vi.mock('execa', () => ({ execa: mocks.execa }));
@@ -23,6 +25,11 @@ vi.mock('../../src/cli/utils/aws-clients.js', () => ({
   createSsmClient: () => ({ send: mocks.ssm, destroy: mocks.close }),
 }));
 vi.mock('../../src/operations/lock.js', () => ({ withDeploymentLock: mocks.lock }));
+vi.mock('../../src/operations/fresh-bedrock.js', async (original) => ({
+  ...(await original<object>()),
+  prepareInitialBedrock: mocks.initialBedrock,
+  finishInitialBedrock: mocks.finishBedrock,
+}));
 vi.mock('../../src/operations/state.js', () => ({
   assertDeploymentTarget: mocks.guard,
   recordDeploymentState: mocks.state,
@@ -87,6 +94,45 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('inactive restore provisioning', () => {
+  it('creates only the Gateway credential for a fresh keyless runtime; no model API-key parameter is written', async () => {
+    const initial = { schemaVersion: 1, reviewed: true };
+    mocks.initialBedrock.mockResolvedValue(initial);
+    mocks.finishBedrock.mockImplementation(async (_ctx, outputs, plan) => {
+      expect(mocks.held).toBe(false);
+      expect(outputs).toEqual({ DeploymentId: stackId, InstanceId: 'i-target' });
+      expect(plan).toEqual(initial);
+    });
+    const keyless = {
+      ...ctx,
+      config: {
+        ...ctx.config,
+        openclaw: {
+          apiProvider: 'amazon-bedrock' as const,
+          authMode: 'instance-role' as const,
+          bedrock: { region: 'eu-central-1' },
+          model: 'amazon-bedrock/example-profile',
+        },
+      },
+    };
+    await deployDeployment(keyless, { apiProvider: 'amazon-bedrock' });
+    const writes = mocks.ssm.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command instanceof PutParameterCommand);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].input.Name).toBe('/openclaw/alpha/gateway-token');
+    expect(writes[0].input.Value).toMatch(/^[a-f0-9]{48}$/);
+    expect(mocks.finishBedrock).toHaveBeenCalledOnce();
+  });
+  it('retains the created stack and reports costs if fresh provider completion fails after provisioning', async () => {
+    mocks.initialBedrock.mockResolvedValue({ reviewed: true });
+    mocks.finishBedrock.mockRejectedValue(new Error('Provider operation uncertain; inspect op-id'));
+    await expect(
+      deployDeployment(ctx, { apiProvider: 'anthropic-api-key', apiKey: 'private-key' }),
+    ).rejects.toThrow(/inspect op-id[\s\S]*incur AWS charges/);
+    expect(mocks.state).toHaveBeenCalled();
+    expect(mocks.held).toBe(false);
+    expect(mocks.execa.mock.calls.filter(([, args]) => args[0] === 'deploy')).toHaveLength(1);
+  });
   it('uses the same masked bootstrap for clone setup while recording independent lineage before its callback can fail', async () => {
     const pointId = '22222222-2222-2222-2222-222222222222';
     await expect(

@@ -7,6 +7,8 @@ import {
   type CapturedBackup,
 } from './backup-contract.js';
 import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
+import { isDeepStrictEqual } from 'node:util';
+import { parseBedrockRecoveryPlan, type BedrockRecoveryPlan } from './bedrock-recovery-plan.js';
 
 export interface RestoreJob {
   schemaVersion: 1;
@@ -21,9 +23,15 @@ export interface RestoreJob {
   };
   backup: { job: BackupCaptureJob; capture: CapturedBackup };
   pluginDirectory: string;
+  bedrock?: BedrockRecoveryPlan;
 }
-export function parseRestoreJob(value: unknown): RestoreJob {
+export function parseRestoreJob(value: unknown, options: { kind?: 'clone' } = {}): RestoreJob {
   const row = object(value);
+  if (
+    (options.kind === 'clone' && row.kind !== 'clone') ||
+    (row.kind !== undefined && row.kind !== (options.kind ?? 'restore'))
+  )
+    throw new Error('Recovery request kind differs from the selected workflow');
   if (row.schemaVersion !== 1) throw new Error('Invalid restore job version');
   const bootstrap = parseRestoreBootstrap(row.bootstrap);
   const target = object(row.target);
@@ -49,11 +57,21 @@ export function parseRestoreJob(value: unknown): RestoreJob {
     JSON.stringify(bootstrap.runtime) !== JSON.stringify(capture.runtime)
   )
     throw new Error('Restore target does not match the selected account, deployment or runtime');
+  const bedrock =
+    row.bedrock === undefined
+      ? undefined
+      : parseBedrockRecoveryPlan(row.bedrock, {
+          account,
+          partition: job.source.stackId.split(':')[1],
+        });
+  if (options.kind !== 'clone' && !isDeepStrictEqual(bedrock?.intent, capture.credentials.bedrock))
+    throw new Error('Recovery Bedrock setup differs from the saved native connection intent');
   return {
     schemaVersion: 1,
     bootstrap,
     target: { deploymentName, stackId, instanceId, roleId, region, account },
     backup: { job, capture },
     pluginDirectory,
+    ...(bedrock ? { bedrock } : {}),
   };
 }

@@ -1,4 +1,8 @@
 import path from 'node:path';
+import {
+  parseBedrockRecoveryIntent,
+  type BedrockRecoveryIntent,
+} from './bedrock-recovery-intent.js';
 import { parseSettings } from './aws-s3-plugin/settings.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 
@@ -66,6 +70,7 @@ export interface CapturedBackup {
     configurationPath: string;
     sourceEnvironmentIncluded: boolean;
     prerequisites: string[];
+    bedrock?: BedrockRecoveryIntent;
   };
   omissions: string[];
   gateway: { initial: 'active' | 'inactive' | 'failed'; restored: boolean };
@@ -346,6 +351,9 @@ export function parseCapturedBackup(value: unknown, job: BackupCaptureJob): Capt
       configurationPath,
       sourceEnvironmentIncluded: credentials.sourceEnvironmentIncluded,
       prerequisites: list(credentials.prerequisites).map((value) => textField(value)),
+      ...(credentials.bedrock !== undefined
+        ? { bedrock: parseBedrockRecoveryIntent(credentials.bedrock) }
+        : {}),
     },
     omissions: list(row.omissions).map((value) => textField(value)),
     gateway: {

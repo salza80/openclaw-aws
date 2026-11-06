@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
-import type { Provider } from '../cli/types/index.js';
+import type { Provider, ApiKeyProvider } from '../cli/types/index.js';
 
 export interface OpenClawBootstrapOptions {
   region: string;
@@ -8,7 +8,7 @@ export interface OpenClawBootstrapOptions {
   logicalResourceId: string;
   apiProvider: Provider;
   model?: string;
-  apiKeyParamName: string;
+  apiKeyParamName?: string;
   gatewayTokenParamName: string;
   logGroupName?: string;
   cloudflareAccountId?: string;
@@ -19,7 +19,7 @@ export interface OpenClawBootstrapOptions {
 
 // Public config values remain compatible while upstream auth choices and env names evolve.
 export const OPENCLAW_PROVIDER_SETUP: Record<
-  Provider,
+  ApiKeyProvider,
   {
     envVar: string;
     authChoice: string;
@@ -111,6 +111,7 @@ export function openClawProviderAuthArgs(options: {
   cloudflareAccountId?: string;
   cloudflareGatewayId?: string;
 }): string[] {
+  if (options.apiProvider === 'amazon-bedrock') return ['--auth-choice', 'skip'];
   const setup = OPENCLAW_PROVIDER_SETUP[options.apiProvider];
   if (!setup) throw new Error(`Unsupported OpenClaw provider: ${options.apiProvider}`);
   const args = ['--auth-choice', setup.authChoice];
@@ -137,10 +138,22 @@ export function renderOpenClawBootstrap(options: OpenClawBootstrapOptions): stri
     )
   )
     throw new Error('Restore bootstrap requires a valid operation UUID');
-  const setup = OPENCLAW_PROVIDER_SETUP[options.apiProvider];
-  if (!setup) throw new Error(`Unsupported OpenClaw provider: ${options.apiProvider}`);
+  const setup =
+    options.apiProvider === 'amazon-bedrock'
+      ? undefined
+      : OPENCLAW_PROVIDER_SETUP[options.apiProvider];
+  if (options.apiProvider !== 'amazon-bedrock' && !setup)
+    throw new Error(`Unsupported OpenClaw provider: ${options.apiProvider}`);
+  if (
+    options.apiProvider === 'amazon-bedrock'
+      ? options.apiKeyParamName !== undefined
+      : !options.apiKeyParamName
+  )
+    throw new Error(
+      'Bootstrap provider credential reference does not match its authentication mode',
+    );
   const authArgs = options.restoreOperationId
-    ? ['--auth-choice', setup.authChoice]
+    ? ['--auth-choice', setup?.authChoice ?? 'skip']
     : openClawProviderAuthArgs(options);
   const gatewayLogPath = '/home/ubuntu/.openclaw/logs/gateway.log';
   const cloudWatchSetup = options.logGroupName
@@ -175,13 +188,17 @@ systemctl enable amazon-cloudwatch-agent
     REGION: shellQuote(options.region),
     STACK_ID: shellQuote(options.stackId),
     LOGICAL_RESOURCE_ID: shellQuote(options.logicalResourceId),
-    API_KEY_PARAM_NAME: shellQuote(options.apiKeyParamName),
+    API_KEY_PARAM_NAME: shellQuote(options.apiKeyParamName ?? ''),
     GATEWAY_TOKEN_PARAM_NAME: shellQuote(options.gatewayTokenParamName),
-    PROVIDER_ENV: shellQuote(setup.envVar),
-    AUTH_ARGS: authArgs.map(shellQuote).join(' '),
-    MODEL_SETUP: options.model
-      ? `as_ubuntu "$OPENCLAW_BIN" models set ${shellQuote(options.model)} > "$WORK_DIR/model.json" 2> "$WORK_DIR/model.err"`
+    PROVIDER_ENV: shellQuote(setup?.envVar ?? ''),
+    PROVIDER_KEY_SETUP: setup
+      ? `fetch_parameter ${shellQuote(options.apiKeyParamName!)} "$WORK_DIR/api-key.json"\n  API_KEY="$(jq -er '.Parameter.Value' "$WORK_DIR/api-key.json")"\n  write_dotenv_entry ${shellQuote(setup.envVar)} "$API_KEY" >> "$WORK_DIR/openclaw.env"`
       : '',
+    AUTH_ARGS: authArgs.map(shellQuote).join(' '),
+    MODEL_SETUP:
+      options.model && setup
+        ? `as_ubuntu "$OPENCLAW_BIN" models set ${shellQuote(options.model)} > "$WORK_DIR/model.json" 2> "$WORK_DIR/model.err"`
+        : '',
     OPENCLAW_VERSION: shellQuote(OPENCLAW_VERSION),
     NODE_VERSION: shellQuote(OPENCLAW_NODE_VERSION),
     CLOUDWATCH_SETUP: cloudWatchSetup,

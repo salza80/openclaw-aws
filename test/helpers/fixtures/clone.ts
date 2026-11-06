@@ -4,6 +4,32 @@ import type { CloneRecord } from '../../../src/operations/clone-record.js';
 import type { ClonePreview } from '../../../src/openclaw/clone-preview.js';
 import { restoreDeliveryFixture } from './restore-delivery.js';
 import { backupReceipt } from './backup.js';
+import { BEDROCK_PLUGIN } from '../../../src/openclaw/bedrock-configuration.js';
+import type { BedrockRecoveryPlan } from '../../../src/openclaw/bedrock-recovery-plan.js';
+export function cloneBedrockPlan(): BedrockRecoveryPlan {
+  const model = 'anthropic.claude-sonnet-4-5-20250929-v1:0';
+  const arn = `arn:aws:bedrock:eu-central-1::foundation-model/${model}`;
+  return {
+    intent: {
+      authMode: 'instance-role',
+      inferenceRegion: 'eu-central-1',
+      plugin: BEDROCK_PLUGIN,
+      models: [`amazon-bedrock/${model}`],
+    },
+    selection: {
+      discoveryRegion: 'eu-central-1',
+      routes: [
+        {
+          model: `amazon-bedrock/${model}`,
+          region: 'eu-central-1',
+          kind: 'foundation-model',
+          invocationArn: arn,
+          modelArns: [arn],
+        },
+      ],
+    },
+  };
+}
 export function cloneDeliveryFixture() {
   const delivery = restoreDeliveryFixture();
   const job = parseCloneJob({

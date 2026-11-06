@@ -8,6 +8,11 @@ import { isDeepStrictEqual } from 'node:util';
 import { execa } from 'execa';
 import { parse as parseDotenv } from 'dotenv';
 import { nativeStorageReadConfig } from './storage-config.js';
+import { savedBedrockRecoveryIntent } from './bedrock-recovery-intent.js';
+import { recoverySessionModels } from './recovery-session-models.js';
+import { restoredPluginInstalls } from './restore-plugins.js';
+import { assertRecoveryBedrockNative } from './recovery-bedrock-native.js';
+import { bedrockRoleProfile } from './bedrock-profile.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import {
   object,
@@ -17,6 +22,7 @@ import {
   textField,
   type BackupCaptureJob,
   type NativeCaptureSummary,
+  type BackupMember,
 } from './backup-contract.js';
 
 type ConfigSdk = typeof import('openclaw/plugin-sdk/config-mutation');
@@ -317,7 +323,7 @@ export async function nativeBackupHost(
         ),
       );
     },
-    async credentials(capture: NativeCaptureSummary) {
+    async credentials(capture: NativeCaptureSummary, members: BackupMember[] = []) {
       const snapshot = await sdk.readConfigFileSnapshotForWrite();
       if (!snapshot.snapshot.valid)
         throw new Error('Native configuration became invalid during capture');
@@ -333,6 +339,26 @@ export async function nativeBackupHost(
         if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT')
           throw error;
       }
+      const bedrock = savedBedrockRecoveryIntent({
+        config: snapshot.snapshot.sourceConfig,
+        home: homedir(),
+        deploymentRegion: job.source.region,
+        environment: sourceEnv,
+        members,
+        sessionModels: await recoverySessionModels({
+          nativePackageJson: packageJson,
+          config: snapshot.snapshot.sourceConfig,
+          members,
+        }),
+      });
+      if (bedrock)
+        await assertRecoveryBedrockNative({
+          config: snapshot.snapshot.sourceConfig,
+          environment: sourceEnv,
+          home: homedir(),
+          deploymentRegion: job.source.region,
+          intent: bedrock,
+        });
       const stored = await runJson(['secrets', 'store', 'list']);
       const entries = Array.isArray(stored) ? stored : object(stored).entries;
       const storedEnv = new Set(
@@ -415,10 +441,24 @@ export async function nativeBackupHost(
         !Array.isArray(audit.filesScanned)
       )
         throw new Error('Native credential inventory could not prove complete recovery coverage');
+      if (bedrock) {
+        const plugin = restoredPluginInstalls(await runJson(['plugins', 'registry'])).find(
+          (entry) => entry.id === bedrock.plugin.id,
+        );
+        if (plugin?.spec !== bedrock.plugin.spec || plugin.integrity !== bedrock.plugin.integrity)
+          throw new Error(
+            'Saved Bedrock plugin provenance differs from the supported recovery artifact',
+          );
+      }
       for (const filename of audit.filesScanned) {
         const source = await canonicalPath(textField(filename));
-        if (!capture.assets.some((asset) => within(asset.sourcePath, source)))
+        if (!capture.assets.some((asset) => within(asset.sourcePath, source))) {
+          // This exact verified region-only file contains no credentials. It
+          // is deliberately recreated on the target, never adopted as auth.
+          if (bedrock && source === bedrockRoleProfile(homedir(), job.source.region).filename)
+            continue;
           throw new Error('Native credential inventory includes a file outside captured state');
+        }
         if (path.extname(source) === '.json')
           await inspect(JSON.parse(await readFile(source, 'utf8')));
       }
@@ -428,7 +468,13 @@ export async function nativeBackupHost(
         sourceEnvironmentIncluded: Object.keys(sourceEnv).length > 0,
         prerequisites: [
           'Reinstall the pinned runtime and declared plugin dependencies; host OS caches and unowned external resources are not installation state.',
+          ...(bedrock
+            ? [
+                'Recreate the target instance-role Bedrock profile/service environment and explicitly reviewed model permissions; AWS credentials and source IAM grants are not restored archive data.',
+              ]
+            : []),
         ],
+        ...(bedrock ? { bedrock } : {}),
       };
     },
     async verify(key: string, versions: Record<string, string>) {

@@ -1,6 +1,24 @@
 import path from 'node:path';
 import type { BackupMember } from './backup-contract.js';
 import { object } from './backup-contract.js';
+import { selectedBedrockModels } from './bedrock-recovery-intent.js';
+
+/** Independent copies keep selected policy, not the source's conversations or
+ * historical IAM grants. Resolve the same current-schema aliases as recovery. */
+export function cloneBedrockModels(
+  policy: CloneSourcePolicy,
+  members: { id: string; model?: string }[],
+) {
+  return selectedBedrockModels({
+    config: {
+      agents: {
+        defaults: { model: policy.model, models: policy.models },
+        entries: Object.fromEntries(policy.agents.map((agent) => [agent.id, agent])),
+      },
+    },
+    members,
+  });
+}
 
 export interface CloneModelSelection {
   primary?: string;

@@ -57,6 +57,36 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('restore CLI boundary', () => {
+  it('projects recorded Bedrock IAM reconciliation details without publishing native credentials or delivery data', async () => {
+    mocks.load.mockReturnValue({
+      ...record,
+      permissionCleanupPending: true,
+      bedrock: { intent: { inferenceRegion: 'us-east-1', models: ['amazon-bedrock/model'] } },
+      bedrockIam: {
+        phase: 'started',
+        access: {
+          stackId: 'owned-policy-stack',
+          changeSetId: 'owned-change-set',
+          privateContext: 'do-not-publish',
+        },
+      },
+    });
+    await runRestoreCommand({ action: 'inspect', operationId: record.operationId, json: true });
+    const projected = JSON.parse(mocks.print.mock.calls[0][0]);
+    expect(projected).toMatchObject({
+      permissionCleanupPending: true,
+      bedrock: {
+        inferenceRegion: 'us-east-1',
+        invocationRouteCount: 1,
+        recordedIamPhase: 'started',
+        policyStack: 'owned-policy-stack',
+        changeSetId: 'owned-change-set',
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain('do-not-publish');
+    expect(mocks.stage).not.toHaveBeenCalled();
+    expect(mocks.resume).not.toHaveBeenCalled();
+  });
   it('plans and stages with saved/explicit settings and no model key prompt', async () => {
     await runRestoreCommand({
       ...args,

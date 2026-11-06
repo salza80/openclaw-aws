@@ -50,6 +50,17 @@ function publicRecord(record: RestoreRecord) {
     memberCount: record.activation?.memberCount ?? record.result?.memberCount,
     recordedSessionHolds: record.activation?.heldSessionCount ?? record.result?.heldSessionCount,
     permissionCleanupPending: record.permissionCleanupPending ?? false,
+    ...(record.bedrock
+      ? {
+          bedrock: {
+            inferenceRegion: record.bedrock.intent.inferenceRegion,
+            invocationRouteCount: record.bedrock.intent.models.length,
+            recordedIamPhase: record.bedrockIam?.phase ?? 'not-reviewed',
+            policyStack: record.bedrockIam?.access.stackId ?? record.bedrockIam?.access.stackName,
+            changeSetId: record.bedrockIam?.access.changeSetId,
+          },
+        }
+      : {}),
   };
 }
 export async function runRestoreCommand(argv: RestoreArgs) {

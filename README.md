@@ -47,6 +47,8 @@ npx openclaw-aws status --name personal --runtime
 
 `create` accepts the providers listed by `--help`, including existing full names such as `openrouter-api-key`. It inherits region, profile, instance type and provider/model defaults from the current configuration; explicit options take precedence. A different provider does not inherit the previous provider's model. Missing credentials fail before provisioning; local names, existing AWS stacks and retained secret names are checked before saving the new configuration. Cancelling deployment leaves the configuration available for `deploy`. Fresh deployment never overwrites an existing SSM secret; inspect retained resources and explicitly clean up before retrying a failed creation.
 
+For Amazon Bedrock, choose `--provider bedrock --bedrock-region eu-central-1 --model amazon-bedrock/<model-or-inference-profile-id>`. Bedrock uses the new instance's role and AWS billing, with no model API key. Creation displays the exact model route/backing permissions and plugin capability consent. AWS hosting and inference regions are separate. OpenRouter remains available alongside Bedrock; see [provider setup](docs/bedrock-provider-workflow.md).
+
 The existing two-step setup remains available:
 
 ```bash
@@ -135,7 +137,7 @@ node --version
 openclaw --version
 ```
 
-Back up your OpenClaw state before upgrading an existing installation, then follow the [OpenClaw update guide](https://docs.openclaw.ai/install/updating). When upgrading from Node.js 22, update Node first and refresh the gateway service so it uses the new runtime. Destroying a deployment deletes its instance data and is not an upgrade procedure.
+This package targets fresh installations and the current pinned OpenClaw schema. It does not migrate previous package versions or legacy native settings. Destroying a deployment deletes its instance data; retain a verified backup before removal.
 
 ## EC2 sizing
 
@@ -146,6 +148,32 @@ Fresh hosts with 2 GiB RAM or less receive a private 2 GiB swapfile on their enc
 See the [sizing report](https://github.com/salza80/openclaw-aws/blob/main/docs/ec2-sizing.md) for current Frankfurt compute prices, measured memory, additional charges and the minimum-size test plan. Instance prices vary by region; the setup menu does not quote a universal monthly cost.
 
 ## Commands
+
+### `openclaw-aws models`
+
+Read the running Gateway's native inventory and change its persistent default or one existing agent's model through SSM:
+
+```bash
+openclaw-aws models current --name my-bot --json
+openclaw-aws models list --name my-bot --agent researcher --provider openrouter --json
+openclaw-aws models set 'openrouter/MODEL_FROM_LIST' --name my-bot --agent researcher --dry-run
+openclaw-aws models set 'openrouter/MODEL_FROM_LIST' --name my-bot --agent researcher --yes
+openclaw-aws models inspect --name my-bot --operation-id <operation-uuid> --json
+openclaw-aws models reconcile --name my-bot --operation-id <operation-uuid> --accept requested --yes
+```
+
+Copy an exact model reference from `models list`. Omit `--agent` to target Gateway defaults; explicit sibling agent settings and session overrides remain distinct. The provider must already be configured. These commands do not send model prompts or replace EC2/storage. A Gateway with native reload disabled requires explicit `--allow-restart` consent. See [model management](docs/model-management.md) for policy, first-use tool delivery and recovery after interrupted commands.
+
+### `openclaw-aws providers`
+
+Enable optional Bedrock on a running claw without replacing its instance or disk:
+
+```sh
+openclaw-aws providers enable-bedrock --name my-bot --inference-region eu-central-1 --dry-run
+openclaw-aws providers enable-bedrock --name my-bot --inference-region eu-central-1 --allow-restart --accept-plugin-capabilities --yes
+```
+
+Review the separate role-policy change set, pinned native plugin and restart before applying. Provider setup preserves other connections and current model choices. Then use `models list` and `models set` to select a model; Bedrock selection previews any additional invocation permissions. Discovery is a metadata check and does not prove paid inference access. See [provider recovery and inspection](docs/bedrock-provider-workflow.md) for interrupted operations.
 
 ### `openclaw-aws init`
 
@@ -358,7 +386,7 @@ openclaw-aws clone resume --operation-id <clone-uuid> --yes
 openclaw-aws clone cleanup --operation-id <clone-uuid> --yes
 ```
 
-Preview lists selected/omitted content before creating target resources. Supply new model credentials explicitly through a named environment variable, private interactive entry, or deliberate SSM reuse (`--reuse-ssm /source/api-key`). Mixed-provider teams need an explicit credential for each used provider; saved model choices are preserved. The default primary credential provider is OpenRouter. Staging leaves the Gateway masked; `--activate` requests activation after safety validation and removal of source-backup/key access. Channels, external connections, schedules, hooks and indexing remain disconnected. See the [clone runbook](docs/independent-clones.md) for policy, recovery, IAM permissions and reconnection. Local/native validation is covered; live EC2 clone acceptance has not been run.
+Preview lists selected/omitted content before creating target resources. Supply new API-provider credentials explicitly through a named environment variable, private interactive entry, or deliberate SSM reuse (`--reuse-ssm /source/api-key`). Use `--provider bedrock` for keyless role setup; the saved inference region is retained unless overridden by `--bedrock-region`. Mixed teams still need explicit keys for their API providers. Bedrock permissions cover the copied default/agent/fallback policy, excluding conversation history. The default primary credential provider is OpenRouter. Staging leaves the Gateway masked; `--activate` requests activation after safety validation and removal of source-backup/key access. Channels, external connections, schedules, hooks and indexing remain disconnected. See the [clone runbook](docs/independent-clones.md) for policy, recovery, IAM permissions and reconnection. Local/native validation is covered; live EC2 clone acceptance has not been run.
 
 ## Configuration
 

@@ -43,6 +43,28 @@ function scratch() {
 }
 
 const bootstrap = () => renderOpenClawBootstrap(options);
+describe('keyless runtime bootstrap', () => {
+  it('onboards with skip auth and fetches only the real Gateway credential, without a fake model key', () => {
+    const script = renderOpenClawBootstrap({
+      ...options,
+      apiProvider: 'amazon-bedrock',
+      apiKeyParamName: undefined,
+      model: 'amazon-bedrock/example-profile',
+    });
+    expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
+    expect(script).toContain("auth_args=('--auth-choice' 'skip')");
+    expect(script).toContain("fetch_parameter '/openclaw/test/token'");
+    expect(script).not.toContain("fetch_parameter '/openclaw/test/key'");
+    expect(script).not.toContain("write_dotenv_entry ''");
+    expect(script).not.toContain('AMAZON_BEDROCK_API_KEY');
+    expect(script).not.toContain('models set');
+    expect(script).toContain('wait_for_health');
+    expect(Buffer.byteLength(script)).toBeLessThan(16 * 1024 - 256);
+    expect(() => renderOpenClawBootstrap({ ...options, apiProvider: 'amazon-bedrock' })).toThrow(
+      /credential reference/,
+    );
+  });
+});
 
 describe('inactive restore bootstrap', () => {
   it('adopts only the same operation and stack marker without overwriting another restore', () => {

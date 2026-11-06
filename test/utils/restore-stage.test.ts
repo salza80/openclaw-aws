@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   lock: vi.fn(),
   state: vi.fn(),
   guard: vi.fn(),
+  bedrockAccess: vi.fn(),
 }));
 vi.mock('../../src/operations/deployment.js', () => ({
   assertRestoreSecretNamespace: vi.fn(),
@@ -63,12 +64,18 @@ vi.mock('../../src/operations/state.js', () => ({
   assertDeploymentTarget: mocks.guard,
   recordDeploymentState: mocks.state,
 }));
+vi.mock('../../src/operations/recovery-bedrock.js', async (original) => ({
+  ...(await original<object>()),
+  ensureRecoveryBedrockAccess: mocks.bedrockAccess,
+}));
 vi.mock('../../src/aws/recovery-store.js', async (load) => ({
   ...(await load<object>()),
   recoveryStore: () => ({ putImmutable: mocks.put, close: mocks.close }),
 }));
 vi.mock('../../src/aws/ssm.js', () => ({ executeSsm: mocks.remote }));
 import { resumeRestore, stageRestore, type RestorePlan } from '../../src/operations/restore.js';
+import { loadRestoreRecord } from '../../src/operations/restore-record.js';
+import { BEDROCK_PLUGIN } from '../../src/openclaw/bedrock-configuration.js';
 let directory: string;
 let plan: RestorePlan;
 const recoveryTarget = { ...testTarget, region: 'eu-central-1' };
@@ -156,6 +163,60 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 describe('shared inactive AWS restore operation', () => {
+  it('pins the approved Bedrock connection before permission work and refuses to dispatch native restore on IAM uncertainty', async () => {
+    mocks.artifact.mockResolvedValue(restoreDeliveryFixture().artifact);
+    mocks.put.mockImplementation(async (_name, job) => ({
+      versionId: 'request-version',
+      checksumSHA256: createHash('sha256').update(JSON.stringify(job)).digest('base64'),
+    }));
+    const model = 'amazon-bedrock/provider.saved';
+    const intent = {
+      authMode: 'instance-role' as const,
+      inferenceRegion: 'eu-central-1',
+      models: [model],
+      plugin: BEDROCK_PLUGIN,
+    };
+    const arn = 'arn:aws:bedrock:eu-central-1::foundation-model/provider.saved';
+    plan.point.capture.credentials.bedrock = intent;
+    plan.bedrock = {
+      intent,
+      selection: {
+        discoveryRegion: intent.inferenceRegion,
+        routes: [
+          {
+            model,
+            region: intent.inferenceRegion,
+            kind: 'foundation-model',
+            invocationArn: arn,
+            modelArns: [arn],
+          },
+        ],
+      },
+    };
+    mocks.bedrockAccess.mockImplementation(async ({ record }) => {
+      const saved = loadRestoreRecord(plan.operationId);
+      expect(saved.bedrock).toEqual(plan.bedrock);
+      expect(saved.delivery?.job.bedrock).toEqual(plan.bedrock);
+      expect(saved.delivery).toEqual(record.delivery);
+      expect(mocks.remote).not.toHaveBeenCalled();
+      throw new Error('uncertain Bedrock IAM apply');
+    });
+    await expect(stageRestore(plan, recoveryTarget)).rejects.toThrow(/did not complete/);
+    expect(mocks.remote).not.toHaveBeenCalled();
+    expect(loadRestoreRecord(plan.operationId).phase).toBe('restoring');
+    expect(loadRestoreRecord(plan.operationId).permissionCleanupPending).toBe(true);
+  });
+  it('refuses a saved Bedrock connection without its exact reviewed permission plan before provisioning', async () => {
+    plan.point.capture.credentials.bedrock = {
+      authMode: 'instance-role',
+      inferenceRegion: 'eu-central-1',
+      models: [],
+      plugin: BEDROCK_PLUGIN,
+    };
+    await expect(stageRestore(plan, recoveryTarget)).rejects.toThrow(/connection approval differs/);
+    expect(mocks.provision).not.toHaveBeenCalled();
+    expect(mocks.remote).not.toHaveBeenCalled();
+  });
   async function readyForResume() {
     const delivery = restoreDeliveryFixture();
     mocks.artifact.mockResolvedValue(delivery.artifact);

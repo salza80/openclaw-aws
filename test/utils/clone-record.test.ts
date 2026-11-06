@@ -9,7 +9,7 @@ import {
   type CloneRecord,
 } from '../../src/operations/clone-record.js';
 import { recoveryRecordPath } from '../../src/operations/recovery-record.js';
-import { cloneRecordFixture } from '../helpers/fixtures/clone.js';
+import { cloneRecordFixture, cloneBedrockPlan } from '../helpers/fixtures/clone.js';
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(path.join(tmpdir(), 'clone-record-'));
@@ -20,6 +20,21 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 describe('resumable clone journal', () => {
+  it('persists keyless role setup without inventing a model credential or initial model', () => {
+    const record = cloneRecordFixture();
+    record.phase = 'cloning';
+    delete record.delivery;
+    delete record.result;
+    record.bedrock = cloneBedrockPlan();
+    record.config.openclaw = {
+      apiProvider: 'amazon-bedrock',
+      authMode: 'instance-role',
+      bedrock: { region: record.bedrock.intent.inferenceRegion },
+    };
+    record.credentials = { primary: 'amazon-bedrock', providers: [] };
+    saveCloneRecord(record);
+    expect(loadCloneRecord(record.operationId)).toEqual(record);
+  });
   it('privately pins account, target, exact delivery, preview, providers and content result', () => {
     const record = cloneRecordFixture();
     saveCloneRecord(record, true);
