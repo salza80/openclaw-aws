@@ -1,5 +1,6 @@
 import { mkdtemp, realpath, readFile, stat, rm, writeFile, access } from 'node:fs/promises';
 import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { inactiveBedrockConfiguration } from '../../src/openclaw/bedrock-configuration.js';
 import { savedBedrockRecoveryIntent } from '../../src/openclaw/bedrock-recovery-intent.js';
@@ -58,7 +59,7 @@ function plan(): BedrockRecoveryPlan {
 }
 const from = { home: sourceHome, deploymentRegion: sourceRegion, members: [] };
 beforeEach(async () => {
-  home = await realpath(await mkdtemp('/private/tmp/openclaw-recovery-role-'));
+  home = await realpath(await mkdtemp(path.join(tmpdir(), 'openclaw-recovery-role-')));
 });
 afterEach(async () => {
   await rm(home, { recursive: true, force: true });
