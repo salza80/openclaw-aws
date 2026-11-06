@@ -44,6 +44,67 @@ function scratch() {
 
 const bootstrap = () => renderOpenClawBootstrap(options);
 
+describe('inactive restore bootstrap', () => {
+  it('adopts only the same operation and stack marker without overwriting another restore', () => {
+    const directory = scratch();
+    const filename = join(directory, 'marker.json');
+    const operationId = '11111111-1111-1111-1111-111111111111';
+    const script = renderOpenClawBootstrap({ ...options, restoreOperationId: operationId });
+    const block = script.match(/<<'RESTORE_MARKER_JS'\n([\s\S]*?)\nRESTORE_MARKER_JS/)?.[1];
+    expect(block).toBeDefined();
+    const input = block!.replace(
+      "'/home/ubuntu/.openclaw-aws/restore-bootstrap.json'",
+      JSON.stringify(filename),
+    );
+    const run = (id: string, stackId = options.stackId) =>
+      spawnSync(process.execPath, ['-', id, stackId, OPENCLAW_VERSION, OPENCLAW_NODE_VERSION], {
+        input,
+        encoding: 'utf8',
+      });
+    expect(run(operationId).status).toBe(0);
+    const initial = readFileSync(filename, 'utf8');
+    expect(run(operationId).status).toBe(0);
+    expect(run('22222222-2222-2222-2222-222222222222').status).not.toBe(0);
+    expect(run(operationId, `${options.stackId}-other`).status).not.toBe(0);
+    expect(readFileSync(filename, 'utf8')).toBe(initial);
+    expect(statSync(filename).mode & 0o777).toBe(0o600);
+  });
+  it('installs only the pinned runtime and masks the Gateway without onboarding or fetching source keys', () => {
+    const script = renderOpenClawBootstrap({
+      ...options,
+      restoreOperationId: '11111111-1111-1111-1111-111111111111',
+      logGroupName: '/openclaw/restore-test',
+    });
+    const inactive = script.slice(script.indexOf('phase restore-inactive'));
+    expect(inactive).toContain('mask --now openclaw-gateway.service');
+    expect(inactive).toContain('restore-bootstrap.json');
+    expect(inactive).toContain('BOOTSTRAP_READY=1');
+    expect(inactive).not.toContain('fetch_parameter');
+    expect(inactive).not.toContain('wait_for_health');
+    expect(script).not.toContain('onboard --non-interactive');
+    expect(script).not.toContain('gateway install --force');
+    expect(script).toContain(
+      `--version "$OPENCLAW_VERSION" --node-version "$NODE_VERSION" --no-onboard --runtime-only`,
+    );
+    expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
+    expect(Buffer.byteLength(script)).toBeLessThan(16 * 1024 - 256);
+  });
+  it('does not require fresh Cloudflare onboarding inputs for restored native state', () => {
+    expect(() =>
+      renderOpenClawBootstrap({
+        ...options,
+        apiProvider: 'cloudflare-ai-gateway-api-key',
+        restoreOperationId: '11111111-1111-1111-1111-111111111111',
+      }),
+    ).not.toThrow();
+  });
+  it('rejects an invalid restore operation rather than falling through to fresh onboarding', () => {
+    expect(() => renderOpenClawBootstrap({ ...options, restoreOperationId: 'not-a-uuid' })).toThrow(
+      'operation UUID',
+    );
+  });
+});
+
 function expectBefore(script: string, first: string, second: string) {
   const firstIndex = script.indexOf(first);
   const secondIndex = script.indexOf(second);

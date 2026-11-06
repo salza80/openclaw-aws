@@ -29,6 +29,7 @@ const bundled = await build({
   entryPoints: {
     index: 'src/openclaw/aws-s3-plugin/index.ts',
     worker: 'src/openclaw/capture-worker-entry.ts',
+    'restore-worker': 'src/openclaw/restore-worker-entry.ts',
   },
   outdir: directory,
   bundle: true,

@@ -13,13 +13,15 @@ export interface RecoveryArtifact {
   digest: string;
   files: RecoveryArtifactFile[];
 }
-const filenames = [
+export const recoveryArtifactFilenames = [
   'index.js',
   'worker.js',
+  'restore-worker.js',
   'package.json',
   'openclaw.plugin.json',
   'index.js.LEGAL.txt',
   'worker.js.LEGAL.txt',
+  'restore-worker.js.LEGAL.txt',
   'THIRD-PARTY-LICENSES.txt',
 ];
 
@@ -29,7 +31,7 @@ export async function uploadRecoveryArtifact(
   location: { bucket: string; prefix: string },
 ): Promise<RecoveryArtifact> {
   const files = await Promise.all(
-    filenames.map(async (name) => {
+    recoveryArtifactFilenames.map(async (name) => {
       const body = await readFile(
         new URL(`../../dist/native-plugins/aws-s3/${name}`, import.meta.url),
       );

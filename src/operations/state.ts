@@ -19,9 +19,19 @@ interface DeploymentState {
   identity: { stackId: string; account: string; region: string; stackName: string };
   desired: { version: string; nodeVersion: string; provider: string; model?: string };
   observed?: RuntimeObservation;
+  restoredFrom?: { operationId: string; pointId?: string };
 }
 function statePath(ctx: CommandContext): string {
   return path.join(getConfigRoot(), 'deployments', `${ctx.name}.json`);
+}
+/** Remove only the exact historical identity after its AWS resources have been deleted. */
+export function forgetRestoredDeployment(ctx: CommandContext, operationId: string): void {
+  const saved = loadDeploymentState(ctx);
+  if (!saved) return;
+  assertDeploymentTarget(ctx);
+  if (saved.restoredFrom?.operationId !== operationId)
+    throw new AWSError('Local deployment metadata belongs to another operation');
+  fs.unlinkSync(statePath(ctx));
 }
 export function loadDeploymentState(ctx: CommandContext): DeploymentState | undefined {
   const filename = statePath(ctx);
@@ -54,7 +64,11 @@ export function assertDeploymentTarget(ctx: CommandContext, status?: DeploymentS
 export function recordDeploymentState(
   ctx: CommandContext,
   status: DeploymentStatus,
-  options: { newlyCreated?: boolean; observed?: RuntimeObservation } = {},
+  options: {
+    newlyCreated?: boolean;
+    observed?: RuntimeObservation;
+    restoredFrom?: { operationId: string; pointId?: string };
+  } = {},
 ): DeploymentState {
   const stackId = status.stackId;
   if (
@@ -83,15 +97,19 @@ export function recordDeploymentState(
       stackName: ctx.config.stack.name,
     },
     desired:
-      previous && !options.newlyCreated
+      previous && !options.newlyCreated && !options.restoredFrom
         ? previous.desired
         : {
             version: OPENCLAW_VERSION,
             nodeVersion: OPENCLAW_NODE_VERSION,
-            provider: ctx.config.openclaw?.apiProvider ?? 'anthropic-api-key',
+            provider: options.restoredFrom
+              ? 'native-restored'
+              : (ctx.config.openclaw?.apiProvider ?? 'anthropic-api-key'),
             model: ctx.config.openclaw?.model,
           },
     observed: options.observed ?? (options.newlyCreated ? undefined : previous?.observed),
+    restoredFrom:
+      options.restoredFrom ?? (options.newlyCreated ? undefined : previous?.restoredFrom),
   };
   const filename = statePath(ctx);
   fs.mkdirSync(path.dirname(filename), { recursive: true, mode: 0o700 });

@@ -23,6 +23,7 @@ import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
 import { renderOpenClawBootstrap } from '../openclaw/install.js';
+import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
 
 export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
@@ -33,11 +34,19 @@ export interface OpenClawStackProps extends StackProps {
   useDefaultVpc: boolean;
   cloudflareAccountId?: string;
   cloudflareGatewayId?: string;
+  restore?: RestoreBootstrap;
 }
 
 export class OpenClawStack extends Stack {
   constructor(scope: Construct, id: string, props: OpenClawStackProps) {
-    super(scope, id, props);
+    const restore = props.restore ? parseRestoreBootstrap(props.restore) : undefined;
+    super(scope, id, {
+      ...props,
+      tags: {
+        ...props.tags,
+        ...(restore ? { 'openclaw-aws:restore-id': restore.operationId } : {}),
+      },
+    });
 
     const { config, apiProvider, apiKeyParamName, gatewayTokenParamName } = props;
     const gatewayPort = 18789;
@@ -53,7 +62,7 @@ export class OpenClawStack extends Stack {
     // VPC Configuration - Use default or create new based on config
     let vpc: IVpc;
     if (props.useDefaultVpc) {
-      // Use default VPC (exists in every AWS account)
+      // Use the account's default VPC when one is available.
       vpc = Vpc.fromLookup(this, 'DefaultVpc', {
         isDefault: true,
       });
@@ -101,10 +110,20 @@ export class OpenClawStack extends Stack {
       resource: 'parameter',
       resourceName: gatewayTokenParamName.replace(/^\/+/, ''),
     });
+    const secretResources = props.restore
+      ? [
+          this.formatArn({
+            service: 'ssm',
+            resource: 'parameter',
+            resourceName: `openclaw/${config.projectName}/providers/*/api-key`,
+          }),
+          gatewayTokenParamArn,
+        ]
+      : [apiKeyParamArn, gatewayTokenParamArn];
     role.addToPolicy(
       new PolicyStatement({
         actions: ['ssm:GetParameter'],
-        resources: [apiKeyParamArn, gatewayTokenParamArn],
+        resources: secretResources,
       }),
     );
 
@@ -114,7 +133,7 @@ export class OpenClawStack extends Stack {
       new PolicyStatement({
         effect: Effect.DENY,
         actions: ['ssm:GetParameter', 'ssm:GetParameters', 'ssm:GetParameterHistory'],
-        notResources: [apiKeyParamArn, gatewayTokenParamArn],
+        notResources: secretResources,
       }),
     );
     const readinessPolicy = role.addToPrincipalPolicy(
@@ -147,7 +166,7 @@ export class OpenClawStack extends Stack {
       blockDevices: [
         {
           deviceName: '/dev/sda1',
-          volume: BlockDeviceVolume.ebs(30, {
+          volume: BlockDeviceVolume.ebs(props.restore?.volumeGiB ?? 30, {
             volumeType: EbsDeviceVolumeType.GP3,
             encrypted: true,
             deleteOnTermination: true,
@@ -164,6 +183,7 @@ export class OpenClawStack extends Stack {
         stackId: this.stackId,
         logicalResourceId: this.getLogicalId(instance.instance),
         apiProvider,
+        restoreOperationId: props.restore?.operationId,
         model: props.model,
         apiKeyParamName,
         gatewayTokenParamName,

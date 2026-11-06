@@ -330,7 +330,20 @@ openclaw-aws backup verify <point-id> --vault s3://bucket/vault-prefix --region 
 
 Capture briefly stops the Gateway, uses native OpenClaw encryption and full remote verification, then restores the previous service state. It covers the complete native agent roster, declared workspaces, state and recoverable credentials. An incomplete capture never becomes a completed recovery point. Retry an interrupted operation with its printed `--operation-id`; maintenance ownership is never cleared by age. The independently retained vault and key survive destruction of the source instance and source SSM parameters. Save the vault URI and keep operator access to both resources.
 
-The first backup release supports our pinned OpenClaw/Node installation and default native service paths; it does not silently upgrade older instances. Native runtime caches and volatile queues are omitted. External secret commands, uncaptured credential files and unresolved native references prevent full recovery certification. Destroy removes the source's separately attached backup access policy before its IAM role; denied cleanup stops destruction. Vault creation alone does not create a recovery point. See [native backup integration](docs/native-backup-transport.md) for installation, key retention, operator permissions and verification boundaries.
+The first backup release supports our pinned OpenClaw/Node installation and default native service paths; it does not silently upgrade older instances. Native runtime caches and volatile queues are omitted. Restored sessions can still contain interrupted work that OpenClaw would automatically resume; review recovery, channels and schedules before starting restored state. External secret commands, uncaptured credential files and unresolved native references prevent full recovery certification. Destroy removes the source's separately attached backup access policy before its IAM role; denied cleanup stops destruction. Vault creation alone does not create a recovery point. See [native backup integration](docs/native-backup-transport.md) for installation, key retention, operator permissions and verification boundaries.
+
+The restore workflow under development uses an explicit completed backup ID and independent vault:
+
+```sh
+openclaw-aws restore --from <backup-uuid> --vault s3://my-vault/recovery --region eu-central-1 --name recovered --yes
+openclaw-aws restore activate --operation-id <restore-uuid> --yes
+openclaw-aws restore resume --operation-id <restore-uuid> --yes
+openclaw-aws restore inspect --operation-id <restore-uuid> --json
+# Explicitly delete a failed/unwanted target while retaining its backup:
+openclaw-aws restore cleanup --operation-id <restore-uuid> --yes
+```
+
+Staging creates an inactive host; activation starts a validated Gateway with channels, schedules, hooks and restored sessions still paused. Add `--activate` to the first command to request both steps. `--target-region`, `--target-profile`, `--instance-type` and `--volume-gib` override the new target settings within the same account. The disk includes space for staged extraction. Resume verifies an existing operation and reuses its exact code/request versions; it does not create another instance when the original target is missing. Inspection reports the saved operation state. Cleanup verifies operation ownership and removes imported provider keys as well as the Gateway credential; the independent backup remains. After activation, review pairing and integrations in the native dashboard and restore selected archived conversations or create a new thread to deliberately restart reviewed work. See the [reconnection runbook](docs/native-backup-transport.md#reconnection-and-reviewed-work). The fresh-host AWS acceptance drill is deferred; the complete EC2 restore path has not yet been demonstrated.
 
 ## Configuration
 

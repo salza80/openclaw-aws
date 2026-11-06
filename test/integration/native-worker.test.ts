@@ -1,22 +1,39 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  copyFile,
+  mkdtemp,
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
+import { parse as parseDotenv } from 'dotenv';
 import { localS3 } from '../helpers/s3-server.js';
+import { installRestoreLayout, planRestoreLayout } from '../../src/openclaw/restore-layout.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 describe('actual native host capture adapter', () => {
   it('preserves native settings, uses instance-role storage despite model credentials and verifies the remote archive', async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), 'openclaw-worker-native-'));
+    const directory = await realpath(await mkdtemp(path.join(tmpdir(), 'openclaw-worker-native-')));
     const server = await localS3();
-    const state = path.join(directory, 'state');
+    const state = path.join(directory, '.openclaw');
     const workspace = path.join(directory, 'workspace');
+    const researchWorkspace = path.join(directory, 'research-workspace');
+    const researchAgent = path.join(directory, 'research-agent');
     const configPath = path.join(state, 'openclaw.json');
     await mkdir(state);
     await mkdir(workspace);
+    await mkdir(researchWorkspace);
+    await mkdir(researchAgent);
     await writeFile(path.join(workspace, 'work.txt'), 'member-state');
+    await writeFile(path.join(researchWorkspace, 'research.txt'), 'research-state');
+    await writeFile(path.join(researchAgent, 'memory.txt'), 'custom-agent-state');
     await writeFile(
       path.join(state, '.env'),
       'OPENROUTER_API_KEY=fixture-provider\nAWS_ACCESS_KEY_ID=MODELKEY\nAWS_SECRET_ACCESS_KEY=model-secret\n',
@@ -26,7 +43,14 @@ describe('actual native host capture adapter', () => {
       agents: {
         ownership: 'explicit',
         defaults: { model: { primary: 'openrouter/fixture-model' } },
-        entries: { main: { workspace } },
+        entries: {
+          main: { workspace },
+          researcher: {
+            workspace: researchWorkspace,
+            agentDir: researchAgent,
+            model: 'openrouter/research-model',
+          },
+        },
       },
       storage: {
         locations: {
@@ -68,15 +92,23 @@ describe('actual native host capture adapter', () => {
     const script = `
       import {nativeBackupHost} from ${JSON.stringify(path.join(root, 'dist/openclaw/native-backup-host.js'))};
       import {captureInstallation} from ${JSON.stringify(path.join(root, 'dist/openclaw/capture-worker.js'))};
+      import {stageNativeRestore} from ${JSON.stringify(path.join(root, 'dist/openclaw/native-restore-host.js'))};
       import {createRequire} from 'node:module'; const {S3Client,HeadObjectCommand,GetObjectCommand}=createRequire(${JSON.stringify(path.join(root, 'package.json'))})('@aws-sdk/client-s3');
       const job=${JSON.stringify(job)};
+      const sessions=await import(${JSON.stringify(path.join(root, 'node_modules/openclaw/dist/plugin-sdk/session-store-runtime.js'))});
+      const storePath=${JSON.stringify(path.join(state, 'agents/main/agent/openclaw-agent.sqlite'))};
+      await sessions.upsertSessionEntry({agentId:'main',storePath,sessionKey:'agent:main:recovered-history',entry:{sessionId:'22222222-2222-2222-2222-222222222222',updatedAt:Date.now(),status:'interrupted',abortedLastRun:true}});
       const host=await nativeBackupHost(job,{nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},gateway:{inspect:async()=> 'inactive',stop:async()=>{throw Error('Inactive Gateway must not be stopped')},start:async()=>{throw Error('Inactive Gateway must not be started')}}});
       for(const key of ['prepareStorage','members','capture','credentials','verify']){const method=host[key];host[key]=async(...args)=>{try{return await method(...args)}catch(error){console.error('Fixture phase '+key+': '+error.message);throw error}}}
       const client=new S3Client({region:job.source.region,credentials:{accessKeyId:'FIXTUREKEYOPERATOR',secretAccessKey:'fixture-secret'}});
       const common={Bucket:job.settings.bucket,ExpectedBucketOwner:job.source.account};
       const pin=async key=>{const r=await client.send(new HeadObjectCommand({...common,Key:job.settings.prefix+'/'+key}));return{versionId:r.VersionId,storedBytes:r.ContentLength}};
-      const storage={identify:async()=>{},passphrase:async()=> 'fixture-vault-key\\0\\n',marker:async id=>{const p=await pin('openclaw-storage.json'); const r=await client.send(new GetObjectCommand({...common,Key:job.settings.prefix+'/openclaw-storage.json',VersionId:p.versionId}));if(JSON.parse(await r.Body.transformToString()).locationId!==id)throw Error('marker mismatch');return p},archive:async capture=>pin('backups/'+job.namespace+'/'+capture.location.key),publish:async result=>{console.log(JSON.stringify(result));return{key:'capture.json',versionId:'fixture-result'}},close:()=>client.destroy()};
-      try{await captureInstallation(job,host,storage,{enter:async record=>record,release:async()=>{}})}finally{storage.close()}
+      let captured;
+      const storage={identify:async()=>{},passphrase:async()=> 'fixture-vault-key\\0\\n',marker:async id=>{const p=await pin('openclaw-storage.json'); const r=await client.send(new GetObjectCommand({...common,Key:job.settings.prefix+'/openclaw-storage.json',VersionId:p.versionId}));if(JSON.parse(await r.Body.transformToString()).locationId!==id)throw Error('marker mismatch');return p},archive:async capture=>pin('backups/'+job.namespace+'/'+capture.location.key),publish:async result=>{captured=result;console.log(JSON.stringify(result));return{key:'capture.json',versionId:'fixture-result'}},close:()=>client.destroy()};
+      try{await captureInstallation(job,host,storage,{enter:async record=>record,release:async()=>{}});
+        const staged=await stageNativeRestore({job,capture:captured,passphrase:'fixture-vault-key\\0\\n',pluginDirectory:job.pluginDirectory,stagingDirectory:${JSON.stringify(path.join(directory, 'restore-stage'))},nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},home:${JSON.stringify(directory)}});
+        if(staged.moves.length!==captured.capture.assets.length)throw Error('Native staged inventory mismatch');
+      }finally{storage.close()}
     `;
     try {
       const result = await execa(process.execPath, ['--input-type=module', '-e', script], {
@@ -94,26 +126,122 @@ describe('actual native host capture adapter', () => {
           NO_COLOR: '1',
         },
         extendEnv: false,
-        timeout: 120000,
+        timeout: 180000,
         maxBuffer: 1024 * 1024,
       });
       const captured = JSON.parse(result.stdout);
       expect(captured.verification.ok).toBe(true);
       expect(captured.gateway).toEqual({ initial: 'inactive', restored: true });
       expect(captured.members[0].id).toBe('main');
+      expect(captured.members.map((member: { id: string }) => member.id).sort()).toEqual([
+        'main',
+        'researcher',
+      ]);
       expect(captured.credentials.sourceEnvironmentIncluded).toBe(true);
       expect(result.stdout).not.toContain('model-secret');
       expect(result.stdout).not.toContain('fixture-provider');
       expect(server.authorizations.some((value) => value.includes('MODELKEY'))).toBe(false);
+      // Discard the source tree and source process. Adopt only the actual native
+      // extraction with fresh installer-owned runtime paths on the same filesystem.
+      await rename(state, path.join(directory, 'original-state'));
+      await rename(workspace, path.join(directory, 'original-workspace'));
+      await rename(researchWorkspace, path.join(directory, 'original-research-workspace'));
+      await rename(researchAgent, path.join(directory, 'original-research-agent'));
+      await mkdir(state);
+      await mkdir(path.join(state, 'tools'));
+      await mkdir(path.join(state, 'bin'));
+      await mkdir(path.join(state, 'logs'));
+      await writeFile(path.join(state, 'bin/openclaw'), 'fresh-runtime-wrapper');
+      const stagingDirectory = path.join(directory, 'restore-stage');
+      const manifest = JSON.parse(
+        await readFile(
+          path.join(stagingDirectory, captured.verification.archiveRoot, 'manifest.json'),
+          'utf8',
+        ),
+      );
+      const moves = planRestoreLayout({
+        manifest,
+        capture: captured,
+        stagingDirectory,
+        home: directory,
+      });
+      await installRestoreLayout({
+        operationId: job.operationId,
+        moves,
+        journal: path.join(directory, 'restore-layout.json'),
+        home: directory,
+      });
+      const restoredPlugin = path.join(directory, '.openclaw-aws/plugins', 'c'.repeat(64));
+      await mkdir(restoredPlugin, { recursive: true, mode: 0o700 });
+      for (const filename of [
+        'index.js',
+        'index.js.LEGAL.txt',
+        'package.json',
+        'openclaw.plugin.json',
+        'THIRD-PARTY-LICENSES.txt',
+      ])
+        await copyFile(
+          path.join(root, 'dist/native-plugins/aws-s3', filename),
+          path.join(restoredPlugin, filename),
+        );
+      const reconciliation = `
+        import {reconcileNativeRestore} from ${JSON.stringify(path.join(root, 'dist/openclaw/restore-reconciliation.js'))};
+        const job=${JSON.stringify(job)},capture=${JSON.stringify(captured)},imported=[];
+        const reconciliationOptions={job,capture,owner:{deploymentName:'restored',deploymentId:'arn:aws:cloudformation:eu-central-1:123456789012:stack/OpenclawStack-restored/target-guid',operationId:job.operationId},gatewayToken:'a'.repeat(48),pluginDirectory:${JSON.stringify(restoredPlugin)},nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},assertInactive:async()=>{},ssm:{send:async command=>{imported.push(command.input);return{Version:1}}}};
+        const reconciled=await reconcileNativeRestore(reconciliationOptions);
+        if(reconciled.members.length!==capture.members.length||imported.length!==1||imported[0].Name!=='/openclaw/restored/providers/openrouter-api-key/api-key'||imported[0].Value!=='fixture-provider')throw Error('Native credential reconciliation mismatch');
+        const sessions=await import(${JSON.stringify(path.join(root, 'node_modules/openclaw/dist/plugin-sdk/session-store-runtime.js'))});
+        const held=await sessions.getSessionEntryAsync({agentId:'main',storePath:${JSON.stringify(path.join(state, 'agents/main/agent/openclaw-agent.sqlite'))},sessionKey:'agent:main:recovered-history'});
+        if(reconciled.sessionHold.held!==1||held?.sessionId!=='22222222-2222-2222-2222-222222222222'||!held?.archivedAt)throw Error('Native restored session hold mismatch');
+        const resumed=await reconcileNativeRestore(reconciliationOptions);
+        if(resumed.sessionHold.held!==1||resumed.sessionHold.preexistingIncomplete!==0)throw Error('Native session hold retry changed ownership');
+      `;
+      await execa(process.execPath, ['--input-type=module', '-e', reconciliation], {
+        env: {
+          HOME: directory,
+          PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+          TMPDIR: directory,
+          OPENCLAW_STATE_DIR: state,
+          OPENCLAW_CONFIG_PATH: configPath,
+          NO_COLOR: '1',
+          AWS_CONFIG_FILE: path.join(directory, 'empty-config'),
+          AWS_SHARED_CREDENTIALS_FILE: path.join(directory, 'empty-credentials'),
+          AWS_EC2_METADATA_DISABLED: 'true',
+        },
+        extendEnv: false,
+        timeout: 180000,
+        maxBuffer: 1024 * 1024,
+      });
       const after = JSON.parse(await readFile(configPath, 'utf8'));
       expect(after.agents).toEqual(original.agents);
       expect(after.storage.locations.existing).toEqual(original.storage.locations.existing);
-      expect(await readFile(path.join(state, '.env'), 'utf8')).toContain(
-        'AWS_ACCESS_KEY_ID=MODELKEY',
+      expect(after.gateway.auth).toMatchObject({
+        mode: 'token',
+        token: 'a'.repeat(48),
+        allowTailscale: false,
+      });
+      expect(after.cron.enabled).toBe(false);
+      expect(after.plugins.load.paths).toContain(restoredPlugin);
+      expect(after.plugins.load.paths).not.toContain(job.pluginDirectory);
+      expect(await readFile(path.join(state, 'bin/openclaw'), 'utf8')).toBe(
+        'fresh-runtime-wrapper',
       );
+      expect(await readFile(path.join(workspace, 'work.txt'), 'utf8')).toBe('member-state');
+      expect(await readFile(path.join(researchWorkspace, 'research.txt'), 'utf8')).toBe(
+        'research-state',
+      );
+      expect(await readFile(path.join(researchAgent, 'memory.txt'), 'utf8')).toBe(
+        'custom-agent-state',
+      );
+      expect(parseDotenv(await readFile(path.join(state, '.env')))).toMatchObject({
+        AWS_ACCESS_KEY_ID: 'MODELKEY',
+        AWS_SECRET_ACCESS_KEY: 'model-secret',
+        OPENROUTER_API_KEY: 'fixture-provider',
+        OPENCLAW_GATEWAY_TOKEN: 'a'.repeat(48),
+      });
     } finally {
       await server.close();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 150000);
+  }, 420000);
 });

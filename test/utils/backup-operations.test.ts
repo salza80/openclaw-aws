@@ -229,6 +229,17 @@ describe('portable backup operations', () => {
     );
     expect(mocks.source).not.toHaveBeenCalled();
   });
+  it('can rescue a pinned point when current vault write-security settings have changed', async () => {
+    metadata.set(`receipts/${backupId}.json`, backupReceipt);
+    mocks.security.mockRejectedValueOnce(
+      new Error('Current vault settings no longer permit new backups'),
+    );
+    await expect(verifyBackup(target, backupVault.uri, backupId)).resolves.toMatchObject({
+      verified: true,
+    });
+    expect(mocks.security).not.toHaveBeenCalled();
+    expect(mocks.put).not.toHaveBeenCalled();
+  });
   it('uses the native catalog to confirm completed archive discovery', async () => {
     metadata.set(`receipts/${backupId}.json`, backupReceipt);
     mocks.helper.mockResolvedValueOnce({ backups: [{ key: backupCapture.capture.location.key }] });

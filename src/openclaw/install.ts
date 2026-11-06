@@ -13,6 +13,8 @@ export interface OpenClawBootstrapOptions {
   logGroupName?: string;
   cloudflareAccountId?: string;
   cloudflareGatewayId?: string;
+  /** An inactive runtime target; ordinary onboarding must never touch restored state. */
+  restoreOperationId?: string;
 }
 
 // Public config values remain compatible while upstream auth choices and env names evolve.
@@ -51,11 +53,18 @@ function shellQuote(value: string): string {
 
 /** Render the same packaged bootstrap asset from either src/ or dist/. */
 export function renderOpenClawBootstrap(options: OpenClawBootstrapOptions): string {
+  if (
+    options.restoreOperationId !== undefined &&
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(
+      options.restoreOperationId,
+    )
+  )
+    throw new Error('Restore bootstrap requires a valid operation UUID');
   const setup = OPENCLAW_PROVIDER_SETUP[options.apiProvider];
   if (!setup) throw new Error(`Unsupported OpenClaw provider: ${options.apiProvider}`);
   const authArgs = ['--auth-choice', setup.authChoice];
   if (setup.tokenProvider) authArgs.push('--token-provider', setup.tokenProvider);
-  if (options.apiProvider === 'cloudflare-ai-gateway-api-key') {
+  if (options.apiProvider === 'cloudflare-ai-gateway-api-key' && !options.restoreOperationId) {
     if (!options.cloudflareAccountId?.trim() || !options.cloudflareGatewayId?.trim()) {
       throw new Error('Cloudflare AI Gateway requires both account and gateway IDs');
     }
@@ -95,6 +104,7 @@ systemctl enable amazon-cloudwatch-agent
 /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/cloudwatch-agent.json`
     : '';
   const replacements: Record<string, string> = {
+    RESTORE_OPERATION_ID: shellQuote(options.restoreOperationId ?? ''),
     REGION: shellQuote(options.region),
     STACK_ID: shellQuote(options.stackId),
     LOGICAL_RESOURCE_ID: shellQuote(options.logicalResourceId),
@@ -115,6 +125,17 @@ systemctl enable amazon-cloudwatch-agent
   const template = readFileSync(
     new URL('../../templates/openclaw/bootstrap.sh', import.meta.url),
     'utf8',
+  ).replace(
+    '@@GATEWAY_SETUP@@',
+    readFileSync(
+      new URL(
+        options.restoreOperationId
+          ? '../../templates/openclaw/bootstrap-restore.sh'
+          : '../../templates/openclaw/bootstrap-fresh.sh',
+        import.meta.url,
+      ),
+      'utf8',
+    ),
   );
   const rendered = template.replace(/@@([A-Z_]+)@@/g, (_, name: string) => {
     if (!(name in replacements)) throw new Error(`Unknown bootstrap placeholder: ${name}`);

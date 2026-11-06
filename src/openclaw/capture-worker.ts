@@ -248,7 +248,7 @@ export async function captureInstallation(
       verification,
       objects: { 'openclaw-storage.json': marker, [archivePath]: archive },
       omissions: [
-        'Native volatile queues, logs and managed runtime caches are omitted; interrupted work is not replayed by this backup.',
+        'Native volatile queues, logs and managed runtime caches are omitted; restored session recovery and scheduled work require deliberate activation review.',
       ],
       gateway: { initial: ownership.initial, restored: false },
     };

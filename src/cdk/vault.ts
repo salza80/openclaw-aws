@@ -1,7 +1,7 @@
 import { CfnOutput, Duration, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';
 import { Bucket, BlockPublicAccess, BucketEncryption, ObjectOwnership } from 'aws-cdk-lib/aws-s3';
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
-import { CfnRolePolicy, PolicyDocument, PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { CfnRolePolicy, PolicyDocument, PolicyStatement, Effect } from 'aws-cdk-lib/aws-iam';
 import type { Construct } from 'constructs';
 
 /** An independent stack: source deployment destruction cannot delete recovery state. */
@@ -42,6 +42,9 @@ export interface RecoveryAccessProps extends StackProps {
   keyArn: string;
   s3KmsKeyArn?: string;
   secretKmsKeyArn?: string;
+  mode?: 'capture' | 'read';
+  recoveryRegion?: string;
+  secretImport?: { deploymentName: string; deploymentId: string; operationId: string };
 }
 
 /** Attach only after verifying this role belongs to the selected source stack.
@@ -61,12 +64,22 @@ export class RecoveryAccessStack extends Stack {
       props.dataPrefix.split('/').some((part) => !part || part === '.' || part === '..')
     )
       throw new Error('Invalid recovery access scope');
+    if (props.mode !== undefined && !['capture', 'read'].includes(props.mode))
+      throw new Error('Invalid recovery access mode');
+    const readOnly = props.mode === 'read';
+    const recoveryRegion = props.recoveryRegion ?? props.env?.region;
+    if (
+      !recoveryRegion ||
+      !/^[a-z]{2}(?:-[a-z0-9]+)+-\d+$/.test(recoveryRegion) ||
+      (!readOnly && recoveryRegion !== props.env?.region)
+    )
+      throw new Error('Recovery access region is invalid for this mode');
     const keyParts = props.keyArn.split(':');
     if (
       !/^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$/.test(
         props.keyArn,
       ) ||
-      keyParts[3] !== props.env?.region ||
+      keyParts[3] !== recoveryRegion ||
       keyParts[4] !== props.env?.account
     )
       throw new Error('Recovery key must belong to the selected AWS account and region');
@@ -85,20 +98,28 @@ export class RecoveryAccessStack extends Stack {
             's3:GetObjectVersion',
             's3:GetObjectTagging',
             's3:GetObjectVersionTagging',
-            's3:PutObject',
-            's3:PutObjectTagging',
-            's3:AbortMultipartUpload',
-            's3:ListMultipartUploadParts',
+            ...(readOnly
+              ? []
+              : [
+                  's3:PutObject',
+                  's3:PutObjectTagging',
+                  's3:AbortMultipartUpload',
+                  's3:ListMultipartUploadParts',
+                ]),
           ],
           resources: [`${bucketArn}/${prefix}/*`],
         }),
-        new PolicyStatement({
-          actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
-          resources: [
-            `${bucketArn}/${prefix}/_probes/*`,
-            `${bucketArn}/${prefix}/.openclaw-probe-*`,
-          ],
-        }),
+        ...(readOnly
+          ? []
+          : [
+              new PolicyStatement({
+                actions: ['s3:DeleteObject', 's3:DeleteObjectVersion'],
+                resources: [
+                  `${bucketArn}/${prefix}/_probes/*`,
+                  `${bucketArn}/${prefix}/.openclaw-probe-*`,
+                ],
+              }),
+            ]),
         new PolicyStatement({
           actions: ['secretsmanager:GetSecretValue'],
           resources: [props.keyArn],
@@ -121,22 +142,64 @@ export class RecoveryAccessStack extends Stack {
       const keyParts = keyArn.split(':');
       if (
         !/^arn:[a-z0-9-]+:kms:[a-z0-9-]+:\d{12}:key\/[A-Za-z0-9-]+$/.test(keyArn) ||
-        keyParts[3] !== props.env?.region ||
+        keyParts[3] !== recoveryRegion ||
         keyParts[4] !== props.env?.account
       )
         throw new Error('Recovery KMS key must belong to the selected AWS account and region');
       document.addStatements(
         new PolicyStatement({
           actions:
-            service === 's3'
+            service === 's3' && !readOnly
               ? ['kms:Decrypt', 'kms:Encrypt', 'kms:GenerateDataKey']
               : ['kms:Decrypt'],
           resources: [keyArn],
           conditions: {
-            StringEquals: { 'kms:ViaService': `${service}.${this.region}.${this.urlSuffix}` },
+            StringEquals: { 'kms:ViaService': `${service}.${recoveryRegion}.${this.urlSuffix}` },
             StringLike: context,
           },
         }),
+      );
+    }
+    if (props.secretImport) {
+      const { deploymentName, deploymentId, operationId } = props.secretImport;
+      if (
+        !readOnly ||
+        !/^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/.test(deploymentName) ||
+        !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operationId) ||
+        !deploymentId.startsWith(
+          `arn:${keyParts[1]}:cloudformation:${props.env?.region}:${props.env?.account}:stack/OpenclawStack-${deploymentName}/`,
+        ) ||
+        !/^[A-Za-z0-9-]+$/.test(deploymentId.split('/').at(-1) ?? '')
+      )
+        throw new Error('Secret import must belong to this restore target and operation');
+      const resource = this.formatArn({
+        service: 'ssm',
+        resource: 'parameter',
+        resourceName: `openclaw/${deploymentName}/providers/*/api-key`,
+      });
+      document.addStatements(
+        new PolicyStatement({
+          actions: ['ssm:PutParameter', 'ssm:AddTagsToResource'],
+          resources: [resource],
+          conditions: {
+            StringEquals: {
+              'aws:RequestTag/openclaw-aws:deployment-id': deploymentId,
+              'aws:RequestTag/openclaw-aws:restore-id': operationId,
+            },
+            'ForAllValues:StringEquals': {
+              'aws:TagKeys': ['openclaw-aws:deployment-id', 'openclaw-aws:restore-id'],
+            },
+          },
+        }),
+        // AWS documents ssm:Overwrite as a String condition, not a Bool.
+        // https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-policy-conditions.html
+        new PolicyStatement({
+          effect: Effect.DENY,
+          actions: ['ssm:PutParameter'],
+          resources: [resource],
+          conditions: { StringEquals: { 'ssm:Overwrite': 'true' } },
+        }),
+        new PolicyStatement({ actions: ['ssm:ListTagsForResource'], resources: [resource] }),
       );
     }
     new CfnRolePolicy(this, 'RecoveryAccess', {
