@@ -16,7 +16,10 @@ const mocks = vi.hoisted(() => ({
   inspectAccess: vi.fn(),
 }));
 vi.mock('../../src/cli/utils/config.js', () => ({ getConfigRoot: () => mocks.root }));
-vi.mock('../../src/aws/recovery-source.js', () => ({ inspectRecoverySource: mocks.source }));
+vi.mock('../../src/aws/recovery-source.js', async (original) => ({
+  ...(await original<object>()),
+  inspectRecoverySource: mocks.source,
+}));
 vi.mock('../../src/aws/model-artifact.js', async (original) => ({
   ...(await original<object>()),
   packagedModelArtifact: mocks.artifact,
@@ -48,6 +51,8 @@ import {
   cancelBedrockConnection,
   loadBedrockConnection,
 } from '../../src/operations/bedrock.js';
+import { bedrockAccessStackName } from '../../src/aws/recovery-source.js';
+import { loadDeploymentState } from '../../src/operations/state.js';
 import { controlFencePath, readControlFence } from '../../src/operations/control-fence.js';
 import { bedrockJob } from '../helpers/bedrock-operation.js';
 import type { BedrockJob } from '../../src/openclaw/bedrock-contract.js';
@@ -93,10 +98,9 @@ beforeEach(async () => {
   );
   mocks.union.mockImplementation(async (_ctx, value) => value);
   mocks.preview.mockResolvedValue({
-    stackName: 'OpenclawBedrockAccess-fixture',
-    stackId:
-      'arn:aws:cloudformation:eu-central-1:123456789012:stack/OpenclawBedrockAccess-fixture/id',
-    changeSetId: 'fixture-changeset',
+    stackName: bedrockAccessStackName(source.stackId, source.role.id),
+    stackId: `arn:aws:cloudformation:eu-central-1:123456789012:stack/${bedrockAccessStackName(source.stackId, source.role.id)}/id`,
+    changeSetId: 'arn:aws:cloudformation:eu-central-1:123456789012:changeSet/bedrock/fixture',
     source,
     templateDigest: 'a'.repeat(64),
     noChanges: false,
@@ -181,6 +185,11 @@ describe('shared Bedrock connection controller', () => {
       signal: undefined,
     });
     expect(await readControlFence(plan.job.target)).toBeUndefined();
+    expect(loadDeploymentState(ctx)?.bedrockConnection).toMatchObject({
+      authMode: 'instance-role',
+      inferenceRegion: 'eu-central-1',
+      operationId: plan.job.operationId,
+    });
     expect(
       JSON.parse(
         await readFile(

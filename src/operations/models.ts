@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { open, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -35,7 +35,17 @@ import { privateModelJson } from '../openclaw/model-journal.js';
 import type { ModelWorkerMode } from '../openclaw/model-worker.js';
 import { assertDirectoryChain } from '../openclaw/restore-layout.js';
 import { withDeploymentLock } from './lock.js';
-import { recordDeploymentState } from './state.js';
+import { recordDeploymentState, loadDeploymentState } from './state.js';
+import {
+  inspectBedrockAccess,
+  previewBedrockAccess,
+  applyBedrockAccess,
+  discardBedrockAccessPreview,
+} from '../aws/bedrock-access.js';
+import { extendBedrockSelection } from '../aws/bedrock-selection.js';
+import { resolveBedrockRoute } from '../aws/bedrock-routes.js';
+import { parseBedrockGrantPlan, type BedrockGrantPlan } from './bedrock-grants.js';
+import { observeBedrockOnSource } from './bedrock.js';
 import {
   controlFencePath,
   readControlFence,
@@ -50,6 +60,7 @@ export interface ModelChangePlan {
   job: ModelJob;
   artifact: ModelArtifactPin;
   profile: RecoverySource['profile'];
+  bedrock?: BedrockGrantPlan;
   before: {
     configuredPrimary: string | null;
     effectiveForNewSessions: string;
@@ -63,11 +74,12 @@ const exact = (value: Record<string, unknown>, keys: string[]) => {
 };
 export function parseModelChangePlan(value: unknown): ModelChangePlan {
   const row = modelObject(value);
-  exact(row, ['schemaVersion', 'kind', 'job', 'artifact', 'profile', 'before']);
+  exact(row, ['schemaVersion', 'kind', 'job', 'artifact', 'profile', 'before', 'bedrock']);
   if (row.schemaVersion !== 1 || row.kind !== 'model-intent')
     throw new Error('Invalid model intent version');
   const job = parseModelJob(row.job);
   if (job.action.kind !== 'set') throw new Error('Model intent requires a mutation request');
+  const selectedModel = job.action.model;
   const artifact = parseModelArtifactPin(row.artifact);
   const profile = modelObject(row.profile);
   exact(profile, ['arn', 'id']);
@@ -88,12 +100,24 @@ export function parseModelChangePlan(value: unknown): ModelChangePlan {
   const checkedAt = modelText(before.checkedAt, 64);
   if (typeof before.reloadOff !== 'boolean' || !Number.isFinite(Date.parse(checkedAt)))
     throw new Error('Invalid model preview observation');
+  const bedrock =
+    row.bedrock === undefined
+      ? undefined
+      : parseBedrockGrantPlan(row.bedrock, job.target, { arn, id });
+  if (
+    bedrock &&
+    (!job.bedrockRole ||
+      !selectedModel.startsWith('amazon-bedrock/') ||
+      !bedrock.selection.routes.some((route) => route.model === selectedModel))
+  )
+    throw new Error('Bedrock permission preview does not include the selected native model');
   return {
     schemaVersion: 1,
     kind: 'model-intent',
     job,
     artifact,
     profile: { arn, id },
+    ...(bedrock ? { bedrock } : {}),
     before: { configuredPrimary, effectiveForNewSessions, reloadOff: before.reloadOff, checkedAt },
   };
 }
@@ -135,7 +159,7 @@ function jobFor(
     },
     scope: nativeModelScope(options.scope),
     action: options.action,
-    bedrockRole: options.bedrockRole ?? false,
+    bedrockRole: options.bedrockRole ?? Boolean(loadDeploymentState(ctx)?.bedrockConnection),
     runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
   });
 }
@@ -213,16 +237,42 @@ export async function prepareModelChange(
   if (options.operationId !== undefined) recordPath(options.operationId);
   return withDeploymentLock(ctx, async () => {
     const source = await inspectRecoverySource(ctx);
-    const artifact = await pinnedArtifact(ctx, source, options.signal);
+    const usesBedrock = model.startsWith('amazon-bedrock/');
     const read = jobFor(ctx, source, {
       ...options,
+      ...(usesBedrock ? { bedrockRole: true } : {}),
       scope,
       action: { kind: 'current' },
       operationId: undefined,
     });
+    const pending = await readControlFence(read.target);
+    if (pending)
+      throw new Error(
+        `Native control operation ${pending.operationId} is pending; inspect/reconcile it before another model preview`,
+      );
+    const artifact = await pinnedArtifact(ctx, source, options.signal);
+    const connection = usesBedrock
+      ? await inspectBedrockAccess(ctx, { signal: options.signal })
+      : undefined;
+    if (usesBedrock && !connection)
+      throw new Error(
+        'Bedrock has no verified managed access policy; run providers enable-bedrock before selecting its models',
+      );
     const observed = await dispatch(ctx, read, artifact, 'execute', options.signal);
+    if (connection) {
+      const provider = await observeBedrockOnSource(
+        ctx,
+        source,
+        artifact,
+        connection.discoveryRegion,
+        options.signal,
+      );
+      if (provider.configHash !== observed.configHash)
+        throw new Error('Native provider configuration changed during model preview');
+    }
     const job = jobFor(ctx, source, {
       ...options,
+      ...(usesBedrock ? { bedrockRole: true } : {}),
       scope,
       action: {
         kind: 'set',
@@ -235,7 +285,7 @@ export async function prepareModelChange(
       throw new Error(
         'Gateway reload is off. Repeat the preview with explicit --allow-restart before approving this model change',
       );
-    const plan = parseModelChangePlan({
+    const basePlan = parseModelChangePlan({
       schemaVersion: 1,
       kind: 'model-intent',
       job,
@@ -248,7 +298,24 @@ export async function prepareModelChange(
         checkedAt: observed.checkedAt,
       },
     });
-    modelRemoteCommand({ job: plan.job, pin: plan.artifact, mode: 'execute' });
+    modelRemoteCommand({ job: basePlan.job, pin: basePlan.artifact, mode: 'execute' });
+    let bedrock: BedrockGrantPlan | undefined;
+    if (connection) {
+      const route = await resolveBedrockRoute(
+        ctx.target,
+        model,
+        connection.discoveryRegion,
+        options.signal,
+      );
+      const selection = extendBedrockSelection(
+        connection,
+        { discoveryRegion: connection.discoveryRegion, routes: [route] },
+        { account: ctx.target.account, partition: job.target.stackId.split(':')[1] },
+      );
+      const access = await previewBedrockAccess(ctx, selection, { signal: options.signal });
+      bedrock = parseBedrockGrantPlan({ selection, access }, job.target, source.profile);
+    }
+    const plan = bedrock ? parseModelChangePlan({ ...basePlan, bedrock }) : basePlan;
     return plan;
   });
 }
@@ -295,7 +362,12 @@ async function saveIntent(plan: ModelChangePlan) {
 const intentOwner = (plan: ModelChangePlan): ControlFence => ({
   schemaVersion: 1,
   operationId: plan.job.operationId,
-  requestDigest: modelJobDigest(plan.job),
+  requestDigest: plan.bedrock
+    ? createHash('sha256')
+        .update(modelJobDigest(plan.job))
+        .update(JSON.stringify(plan.bedrock))
+        .digest('hex')
+    : modelJobDigest(plan.job),
   artifactDigest: plan.artifact.digest,
 });
 async function pendingModel(plan: ModelChangePlan) {
@@ -340,6 +412,14 @@ export async function applyModelChange(
 ) {
   const plan = parseModelChangePlan(input);
   assertContext(ctx, plan.job);
+  if (
+    plan.job.action.kind === 'set' &&
+    plan.job.action.model.startsWith('amazon-bedrock/') &&
+    !plan.bedrock
+  )
+    throw new Error(
+      'Bedrock model changes require a verified permission preview; prepare a fresh model change',
+    );
   return withDeploymentLock(ctx, async () => {
     assertSource(await inspectRecoverySource(ctx), plan);
     if (
@@ -361,10 +441,29 @@ export async function applyModelChange(
     await saveIntent(plan);
     await writePrivateRecord(controlFencePath(plan.job.target), intentOwner(plan));
     try {
+      if (plan.bedrock) {
+        await applyBedrockAccess(ctx, plan.bedrock.selection, plan.bedrock.access, {
+          signal: options.signal,
+        });
+        await writePrivateRecord(
+          path.join(path.dirname(recordPath(plan.job.operationId)), 'iam-applied.json'),
+          { ...intentOwner(plan), templateDigest: plan.bedrock.access.templateDigest },
+          true,
+        );
+      }
       const result = await dispatch(ctx, plan.job, plan.artifact, 'execute', options.signal);
       await settleModelIntent(plan, result);
       recordConfirmedSelection(ctx, plan, result);
-      return result;
+      return plan.bedrock
+        ? {
+            ...result,
+            bedrockAccess: {
+              stackName: plan.bedrock.access.stackName,
+              templateDigest: plan.bedrock.access.templateDigest,
+              invocationGrantsRetained: true,
+            },
+          }
+        : result;
     } catch (error) {
       throw new ModelOperationError(
         plan.job.operationId,
@@ -372,6 +471,13 @@ export async function applyModelChange(
       );
     }
   });
+}
+/** Cancel only this model preview's unexecuted auxiliary IAM review. */
+export async function cancelModelChange(ctx: CommandContext, input: ModelChangePlan) {
+  const plan = parseModelChangePlan(input);
+  assertContext(ctx, plan.job);
+  if (!plan.bedrock) return;
+  return withDeploymentLock(ctx, () => discardBedrockAccessPreview(ctx, plan.bedrock!.access));
 }
 export async function inspectModelOperation(
   ctx: CommandContext,
@@ -402,6 +508,19 @@ export async function inspectModelOperation(
             ? 'accept-previous'
             : undefined;
     if (!mode) throw new Error('Choose requested or previous model state for reconciliation');
+    if (options.accept === 'requested' && plan.bedrock) {
+      const current = await inspectBedrockAccess(ctx, { signal: options.signal });
+      if (
+        !current ||
+        current.discoveryRegion !== plan.bedrock.selection.discoveryRegion ||
+        !plan.bedrock.selection.routes.every((route) =>
+          current.routes.some((existing) => isDeepStrictEqual(existing, route)),
+        )
+      )
+        throw new Error(
+          'Approved Bedrock model permissions are not currently verified; inspect the auxiliary IAM policy before accepting this selection',
+        );
+    }
     const result = await dispatch(ctx, plan.job, plan.artifact, mode, options.signal);
     await settleModelIntent(plan, result);
     if (options.accept === 'requested') recordConfirmedSelection(ctx, plan, result);

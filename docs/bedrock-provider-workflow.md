@@ -1,6 +1,21 @@
-# Existing-host Bedrock provider workflow
+# Bedrock provider workflow
 
 The provider operation adds optional instance-role authentication to a compatible existing OpenClaw installation. It preserves OpenRouter and other connections, existing model selections, credentials, agent settings and session overrides. Selecting a model is a separate explicit operation; installing a provider does not certify that paid inference will succeed.
+
+## Fresh creation
+
+```sh
+openclaw-aws create research --provider bedrock --region eu-central-1 \
+  --bedrock-region eu-central-1 --model 'amazon-bedrock/MODEL_OR_PROFILE' --yes
+```
+
+Use an available AWS model/profile identifier. Creation resolves its exact route before provisioning and displays the official plugin integrity, capabilities, restart consent and invocation/backing ARNs. `--yes` approves that setup as part of creation. AWS deployment and inference regions can differ. No model-provider API key or unused API-key parameter is created; Gateway authentication remains separate.
+
+Once fresh installation and SSM checks finish, provisioning releases its lock and calls the shared provider workflow, then the shared model-selection workflow. Both bind the same immutable host/role/profile and approved route. Creation only reports ready after both confirm completion. These metadata/control-plane checks send no model prompts and do not certify paid inference.
+
+If completion fails, the created deployment remains billable and inspectable. Keep the displayed operation IDs and use `providers inspect/reconcile` or `models inspect/reconcile` as appropriate. `deploy` skips an existing stack: it does not replay partial setup, rerun onboarding or reset the model. After resolving any pending operation, use explicit provider/model commands to continue. Do not create a second instance to repair the first.
+
+## Enable an existing host
 
 ```sh
 openclaw-aws providers enable-bedrock --name research \

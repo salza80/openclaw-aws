@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   apply: vi.fn(),
   inspect: vi.fn(),
   prompt: vi.fn(),
+  cancel: vi.fn(),
 }));
 vi.mock('../../src/cli/utils/context.js', () => ({ buildCommandContext: mocks.context }));
 vi.mock('../../src/operations/models.js', () => ({
@@ -13,6 +14,7 @@ vi.mock('../../src/operations/models.js', () => ({
   prepareModelChange: mocks.prepare,
   applyModelChange: mocks.apply,
   inspectModelOperation: mocks.inspect,
+  cancelModelChange: mocks.cancel,
 }));
 vi.mock('prompts', () => ({ default: mocks.prompt }));
 import { runModelsCommand } from '../../src/cli/commands/models.js';
@@ -89,6 +91,55 @@ describe('models CLI boundary', () => {
     expect(mocks.apply).not.toHaveBeenCalled();
     expect(mocks.prompt).not.toHaveBeenCalled();
     expect(JSON.parse(vi.mocked(console.log).mock.calls[0][0])).toEqual(plan);
+  });
+  it.each(['dry-run', 'decline', 'noninteractive'])(
+    'discards only the unexecuted Bedrock IAM review on %s',
+    async (path) => {
+      const bedrock = {
+        selection: { discoveryRegion: 'eu-central-1', routes: [] },
+        access: { stackName: 'policy' },
+      };
+      const reviewed = { ...plan, bedrock };
+      mocks.prepare.mockResolvedValue(reviewed);
+      if (path === 'decline') {
+        Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+        mocks.prompt.mockResolvedValue({ approved: false });
+      }
+      const operation = runModelsCommand({
+        action: 'set',
+        model: 'amazon-bedrock/model',
+        dryRun: path === 'dry-run',
+      });
+      if (path === 'noninteractive') await expect(operation).rejects.toThrow(/--yes/);
+      else await operation;
+      expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(ctx, reviewed);
+      expect(mocks.apply).not.toHaveBeenCalled();
+      if (path === 'dry-run')
+        expect(JSON.parse(vi.mocked(console.log).mock.calls[0][0])).toMatchObject({
+          bedrockReviewDiscarded: true,
+        });
+    },
+  );
+  it('does not retry an uncertain review cancellation or cancel after an attempted model write', async () => {
+    const reviewed = {
+      ...plan,
+      bedrock: {
+        selection: { discoveryRegion: 'eu-central-1', routes: [] },
+        access: { stackName: 'policy' },
+      },
+    };
+    mocks.prepare.mockResolvedValue(reviewed);
+    mocks.cancel.mockRejectedValueOnce(new Error('cancellation outcome unknown'));
+    await expect(
+      runModelsCommand({ action: 'set', model: 'amazon-bedrock/model', dryRun: true }),
+    ).rejects.toThrow(/cancellation outcome unknown/);
+    expect(mocks.cancel).toHaveBeenCalledOnce();
+    mocks.cancel.mockClear();
+    mocks.apply.mockRejectedValueOnce(new Error('model outcome unknown'));
+    await expect(
+      runModelsCommand({ action: 'set', model: 'amazon-bedrock/model', yes: true }),
+    ).rejects.toThrow(/model outcome unknown/);
+    expect(mocks.cancel).not.toHaveBeenCalled();
   });
   it('refuses an unapproved noninteractive change and honors cancellation', async () => {
     await expect(runModelsCommand({ action: 'set', model: 'openrouter/new' })).rejects.toThrow(

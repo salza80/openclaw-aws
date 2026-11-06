@@ -26,6 +26,33 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe('deployment identity and native observations', () => {
+  it('records a confirmed Bedrock connection separately from original API credentials and resets it for a new identity', () => {
+    const ctx = makeCommandContext();
+    ctx.config.openclaw = { apiProvider: 'openrouter-api-key', model: 'openrouter/initial' };
+    const original = recordDeploymentState(ctx, status, { newlyCreated: true });
+    const connection = {
+      authMode: 'instance-role' as const,
+      inferenceRegion: 'eu-central-1',
+      operationId: '11111111-1111-1111-1111-111111111111',
+      checkedAt: new Date().toISOString(),
+    };
+    const updated = recordDeploymentState(ctx, status, { bedrockConnection: connection });
+    expect(updated.desired).toEqual(original.desired);
+    expect(updated.bedrockConnection).toEqual(connection);
+    expect(ctx.config.openclaw.apiProvider).toBe('openrouter-api-key');
+    expect(
+      recordDeploymentState(ctx, status, {
+        observed: {
+          version: original.desired.version,
+          model: 'openrouter/native',
+          checkedAt: connection.checkedAt,
+        },
+      }).bedrockConnection,
+    ).toEqual(connection);
+    expect(
+      recordDeploymentState(ctx, status, { newlyCreated: true }).bedrockConnection,
+    ).toBeUndefined();
+  });
   it('records explicit global/agent model intent without changing initial credential provenance or adopting later native drift', () => {
     const ctx = makeCommandContext();
     ctx.config.openclaw = { apiProvider: 'openrouter-api-key', model: 'openrouter/initial' };

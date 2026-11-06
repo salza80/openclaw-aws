@@ -7,6 +7,7 @@ import {
   queryModels,
   prepareModelChange,
   applyModelChange,
+  cancelModelChange,
   inspectModelOperation,
 } from '../../operations/models.js';
 
@@ -80,20 +81,38 @@ export async function runModelsCommand(argv: ModelsArgs) {
       allowRestart: argv.allowRestart,
       operationId: argv.operationId,
     });
-    if (argv.dryRun) {
-      console.log(JSON.stringify(plan, null, 2));
-      return;
+    let applying = false,
+      reviewHandled = false;
+    try {
+      if (argv.dryRun) {
+        if (plan.bedrock) {
+          reviewHandled = true;
+          await cancelModelChange(ctx, plan);
+        }
+        console.log(
+          JSON.stringify(plan.bedrock ? { ...plan, bedrockReviewDiscarded: true } : plan, null, 2),
+        );
+        return;
+      }
+      const target = plan.job.target;
+      const label = scope.kind === 'agent' ? `agent ${scope.agentId}` : 'Gateway defaults';
+      const grants = plan.bedrock
+        ? `\nBedrock inference region: ${plan.bedrock.selection.discoveryRegion}; auxiliary policy: ${plan.bedrock.access.stackName}.\n${plan.bedrock.selection.routes.map((route) => `  ${route.model}: ${route.invocationArn}; backing models: ${route.modelArns.join(', ')}`).join('\n')}\nAdditive IAM grants remain after a native refusal or rollback; the hosting stack is not updated.`
+        : '';
+      if (
+        !(await approve(
+          argv,
+          `Change ${label} on '${ctx.name}' (${target.account}/${target.region}, ${target.instanceId}) from ${plan.before.effectiveForNewSessions} to ${argv.model}. Native reload policy applies; controlled restart when reload is off is ${plan.job.action.kind === 'set' && plan.job.action.allowRestart ? 'permitted' : 'not permitted'}. Preserve sibling models, fallbacks and session selections. Metadata checks send no model prompts. Operation: ${plan.job.operationId}.${grants}`,
+        ))
+      )
+        return;
+      applying = true;
+      result = await applyModelChange(ctx, plan);
+    } finally {
+      if (!applying && !reviewHandled && plan.bedrock) {
+        await cancelModelChange(ctx, plan);
+      }
     }
-    const target = plan.job.target;
-    const label = scope.kind === 'agent' ? `agent ${scope.agentId}` : 'Gateway defaults';
-    if (
-      !(await approve(
-        argv,
-        `Change ${label} on '${ctx.name}' (${target.account}/${target.region}, ${target.instanceId}) from ${plan.before.effectiveForNewSessions} to ${argv.model}. Native reload policy applies; controlled restart when reload is off is ${plan.job.action.kind === 'set' && plan.job.action.allowRestart ? 'permitted' : 'not permitted'}. Preserve sibling models, fallbacks and session selections. Metadata checks send no model prompts. Operation: ${plan.job.operationId}.`,
-      ))
-    )
-      return;
-    result = await applyModelChange(ctx, plan);
   } else if (argv.action === 'inspect' || argv.action === 'reconcile') {
     const observed = await inspectModelOperation(ctx, argv.operationId!);
     if (argv.action === 'inspect') result = observed;

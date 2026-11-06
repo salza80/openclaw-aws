@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   validate: vi.fn(),
   key: vi.fn(),
   saved: vi.fn(),
+  initialBedrock: vi.fn(),
 }));
 vi.mock('../../src/cli/commands/init.js', () => ({ configureDeployment: mocks.configure }));
 vi.mock('../../src/cli/utils/config.js', () => ({
@@ -30,6 +31,10 @@ vi.mock('../../src/cli/utils/aws-validation.js', () => ({
 }));
 vi.mock('../../src/aws/target.js', () => ({ resolveAwsTarget: mocks.target }));
 vi.mock('../../src/operations/deployment.js', () => ({ deployDeployment: mocks.deploy }));
+vi.mock('../../src/operations/fresh-bedrock.js', () => ({
+  prepareInitialBedrock: mocks.initialBedrock,
+  initialBedrockSummary: () => 'Reviewed initial Bedrock access and plugin installation',
+}));
 vi.mock('../../src/cli/utils/api-keys.js', async (original) => ({
   ...(await original<object>()),
   resolveApiKey: mocks.key,
@@ -61,6 +66,8 @@ afterEach(() => {
 });
 describe('create workflow', () => {
   it('accepts Bedrock setup without resolving a model key or probing an invented provider-key namespace', async () => {
+    const initial = { reviewed: true };
+    mocks.initialBedrock.mockResolvedValue(initial);
     await createDeployment({
       name: 'alpha',
       provider: 'bedrock',
@@ -80,6 +87,7 @@ describe('create workflow', () => {
     const input = mocks.deploy.mock.calls[0][1];
     expect(input.apiProvider).toBe('amazon-bedrock');
     expect(input).not.toHaveProperty('apiKey');
+    expect(input.initialBedrock).toEqual(initial);
   });
   it('composes setup and the shared deployment operation using the selected identity', async () => {
     await createDeployment({

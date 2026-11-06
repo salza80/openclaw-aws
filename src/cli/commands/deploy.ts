@@ -18,6 +18,11 @@ import { getApiKeyEnvVar, resolveApiKey } from '../utils/api-keys.js';
 
 import { deployDeployment, rejectFailedStack } from '../../operations/deployment.js';
 import { freshProviderCredentials } from '../../openclaw/connections.js';
+import {
+  prepareInitialBedrock,
+  initialBedrockSummary,
+  type InitialBedrockPlan,
+} from '../../operations/fresh-bedrock.js';
 
 loadEnv({ path: path.join(process.cwd(), '.env'), quiet: true });
 
@@ -75,6 +80,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
       context: Awaited<ReturnType<typeof buildCommandContext>>;
       apiProvider: Provider;
       apiKey?: string;
+      initialBedrock?: InitialBedrockPlan;
     }> = [];
     const alreadyDeployed: Array<{ name: string; status: string }> = [];
     const missingKeys: Array<{ name: string; envVar: string }> = [];
@@ -86,6 +92,10 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
       try {
         const status = await getStackStatus(config.stack.name, ctx.target);
         rejectFailedStack(name, config, status.stackStatus);
+        if (config.openclaw?.apiProvider === 'amazon-bedrock')
+          logger.warn(
+            `'${name}' already exists; deploy does not resume Bedrock setup or verify model readiness. Inspect any recorded provider/model operation before explicitly continuing through providers and models commands.`,
+          );
         alreadyDeployed.push({ name, status: status.stackStatus });
         continue;
       } catch (error) {
@@ -102,7 +112,14 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
         continue;
       }
 
-      toDeploy.push({ name, context: ctx, apiProvider, apiKey });
+      const initialBedrock = await prepareInitialBedrock(ctx);
+      toDeploy.push({
+        name,
+        context: ctx,
+        apiProvider,
+        apiKey,
+        ...(initialBedrock ? { initialBedrock } : {}),
+      });
     }
 
     if (missingKeys.length > 0) {
@@ -128,6 +145,9 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
     }
     console.log(chalk.bold('Configs to deploy:') + ` (${toDeploy.length})`);
     toDeploy.forEach((item) => console.log('  - ' + chalk.cyan(item.name)));
+    for (const item of toDeploy)
+      if (item.initialBedrock)
+        console.log(`${item.name}: ${initialBedrockSummary(item.initialBedrock)}`);
 
     const { confirmText } = await prompts({
       type: 'text',
@@ -162,12 +182,15 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
       console.log(`  Resources:`);
       console.log(`    - EC2 Instance (${config.instance.type})`);
       console.log(`    - Security Group (no inbound rules)`);
-      console.log(`    - IAM Role (SSM access only)`);
+      console.log(
+        `    - IAM Role (${target.initialBedrock ? 'SSM and separately scoped Bedrock access' : 'SSM access only'})`,
+      );
 
       const spinner = ora('Preparing deployment...').start();
       try {
         await deployDeployment(ctx, {
           ...freshProviderCredentials(target.apiProvider, target.apiKey),
+          ...(target.initialBedrock ? { initialBedrock: target.initialBedrock } : {}),
           progress: (message) => {
             spinner.text = message;
           },
@@ -196,6 +219,10 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
     rejectFailedStack(ctx.name, config, status.stackStatus);
     statusSpinner.succeed('Existing deployment found');
     logger.info(`Stack ${chalk.cyan(config.stack.name)} already exists (${status.stackStatus})`);
+    if (config.openclaw?.apiProvider === 'amazon-bedrock')
+      logger.warn(
+        'Deploy does not resume Bedrock setup or verify model readiness. Inspect any recorded provider/model operation before explicitly continuing through providers and models commands.',
+      );
     console.log('\n' + chalk.bold('Next steps:'));
     console.log('  ' + chalk.cyan('openclaw-aws status') + '     - Check instance status');
     console.log('  ' + chalk.cyan('openclaw-aws connect') + '    - Connect via SSM');
@@ -209,6 +236,9 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
   }
 
   validateProvisioningConfig(config);
+
+  const initialBedrock = await prepareInitialBedrock(ctx);
+  if (initialBedrock) logger.info(initialBedrockSummary(initialBedrock));
 
   console.log(''); // Empty line after validation
 
@@ -234,7 +264,9 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
   console.log(`  Resources:`);
   console.log(`    - EC2 Instance (${config.instance.type})`);
   console.log(`    - Security Group (no inbound rules)`);
-  console.log(`    - IAM Role (SSM access only)`);
+  console.log(
+    `    - IAM Role (${initialBedrock ? 'SSM and separately scoped Bedrock access' : 'SSM access only'})`,
+  );
 
   // Confirm deployment
   if (!argv.autoApprove) {
@@ -255,6 +287,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
   try {
     const stackOutputs = await deployDeployment(ctx, {
       ...freshProviderCredentials(apiProvider, apiKey),
+      ...(initialBedrock ? { initialBedrock } : {}),
       progress: (message) => {
         spinner.text = message;
       },

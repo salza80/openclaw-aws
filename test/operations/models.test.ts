@@ -10,9 +10,18 @@ const mocks = vi.hoisted(() => ({
   packaged: vi.fn(),
   execute: vi.fn(),
   lock: vi.fn(),
+  access: vi.fn(),
+  accessPreview: vi.fn(),
+  accessApply: vi.fn(),
+  accessDiscard: vi.fn(),
+  route: vi.fn(),
+  provider: vi.fn(),
 }));
 vi.mock('../../src/cli/utils/config.js', () => ({ getConfigRoot: () => mocks.root }));
-vi.mock('../../src/aws/recovery-source.js', () => ({ inspectRecoverySource: mocks.source }));
+vi.mock('../../src/aws/recovery-source.js', async (original) => ({
+  ...(await original<object>()),
+  inspectRecoverySource: mocks.source,
+}));
 vi.mock('../../src/aws/model-artifact.js', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   deliverModelArtifact: mocks.deliver,
@@ -27,12 +36,25 @@ vi.mock('../../src/aws/model-delivery.js', () => ({
   modelRemoteCommand: (request: unknown) => JSON.stringify(request),
 }));
 vi.mock('../../src/operations/lock.js', () => ({ withDeploymentLock: mocks.lock }));
+vi.mock('../../src/aws/bedrock-access.js', () => ({
+  inspectBedrockAccess: mocks.access,
+  previewBedrockAccess: mocks.accessPreview,
+  applyBedrockAccess: mocks.accessApply,
+  discardBedrockAccessPreview: mocks.accessDiscard,
+}));
+vi.mock('../../src/aws/bedrock-routes.js', async (original) => ({
+  ...(await original<object>()),
+  resolveBedrockRoute: mocks.route,
+}));
+vi.mock('../../src/operations/bedrock.js', () => ({ observeBedrockOnSource: mocks.provider }));
+import { bedrockAccessStackName } from '../../src/aws/recovery-source.js';
 import { createModelArtifact, modelArtifactFilenames } from '../../src/aws/model-artifact.js';
 import { RemoteCommandError } from '../../src/aws/ssm.js';
 import {
   queryModels,
   prepareModelChange,
   applyModelChange,
+  cancelModelChange,
   inspectModelOperation,
   loadModelChange,
 } from '../../src/operations/models.js';
@@ -44,7 +66,7 @@ let home: string;
 let source: {
   stackId: string;
   instanceId: string;
-  role: { id: string };
+  role: { id: string; name: string; arn: string };
   profile: { arn: string; id: string };
 };
 const ctx = {
@@ -67,13 +89,17 @@ function observation(job: ModelJob, selected = 'openrouter/old') {
   };
 }
 beforeEach(async () => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   home = await mkdtemp(path.join(os.tmpdir(), 'model-controller-'));
   mocks.root = path.join(home, '.openclaw-aws');
   source = {
     stackId: modelJob.target.stackId,
     instanceId: modelJob.target.instanceId,
-    role: { id: modelJob.target.roleId },
+    role: {
+      id: modelJob.target.roleId,
+      name: 'host',
+      arn: `arn:aws:iam::${modelJob.target.account}:role/host`,
+    },
     profile: {
       arn: `arn:aws:iam::${modelJob.target.account}:instance-profile/host`,
       id: 'AIPATESTPROFILE000001',
@@ -98,7 +124,7 @@ beforeEach(async () => {
       instanceId: job.target.instanceId,
     };
     const result =
-      mode !== 'execute'
+      mode === 'inspect'
         ? {
             ...header,
             phase: 'complete',
@@ -107,15 +133,31 @@ beforeEach(async () => {
             observed: observation(job, 'openrouter/new'),
             replayAllowed: false,
           }
-        : job.action.kind === 'set'
+        : mode !== 'execute'
           ? {
               ...header,
-              phase: 'complete',
-              ...observation(job, job.action.model),
+              phase: mode === 'accept-previous' ? 'unchanged' : 'complete',
               maintenanceHeld: false,
-              restarted: false,
+              reconciled: true,
+              observed: observation(
+                job,
+                mode === 'accept-previous'
+                  ? 'openrouter/old'
+                  : job.action.kind === 'set'
+                    ? job.action.model
+                    : 'openrouter/new',
+              ),
+              replayAllowed: false,
             }
-          : { ...header, phase: 'observed', ...observation(job) };
+          : job.action.kind === 'set'
+            ? {
+                ...header,
+                phase: 'complete',
+                ...observation(job, job.action.model),
+                maintenanceHeld: false,
+                restarted: false,
+              }
+            : { ...header, phase: 'observed', ...observation(job) };
     return { stdout: JSON.stringify(result), stderr: '', commandId: 'ssm-fixture' };
   });
 });
@@ -128,7 +170,102 @@ const prepare = () =>
     model: 'openrouter/new',
     operationId: modelJob.operationId,
   });
+async function prepareBedrock() {
+  const model = 'amazon-bedrock/provider.new';
+  const arn = 'arn:aws:bedrock:eu-central-1::foundation-model/provider.new';
+  const route = {
+    model,
+    kind: 'foundation-model',
+    region: 'eu-central-1',
+    invocationArn: arn,
+    modelArns: [arn],
+  };
+  mocks.access.mockResolvedValue({ discoveryRegion: 'eu-central-1', routes: [] });
+  mocks.route.mockResolvedValue(route);
+  mocks.provider.mockResolvedValue({ configHash: 'opaque:revision:0' });
+  const name = bedrockAccessStackName(source.stackId, source.role.id);
+  mocks.accessPreview.mockResolvedValue({
+    stackName: name,
+    stackId: `arn:aws:cloudformation:eu-central-1:123456789012:stack/${name}/policy`,
+    changeSetId: 'arn:aws:cloudformation:eu-central-1:123456789012:changeSet/models/fixture',
+    source,
+    templateDigest: 'a'.repeat(64),
+    noChanges: false,
+  });
+  return prepareModelChange(ctx, {
+    scope: modelJob.scope,
+    model,
+    operationId: modelJob.operationId,
+  });
+}
 describe('shared model operations', () => {
+  it('previews and applies only additive Bedrock IAM before native selection', async () => {
+    const model = 'amazon-bedrock/provider.new';
+    const plan = await prepareBedrock();
+    expect(plan.job.bedrockRole).toBe(true);
+    expect(plan.bedrock?.selection.routes.map((route) => route.model)).toEqual([model]);
+    expect(mocks.accessApply).not.toHaveBeenCalled();
+    mocks.accessApply.mockImplementation(async () => {
+      expect(await loadModelChange(modelJob.operationId)).toEqual(plan);
+    });
+    const result = await applyModelChange(ctx, plan);
+    expect(result.phase).toBe('complete');
+    expect(mocks.accessApply).toHaveBeenCalledWith(
+      ctx,
+      plan.bedrock!.selection,
+      plan.bedrock!.access,
+      { signal: undefined },
+    );
+    expect(result.bedrockAccess).toMatchObject({ invocationGrantsRetained: true });
+    expect(loadDeploymentState(ctx)?.modelSelections?.agents.researcher.model).toBe(model);
+  });
+  it('discards an unexecuted Bedrock review without recording or dispatching a model mutation', async () => {
+    const plan = await prepareBedrock();
+    mocks.execute.mockClear();
+    await cancelModelChange(ctx, plan);
+    expect(mocks.accessDiscard).toHaveBeenCalledWith(ctx, plan.bedrock!.access);
+    expect(mocks.accessApply).not.toHaveBeenCalled();
+    expect(mocks.execute).not.toHaveBeenCalled();
+    await expect(loadModelChange(modelJob.operationId)).rejects.toThrow();
+  });
+  it('keeps durable intent and fences further previews if IAM apply is uncertain, without starting the native model write', async () => {
+    const plan = await prepareBedrock();
+    mocks.accessApply.mockRejectedValue(new Error('IAM outcome unknown'));
+    mocks.execute.mockClear();
+    await expect(applyModelChange(ctx, plan)).rejects.toMatchObject({
+      operationId: modelJob.operationId,
+    });
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(await loadModelChange(modelJob.operationId)).toEqual(plan);
+    expect(loadDeploymentState(ctx)?.modelSelections).toBeUndefined();
+    mocks.accessPreview.mockClear();
+    await expect(prepareBedrock()).rejects.toThrow(/pending/);
+    expect(mocks.accessPreview).not.toHaveBeenCalled();
+    await inspectModelOperation(ctx, modelJob.operationId, { accept: 'previous' });
+    expect(JSON.parse(mocks.execute.mock.calls.at(-1)![2][0]).mode).toBe('accept-previous');
+    mocks.accessApply.mockResolvedValue({});
+    const next = await prepareModelChange(ctx, { scope: modelJob.scope, model: 'openrouter/new' });
+    expect((await applyModelChange(ctx, next)).phase).toBe('complete');
+  });
+  it('refuses requested-state reconciliation until every approved Bedrock grant is currently verified', async () => {
+    const plan = await prepareBedrock();
+    mocks.accessApply.mockRejectedValue(new Error('IAM outcome unknown'));
+    await expect(applyModelChange(ctx, plan)).rejects.toThrow();
+    mocks.execute.mockClear();
+    await expect(
+      inspectModelOperation(ctx, modelJob.operationId, { accept: 'requested' }),
+    ).rejects.toThrow(/permissions are not currently verified/);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(loadDeploymentState(ctx)?.modelSelections).toBeUndefined();
+  });
+  it('refuses selection before remote reads if Bedrock has no managed IAM policy', async () => {
+    mocks.access.mockResolvedValue(undefined);
+    await expect(
+      prepareModelChange(ctx, { scope: modelJob.scope, model: 'amazon-bedrock/new' }),
+    ).rejects.toThrow(/enable-bedrock/);
+    expect(mocks.execute).not.toHaveBeenCalled();
+    expect(mocks.accessPreview).not.toHaveBeenCalled();
+  });
   it('previews native scope/revision and revalidates the same host/profile under the deployment lock before mutation', async () => {
     const original = structuredClone(ctx);
     const plan = await prepare();

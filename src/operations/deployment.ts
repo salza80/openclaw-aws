@@ -23,6 +23,12 @@ import { assertDeploymentTarget, recordDeploymentState } from './state.js';
 import { withDeploymentLock } from './lock.js';
 import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
 import { validateProjectName } from '../cli/utils/validation.js';
+import {
+  prepareInitialBedrock,
+  parseInitialBedrock,
+  finishInitialBedrock,
+  type InitialBedrockPlan,
+} from './fresh-bedrock.js';
 
 async function storeApiKey(
   configName: string,
@@ -197,7 +203,10 @@ type RestoreProvision = {
 /** The shared, noninteractive provisioning operation. Callers own input and approval. */
 export async function deployDeployment(
   ctx: CommandContext,
-  options: FreshProviderCredentials & { progress?: (message: string) => void },
+  options: FreshProviderCredentials & {
+    progress?: (message: string) => void;
+    initialBedrock?: InitialBedrockPlan;
+  },
 ): Promise<Record<string, string>> {
   const captured = { ...ctx, config: structuredClone(ctx.config) };
   const provided: FreshProvision = {
@@ -205,7 +214,19 @@ export async function deployDeployment(
     progress: options.progress,
     mode: 'fresh',
   };
-  return withDeploymentLock(captured, () => provisionDeployment(captured, provided));
+  const initial =
+    options.initialBedrock === undefined
+      ? await prepareInitialBedrock(captured)
+      : parseInitialBedrock(options.initialBedrock, captured);
+  const outputs = await withDeploymentLock(captured, () => provisionDeployment(captured, provided));
+  if (initial) {
+    try {
+      await finishInitialBedrock(captured, outputs, initial, options.progress);
+    } catch (error) {
+      throw deploymentFailure(error, captured.name, captured.config, '');
+    }
+  }
+  return outputs;
 }
 
 /** Keep the target lock through inactive provisioning and native recovery setup. */

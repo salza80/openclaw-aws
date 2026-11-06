@@ -6,7 +6,7 @@ import { getConfigRoot } from '../cli/utils/config.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import { inspectRecoverySource, type RecoverySource } from '../aws/recovery-source.js';
 import { resolveBedrockRoute } from '../aws/bedrock-routes.js';
-import { parseBedrockSelection, type BedrockAccessSelection } from '../aws/bedrock-selection.js';
+import type { BedrockAccessSelection } from '../aws/bedrock-selection.js';
 import {
   planBedrockAccessExtension,
   previewBedrockAccess,
@@ -37,6 +37,8 @@ import { modelObject, modelText } from '../openclaw/model-contract.js';
 import { privateModelJson } from '../openclaw/model-journal.js';
 import { assertDirectoryChain } from '../openclaw/restore-layout.js';
 import { withDeploymentLock } from './lock.js';
+import { recordDeploymentState } from './state.js';
+import { parseBedrockGrantPlan } from './bedrock-grants.js';
 import {
   controlFencePath,
   readControlFence,
@@ -102,45 +104,22 @@ export function parseBedrockConnectionPlan(input: unknown): BedrockConnectionPla
     throw new Error('Unsupported Bedrock connection plan');
   const job = parseBedrockJob(row.job);
   const artifact = parseModelArtifactPin(row.artifact);
-  const access = structuredClone(modelObject(row.access)) as unknown as BedrockAccessPreview;
-  if (
-    Object.keys(access).some(
-      (key) =>
-        ![
-          'stackName',
-          'stackId',
-          'changeSetId',
-          'source',
-          'templateDigest',
-          'previousTemplateDigest',
-          'noChanges',
-        ].includes(key),
-    ) ||
-    typeof access.noChanges !== 'boolean' ||
-    !/^[a-f0-9]{64}$/.test(modelText(access.templateDigest, 64)) ||
-    (access.previousTemplateDigest !== undefined &&
-      !/^[a-f0-9]{64}$/.test(modelText(access.previousTemplateDigest, 64)))
-  )
-    throw new Error('Invalid Bedrock IAM preview');
-  const source = modelObject(access.source);
-  const role = modelObject(source.role);
   const profile = modelObject(row.profile);
   if (
     Object.keys(profile).some((key) => !['arn', 'id'].includes(key)) ||
-    !isDeepStrictEqual(profile, source.profile) ||
-    source.stackId !== job.target.stackId ||
-    source.instanceId !== job.target.instanceId ||
-    role.id !== job.target.roleId
+    typeof profile.arn !== 'string' ||
+    !profile.arn.startsWith(
+      `arn:${job.target.stackId.split(':')[1]}:iam::${job.target.account}:instance-profile/`,
+    ) ||
+    typeof profile.id !== 'string' ||
+    !/^AIPA[A-Z0-9]{12,124}$/.test(profile.id)
   )
     throw new Error('Bedrock IAM preview belongs to another host');
-  // AWS policy application revalidates every identity/template/change-set field.
-  modelText(profile.arn);
-  modelText(profile.id, 128);
-  modelText(access.stackName, 128);
-  const selection = parseBedrockSelection(row.selection, {
-    account: job.target.account,
-    partition: job.target.stackId.split(':')[1],
-  });
+  const { selection, access } = parseBedrockGrantPlan(
+    { selection: row.selection, access: row.access },
+    job.target,
+    profile as unknown as RecoverySource['profile'],
+  );
   if (selection.discoveryRegion !== job.inferenceRegion)
     throw new Error('Bedrock IAM and native inference regions differ');
   return {
@@ -173,6 +152,45 @@ async function dispatch(
       'Bedrock worker returned unsupported or identity-mismatched metadata; private output was not published',
     );
   }
+}
+/** Caller holds the hosting deployment lock. Read a fresh supported native
+ * connection without installing, refreshing, or adopting local desired state. */
+export async function observeBedrockOnSource(
+  ctx: CommandContext,
+  source: RecoverySource,
+  pin: ModelArtifactPin,
+  inferenceRegion: string,
+  signal?: AbortSignal,
+) {
+  const job = parseBedrockJob({
+    schemaVersion: 1,
+    kind: 'bedrock-connection',
+    operationId: randomUUID(),
+    target: {
+      deploymentName: ctx.name,
+      stackId: source.stackId,
+      instanceId: source.instanceId,
+      roleId: source.role.id,
+      account: ctx.target.account,
+      region: ctx.target.region,
+    },
+    runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
+    inferenceRegion,
+    expectedHash: 'inspection',
+    allowRestart: false,
+    acceptPluginCapabilities: false,
+    plugin: BEDROCK_PLUGIN,
+  });
+  const result = await dispatch(ctx, job, pin, 'inspect', signal);
+  if (
+    !result.observed?.configured ||
+    !result.observed.pluginVerified ||
+    !result.observed.roleEnvironmentVerified
+  )
+    throw new Error(
+      'Bedrock role provider is not configured in this inference region; run providers enable-bedrock explicitly before selecting its models',
+    );
+  return result.observed;
 }
 const owner = (plan: BedrockConnectionPlan): ControlFence => ({
   schemaVersion: 1,
@@ -297,6 +315,30 @@ async function settle(plan: BedrockConnectionPlan, result: BedrockResult) {
   );
   await releaseControlFence(plan.job.target, owner(plan));
 }
+function recordConfirmedConnection(
+  ctx: CommandContext,
+  plan: BedrockConnectionPlan,
+  result: BedrockResult,
+) {
+  if (
+    result.phase !== 'complete' ||
+    !result.observed?.configured ||
+    result.maintenanceHeld !== false
+  )
+    return;
+  recordDeploymentState(
+    ctx,
+    { stackId: plan.job.target.stackId, stackName: ctx.config.stack.name },
+    {
+      bedrockConnection: {
+        authMode: 'instance-role',
+        inferenceRegion: plan.job.inferenceRegion,
+        operationId: plan.job.operationId,
+        checkedAt: result.observed.checkedAt,
+      },
+    },
+  );
+}
 /** Durable intent precedes IAM application and host dispatch. IAM failures keep
  * the exact change-set identity inspectable; they do not authorize a replay. */
 export async function applyBedrockConnection(
@@ -338,6 +380,7 @@ export async function applyBedrockConnection(
       );
       const result = await dispatch(ctx, plan.job, plan.artifact, 'execute', options.signal);
       await settle(plan, result);
+      recordConfirmedConnection(ctx, plan, result);
       return result;
     } catch (error) {
       throw new BedrockOperationError(
@@ -392,6 +435,7 @@ export async function inspectBedrockConnection(
       options.signal,
     );
     await settle(plan, result);
+    if (options.accept === 'configured') recordConfirmedConnection(ctx, plan, result);
     return result;
   });
 }

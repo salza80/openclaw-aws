@@ -21,6 +21,7 @@ import { resolveAwsTarget } from '../../aws/target.js';
 import type { CommandContext } from '../utils/context.js';
 import { deployDeployment } from '../../operations/deployment.js';
 import { freshProviderCredentials, PROVIDER_CONNECTIONS } from '../../openclaw/connections.js';
+import { prepareInitialBedrock, initialBedrockSummary } from '../../operations/fresh-bedrock.js';
 
 interface CreateArgs extends InitArgs {
   name: string;
@@ -127,6 +128,8 @@ export async function createDeployment(argv: CreateArgs): Promise<void> {
     },
   );
   if (!result || !ctx) return;
+  const initialBedrock = await prepareInitialBedrock(ctx);
+  if (initialBedrock) logger.info(initialBedrockSummary(initialBedrock));
   if (interactive) {
     const { confirm } = await prompts({
       type: 'confirm',
@@ -142,6 +145,7 @@ export async function createDeployment(argv: CreateArgs): Promise<void> {
   await validatePreDeploy(ctx.config, ctx.target, Boolean(argv.yes));
   await deployDeployment(ctx, {
     ...freshProviderCredentials(provider, apiKey),
+    ...(initialBedrock ? { initialBedrock } : {}),
     progress: (message) => logger.info(message),
   });
   logger.success(`OpenClaw '${ctx.name}' is ready. Run openclaw-aws status --name ${ctx.name}`);

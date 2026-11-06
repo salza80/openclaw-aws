@@ -8,6 +8,7 @@ import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import { AWSError } from '../cli/utils/errors.js';
 import { asUbuntu } from '../openclaw/commands.js';
 import { executeSsm } from '../aws/ssm.js';
+import { validAwsRegion } from '../aws/regions.js';
 import {
   nativeModelReference,
   nativeModelScope,
@@ -23,6 +24,12 @@ interface ModelSelections {
   default?: ConfirmedModelIntent;
   agents: Record<string, ConfirmedModelIntent>;
 }
+export interface ConfirmedBedrockConnection {
+  authMode: 'instance-role';
+  inferenceRegion: string;
+  operationId: string;
+  checkedAt: string;
+}
 
 export interface RuntimeObservation {
   version: string;
@@ -35,6 +42,7 @@ interface DeploymentState {
   desired: { version: string; nodeVersion: string; provider: string; model?: string };
   observed?: RuntimeObservation;
   modelSelections?: ModelSelections;
+  bedrockConnection?: ConfirmedBedrockConnection;
   restoredFrom?: { operationId: string; pointId?: string };
   clonedFrom?: { operationId: string; pointId: string };
 }
@@ -84,6 +92,31 @@ function modelSelections(value: unknown): ModelSelections {
     agents,
   };
 }
+function bedrockConnection(value: unknown): ConfirmedBedrockConnection {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new AWSError('Invalid local Bedrock connection intent');
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).some(
+      (key) => !['authMode', 'inferenceRegion', 'operationId', 'checkedAt'].includes(key),
+    ) ||
+    row.authMode !== 'instance-role' ||
+    typeof row.inferenceRegion !== 'string' ||
+    !validAwsRegion(row.inferenceRegion) ||
+    typeof row.operationId !== 'string' ||
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(row.operationId) ||
+    typeof row.checkedAt !== 'string' ||
+    row.checkedAt.length > 64 ||
+    !Number.isFinite(Date.parse(row.checkedAt))
+  )
+    throw new AWSError('Invalid local Bedrock connection intent');
+  return {
+    authMode: 'instance-role',
+    inferenceRegion: row.inferenceRegion,
+    operationId: row.operationId,
+    checkedAt: row.checkedAt,
+  };
+}
 function statePath(ctx: CommandContext): string {
   return path.join(getConfigRoot(), 'deployments', `${ctx.name}.json`);
 }
@@ -110,6 +143,7 @@ export function loadDeploymentState(ctx: CommandContext): DeploymentState | unde
     throw new AWSError('Invalid local deployment metadata; inspect it before proceeding');
   }
   if (value.modelSelections !== undefined) modelSelections(value.modelSelections);
+  if (value.bedrockConnection !== undefined) bedrockConnection(value.bedrockConnection);
   return value;
 }
 /** Check saved ownership before any targeted mutation or secret cleanup. */
@@ -140,6 +174,7 @@ export function recordDeploymentState(
     restoredFrom?: { operationId: string; pointId?: string };
     clonedFrom?: { operationId: string; pointId: string };
     modelSelection?: ConfirmedModelIntent & { scope: ModelScope };
+    bedrockConnection?: ConfirmedBedrockConnection;
   } = {},
 ): DeploymentState {
   const stackId = status.stackId;
@@ -176,6 +211,11 @@ export function recordDeploymentState(
     if (scope.kind === 'default') selections.default = intent;
     else selections.agents[scope.agentId] = intent;
   }
+  const connection = options.bedrockConnection
+    ? bedrockConnection(options.bedrockConnection)
+    : options.newlyCreated || options.restoredFrom || options.clonedFrom
+      ? undefined
+      : previous?.bedrockConnection;
   const value: DeploymentState = {
     schemaVersion: 1,
     identity: {
@@ -199,6 +239,7 @@ export function recordDeploymentState(
           },
     observed: options.observed ?? (options.newlyCreated ? undefined : previous?.observed),
     ...(selections ? { modelSelections: selections } : {}),
+    ...(connection ? { bedrockConnection: connection } : {}),
     restoredFrom:
       options.restoredFrom ??
       (options.newlyCreated || options.clonedFrom ? undefined : previous?.restoredFrom),
