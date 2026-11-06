@@ -9,13 +9,17 @@ import {
 } from '../cli/utils/config-validation.js';
 import { getApiKeyParamName, getGatewayTokenParamName } from '../cli/utils/api-keys.js';
 import type { OpenClawConfig, StackConfig } from '../cli/types/index.js';
+import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
 
 const destroyOnly = process.env.OPENCLAW_CDK_OPERATION === 'destroy';
 
 // Load configuration
 let config: OpenClawConfig;
 let configName: string;
+let restore: RestoreBootstrap | undefined;
 try {
+  if (process.env.OPENCLAW_CDK_OPERATION === 'restore')
+    restore = parseRestoreBootstrap(JSON.parse(process.env.OPENCLAW_RESTORE_BOOTSTRAP ?? 'null'));
   const envConfigName = process.env.OPENCLAW_CONFIG_NAME;
   if (!envConfigName) {
     console.error('Error loading configuration: OPENCLAW_CONFIG_NAME is required');
@@ -34,7 +38,7 @@ try {
   } else {
     config = loadConfigByName(configName);
   }
-  if (!destroyOnly) validateProvisioningConfig(config);
+  if (!destroyOnly && !restore) validateProvisioningConfig(config);
 } catch (error) {
   console.error(
     'Error loading configuration:',
@@ -66,6 +70,7 @@ const app = new cdk.App({ builtinCloudFormationValidation: !destroyOnly });
 
 // Build stack props
 const stackProps: OpenClawStackProps = {
+  restore,
   config: stackConfig,
   apiProvider,
   model: config.openclaw?.model,

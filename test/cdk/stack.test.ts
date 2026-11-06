@@ -4,6 +4,8 @@ import { MachineImage } from 'aws-cdk-lib/aws-ec2';
 import { Template } from 'aws-cdk-lib/assertions';
 import { spawnSync } from 'node:child_process';
 import { OpenClawStack } from '../../src/cdk/stack.js';
+import type { RestoreBootstrap } from '../../src/aws/restore-bootstrap.js';
+import { OPENCLAW_VERSION, OPENCLAW_NODE_VERSION } from '../../src/cli/constants.js';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -33,11 +35,16 @@ function resolveString(value: unknown): string {
   throw new Error(`Unexpected string intrinsic: ${JSON.stringify(value)}`);
 }
 
-function bootstrap(enableCloudWatchLogs = false, instanceType = 't3.small') {
+function bootstrap(
+  enableCloudWatchLogs = false,
+  instanceType = 't3.small',
+  restore?: RestoreBootstrap,
+) {
   vi.spyOn(MachineImage, 'lookup').mockReturnValue(
     MachineImage.genericLinux({ 'us-east-1': 'ami-0123456789abcdef0' }),
   );
   const stack = new OpenClawStack(new App(), 'TestStack', {
+    restore,
     env: { account: '123456789012', region: 'us-east-1' },
     apiProvider: 'anthropic-api-key',
     apiKeyParamName: '/openclaw/test/key',
@@ -67,6 +74,17 @@ function actions(statement: { Action: string | string[] }): string[] {
 }
 
 describe('EC2 bootstrap', () => {
+  it('provisions recorded restore capacity with an inactive compatible runtime', () => {
+    const { instance, script } = bootstrap(true, 't3a.small', {
+      operationId: '11111111-1111-1111-1111-111111111111',
+      volumeGiB: 60,
+      runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
+    });
+    expect(instance.Properties.BlockDeviceMappings[0].Ebs.VolumeSize).toBe(60);
+    expect(instance.Properties.BlockDeviceMappings[0].Ebs.Encrypted).toBe(true);
+    expect(script).toContain('phase restore-inactive');
+    expect(script).not.toContain('onboard --non-interactive');
+  });
   it('preserves valid AWS type names beyond the bundled CDK instance-class enum', () => {
     const { instance } = bootstrap(false, 't8i.small');
     expect(instance.Properties.InstanceType).toBe('t8i.small');
