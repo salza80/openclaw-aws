@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { modelHostJournal, privateModelJson } from '../../src/openclaw/model-journal.js';
+import {
+  modelHostJournal,
+  privateModelJson,
+  installModelRequest,
+} from '../../src/openclaw/model-journal.js';
 import { modelJobDigest, parseModelJob } from '../../src/openclaw/model-contract.js';
 import { modelJob } from '../helpers/model-operation.js';
 import type { ModelMutationRecord } from '../../src/openclaw/model-control.js';
@@ -25,8 +29,29 @@ const mutation: ModelMutationRecord = {
 const root = () => path.join(home, '.openclaw-aws');
 const work = () => path.join(root(), 'models', modelJob.operationId);
 describe('model operation contract and durable host journal', () => {
+  it('installs immutable nonsecret requests separately from the mutation journal, without silently changing a delivered request', async () => {
+    const filename = await installModelRequest(home, modelJob);
+    expect(filename).toBe(
+      path.join(root(), 'model-requests', modelJob.operationId, 'request.json'),
+    );
+    expect(await privateModelJson(filename)).toEqual(modelJob);
+    expect(await installModelRequest(home, modelJob)).toBe(filename);
+    await expect(installModelRequest(home, { ...modelJob, bedrockRole: true })).rejects.toThrow(
+      /another request/,
+    );
+    await expect(readdir(path.join(root(), 'models'))).rejects.toThrow();
+  });
   it('binds canonical request order and rejects credentials, retargeting, invalid scopes, paid probes and implicit restart consent', () => {
     expect(parseModelJob(modelJob)).toEqual(modelJob);
+    expect(
+      parseModelJob({
+        ...modelJob,
+        target: {
+          ...modelJob.target,
+          stackId: modelJob.target.stackId.replace('OpenclawStack-test', 'Existing-Custom-Stack'),
+        },
+      }).target.stackId,
+    ).toContain('Existing-Custom-Stack');
     expect(modelJobDigest({ ...modelJob, target: { ...modelJob.target } })).toBe(
       modelJobDigest(modelJob),
     );

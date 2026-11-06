@@ -95,6 +95,60 @@ afterEach(async () => {
 });
 const writes = () => calls.filter((method) => method === 'config.patch');
 describe('durable host model operations', () => {
+  it('reports missing history truthfully and explicitly fences a delayed SSM request without repeating a model write', async () => {
+    expect(await runModelOperation(modelJob, host, 'inspect')).toMatchObject({
+      phase: 'not-recorded',
+      maintenanceHeld: null,
+      replayAllowed: false,
+    });
+    await expect(runModelOperation(modelJob, host, 'accept-requested')).rejects.toThrow(
+      /No durable model intent/,
+    );
+    expect(await runModelOperation(modelJob, host, 'accept-previous')).toMatchObject({
+      phase: 'unchanged',
+      maintenanceHeld: false,
+      reconciled: true,
+    });
+    await expect(runModelOperation(modelJob, host)).rejects.toThrow(/already started/);
+    expect(writes()).toHaveLength(0);
+    expect(published).toBe('openrouter/old');
+  });
+  it('accepts an already settled native commit after a lost client receipt without replaying or reclaiming maintenance', async () => {
+    await runModelOperation(modelJob, host);
+    expect(await runModelOperation(modelJob, host, 'accept-requested')).toMatchObject({
+      phase: 'complete',
+      maintenanceHeld: false,
+      reconciled: true,
+    });
+    expect(writes()).toHaveLength(1);
+  });
+  it('does not fence a missing-history request as unchanged after its preview revision changed', async () => {
+    revision++;
+    await expect(runModelOperation(modelJob, host, 'accept-previous')).rejects.toThrow(
+      /unchanged preview/,
+    );
+    expect(writes()).toHaveLength(0);
+  });
+  it('can explicitly fence a request whose journal was delivered but maintenance was never claimed', async () => {
+    await modelHostJournal(home, modelJob, true);
+    expect(await runModelOperation(modelJob, host, 'accept-previous')).toMatchObject({
+      phase: 'unchanged',
+      reconciled: true,
+    });
+    await expect(runModelOperation(modelJob, host)).rejects.toThrow(/already started/);
+    expect(writes()).toHaveLength(0);
+  });
+  it('retains a preflight hold when another native writer changed its preview before any model intent', async () => {
+    const journal = await modelHostJournal(home, modelJob, true);
+    await journal.claim();
+    await journal.append({ phase: 'started' });
+    revision++;
+    await expect(runModelOperation(modelJob, host, 'accept-previous')).rejects.toThrow(
+      /preview changed before model intent/,
+    );
+    expect(await journal.ownsMaintenance()).toBe(true);
+    expect(writes()).toHaveLength(0);
+  });
   it('publishes a minimal result and releases maintenance after native commit, without recording or reporting auth/config/session contents', async () => {
     const result = await runModelOperation(modelJob, host);
     expect(result).toMatchObject({

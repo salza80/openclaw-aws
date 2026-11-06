@@ -12,6 +12,9 @@ import {
   modelArtifactCommands,
   modelArtifactDirectory,
   modelArtifactFilenames,
+  modelArtifactProbe,
+  pinModelArtifact,
+  parseModelArtifactPin,
 } from '../../src/aws/model-artifact.js';
 let home: string;
 const files = () =>
@@ -22,7 +25,15 @@ const files = () =>
   }));
 beforeEach(async () => {
   vi.clearAllMocks();
-  mocks.execute.mockResolvedValue({ stdout: '', stderr: '', commandId: 'fixture' });
+  let probes = 0;
+  mocks.execute.mockImplementation(async (_instance, _target, commands: string[]) => ({
+    stdout:
+      commands.length === 1 && commands[0].includes('"ready"')
+        ? JSON.stringify({ ready: ++probes > 1 })
+        : '',
+    stderr: '',
+    commandId: 'fixture',
+  }));
   home = await mkdtemp(path.join(os.tmpdir(), 'model artifact '));
 });
 afterEach(async () => {
@@ -89,6 +100,9 @@ describe('integrity-pinned chunked SSM worker artifacts', () => {
     const artifact = createModelArtifact(source);
     const fixture = await shellFixture();
     const commands = modelArtifactCommands(artifact);
+    expect(
+      JSON.parse((await fixture.run(modelArtifactProbe(pinModelArtifact(artifact)))).stdout),
+    ).toEqual({ ready: false });
     expect(commands.length).toBeGreaterThan(6);
     for (const command of commands) {
       expect(Buffer.byteLength(command)).toBeLessThan(24000);
@@ -102,6 +116,9 @@ describe('integrity-pinned chunked SSM worker artifacts', () => {
     );
     for (const file of source)
       expect(await readFile(path.join(directory, file.name))).toEqual(Buffer.from(file.body));
+    expect(
+      JSON.parse((await fixture.run(modelArtifactProbe(pinModelArtifact(artifact)))).stdout),
+    ).toEqual({ ready: true });
     for (const command of commands) await fixture.run(command);
     for (const file of source)
       expect(await readFile(path.join(directory, file.name))).toEqual(Buffer.from(file.body));
@@ -166,9 +183,9 @@ describe('integrity-pinned chunked SSM worker artifacts', () => {
     const signal = AbortSignal.timeout(10000);
     await deliverModelArtifact('i-0123456789abcdef0', target, artifact, signal);
     const calls = mocks.execute.mock.calls;
-    expect(calls).toHaveLength(Math.ceil(commands.length / 2));
-    expect(calls.flatMap((call) => call[2].slice(1))).toEqual(commands);
-    for (const call of calls) {
+    expect(calls).toHaveLength(Math.ceil(commands.length / 2) + 2);
+    expect(calls.slice(1, -1).flatMap((call) => call[2].slice(1))).toEqual(commands);
+    for (const call of calls.slice(1, -1)) {
       expect(call[0]).toBe('i-0123456789abcdef0');
       expect(call[1]).toBe(target);
       expect(call[2][0]).toBe('set -e');
@@ -180,5 +197,33 @@ describe('integrity-pinned chunked SSM worker artifacts', () => {
       /delivery failed/,
     );
     expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+  it('reuses only fully verified installed code and rejects corrupted pin metadata or invalid probe responses', async () => {
+    const artifact = createModelArtifact(files());
+    const pin = pinModelArtifact(artifact);
+    expect(
+      parseModelArtifactPin({
+        files: pin.files.map((file) => ({
+          size: file.size,
+          compressedSha256: file.compressedSha256,
+          name: file.name,
+          sha256: file.sha256,
+        })),
+        digest: pin.digest,
+      }),
+    ).toEqual(pin);
+    expect(() =>
+      parseModelArtifactPin({
+        ...pin,
+        files: pin.files.map((file, index) => (index ? file : { ...file, sha256: '0'.repeat(64) })),
+      }),
+    ).toThrow(/digest changed/);
+    mocks.execute.mockResolvedValue({ stdout: '{"ready":true}', stderr: '', commandId: 'probe' });
+    await deliverModelArtifact('i-0123456789abcdef0', { region: 'eu-central-1' }, artifact);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    mocks.execute.mockResolvedValue({ stdout: '{"ready":true,"privateAuth":"must-not-publish"}' });
+    await expect(
+      deliverModelArtifact('i-0123456789abcdef0', { region: 'eu-central-1' }, artifact),
+    ).rejects.toThrow(/availability could not be verified/);
   });
 });

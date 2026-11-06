@@ -66,6 +66,29 @@ async function createJson(filename: string, value: object) {
   }
   await syncDirectory(path.dirname(filename));
 }
+/** Request delivery is performed only as the native service user. This tree is
+ * separate from the append-only mutation journal and contains no credentials. */
+export async function installModelRequest(home: string, input: unknown) {
+  const job = parseModelJob(input);
+  if (!path.isAbsolute(home) || path.resolve(home) !== home || home === '/')
+    throw new Error('Invalid model request home');
+  const root = path.join(home, '.openclaw-aws');
+  const directory = path.join(root, 'model-requests', job.operationId);
+  await assertDirectoryChain(directory, home, true);
+  for (const value of [root, path.join(root, 'model-requests'), directory]) {
+    if ((await lstat(value)).mode & 0o077)
+      throw new Error('Model delivery directories must be private');
+  }
+  const filename = path.join(directory, 'request.json');
+  try {
+    await createJson(filename, job);
+  } catch (error) {
+    if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error;
+    if (!isDeepStrictEqual(parseModelJob(await privateModelJson(filename)), job))
+      throw new Error('Delivered model operation ID belongs to another request', { cause: error });
+  }
+  return filename;
+}
 export type ModelHostEvent =
   | { phase: 'started' | 'unchanged'; checkedAt: string }
   | (ModelMutationRecord & { checkedAt: string });

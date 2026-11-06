@@ -17,6 +17,7 @@ import { createNativeModelClient } from '../../src/openclaw/model-client.js';
 import { runModelOperation } from '../../src/openclaw/model-worker.js';
 import { modelHostJournal } from '../../src/openclaw/model-journal.js';
 import { modelJob } from '../helpers/model-operation.js';
+import { parseModelResult } from '../../src/openclaw/model-result.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 describe('native Gateway persistent model selection', () => {
@@ -234,7 +235,22 @@ describe('native Gateway persistent model selection', () => {
           models: expect.arrayContaining([expect.objectContaining({ model: 'fixture/two' })]),
         });
         expect(JSON.stringify(inventory)).not.toContain('fixture/blocked');
+        const pending = { ...hostJob, operationId: 'ab4d5841-6a97-4014-8596-d372d73c99af' };
+        const missing = await runModelOperation(pending, localHost, 'inspect');
+        expect(parseModelResult({ ok: true, ...missing }, pending, 'inspect')).toMatchObject({
+          phase: 'not-recorded',
+          maintenanceHeld: null,
+        });
+        const fenced = await runModelOperation(pending, localHost, 'accept-previous');
+        expect(parseModelResult({ ok: true, ...fenced }, pending, 'accept-previous')).toMatchObject(
+          { phase: 'unchanged', reconciled: true },
+        );
+        await expect(runModelOperation(pending, localHost)).rejects.toThrow(/already started/);
+        expect(records).toHaveLength(0);
         const changed = await runModelOperation(hostJob, localHost);
+        expect(parseModelResult({ ok: true, ...changed }, hostJob, 'execute').phase).toBe(
+          'complete',
+        );
         expect(changed).toMatchObject({ phase: 'complete', maintenanceHeld: false });
         const journal = await modelHostJournal(home, hostJob, false);
         expect((await journal.events()).map((row) => row.phase)).toEqual([

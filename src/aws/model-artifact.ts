@@ -21,10 +21,14 @@ export interface ModelArtifact {
   digest: string;
   files: ModelArtifactFile[];
 }
+export interface ModelArtifactPin {
+  digest: string;
+  files: Omit<ModelArtifactFile, 'compressed'>[];
+}
 const sha = (value: Uint8Array | string) => createHash('sha256').update(value).digest('hex');
 const rootShell = (script: string) =>
   `env -i HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin bash --noprofile --norc -c ${shellQuote(script)}`;
-const descriptor = (files: ModelArtifactFile[]) =>
+const descriptor = (files: ModelArtifactPin['files']) =>
   files.map(({ name, sha256, size, compressedSha256 }) => ({
     name,
     sha256,
@@ -61,6 +65,7 @@ export async function packagedModelArtifact(): Promise<ModelArtifact> {
   );
 }
 function validate(artifact: ModelArtifact) {
+  parseModelArtifactPin(artifactPin(artifact));
   if (
     !artifact ||
     !Array.isArray(artifact.files) ||
@@ -87,6 +92,55 @@ function validate(artifact: ModelArtifact) {
       throw new Error('Model worker artifact decompression failed integrity verification');
   });
 }
+const artifactPin = (artifact: ModelArtifact): ModelArtifactPin => ({
+  digest: artifact.digest,
+  files: descriptor(artifact.files),
+});
+export function pinModelArtifact(artifact: ModelArtifact): ModelArtifactPin {
+  validate(artifact);
+  return artifactPin(artifact);
+}
+export function parseModelArtifactPin(value: unknown): ModelArtifactPin {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('Invalid model artifact pin');
+  const row = value as Record<string, unknown>;
+  if (
+    Object.keys(row).some((key) => !['digest', 'files'].includes(key)) ||
+    typeof row.digest !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(row.digest) ||
+    !Array.isArray(row.files) ||
+    row.files.length !== modelArtifactFilenames.length
+  )
+    throw new Error('Invalid model artifact pin inventory');
+  const files = row.files.map((value, index) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error('Invalid model artifact file pin');
+    const file = value as Record<string, unknown>;
+    if (
+      Object.keys(file).some(
+        (key) => !['name', 'sha256', 'size', 'compressedSha256'].includes(key),
+      ) ||
+      file.name !== modelArtifactFilenames[index] ||
+      typeof file.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(file.sha256) ||
+      typeof file.compressedSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(file.compressedSha256) ||
+      !Number.isSafeInteger(file.size) ||
+      (file.size as number) < 1 ||
+      (file.size as number) > 8 * 1024 * 1024
+    )
+      throw new Error('Invalid model artifact file pin');
+    return {
+      name: modelArtifactFilenames[index],
+      sha256: file.sha256,
+      compressedSha256: file.compressedSha256,
+      size: file.size as number,
+    };
+  });
+  if (sha(JSON.stringify(descriptor(files))) !== row.digest)
+    throw new Error('Model artifact pin identity digest changed');
+  return { digest: row.digest, files };
+}
 export function modelArtifactDirectory(digest: string) {
   if (!/^[a-f0-9]{64}$/.test(digest)) throw new Error('Invalid model worker artifact digest');
   return `/var/lib/openclaw-aws/model-artifacts/${digest}`;
@@ -104,12 +158,82 @@ function rootPreparation(directory: string) {
     ]),
   ];
 }
-function verifyFile(filename: string, digest: string, size: number) {
+export function verifyModelArtifactFiles(input: ModelArtifactPin): string[] {
+  const pin = parseModelArtifactPin(input);
+  const directory = modelArtifactDirectory(pin.digest);
+  return [
+    ...['/var/lib/openclaw-aws', '/var/lib/openclaw-aws/model-artifacts', directory].flatMap(
+      (value) => [
+        `test -d ${shellQuote(value)} && test ! -L ${shellQuote(value)}`,
+        `test "$(/usr/bin/stat -c '%u:%a' ${shellQuote(value)})" = 0:755`,
+      ],
+    ),
+    ...pin.files.flatMap((file) =>
+      verifyFile(`${directory}/${file.name}`, file.sha256, file.size, true),
+    ),
+  ];
+}
+function verifyFile(filename: string, digest: string, size: number, absolute = false) {
+  const stat = absolute ? '/usr/bin/stat' : 'stat';
+  const checksum = absolute ? '/usr/bin/sha256sum' : 'sha256sum';
   return [
     `test -f ${shellQuote(filename)} && test ! -L ${shellQuote(filename)}`,
-    `test "$(stat -c '%u:%a:%h:%s' ${shellQuote(filename)})" = ${shellQuote(`0:644:1:${size}`)}`,
-    `printf '%s  %s\\n' ${shellQuote(digest)} ${shellQuote(filename)} | sha256sum --check --status`,
+    `test "$( ${stat} -c '%u:%a:%h:%s' ${shellQuote(filename)})" = ${shellQuote(`0:644:1:${size}`)}`,
+    `printf '%s  %s\\n' ${shellQuote(digest)} ${shellQuote(filename)} | ${checksum} --check --status`,
   ];
+}
+/** Passive probe: missing/incomplete artifacts may be delivered; unsafe or
+ * changed existing content is an error rather than permission to overwrite. */
+export function modelArtifactProbe(input: ModelArtifactPin) {
+  const pin = parseModelArtifactPin(input);
+  const directory = modelArtifactDirectory(pin.digest);
+  const absent = `printf '%s' '{"ready":false}'; exit 0`;
+  return rootShell(
+    [
+      'set -e',
+      'test "$(id -u)" = 0',
+      ...['/var/lib/openclaw-aws', '/var/lib/openclaw-aws/model-artifacts', directory].flatMap(
+        (value) => [
+          `test ! -L ${shellQuote(value)}`,
+          `if [ ! -e ${shellQuote(value)} ]; then ${absent}; fi`,
+          `test -d ${shellQuote(value)}`,
+          `test "$(stat -c '%u:%a' ${shellQuote(value)})" = 0:755`,
+        ],
+      ),
+      ...pin.files.flatMap((file) => [
+        `test ! -L ${shellQuote(`${directory}/${file.name}`)}`,
+        `if [ ! -e ${shellQuote(`${directory}/${file.name}`)} ]; then ${absent}; fi`,
+        ...verifyFile(`${directory}/${file.name}`, file.sha256, file.size),
+      ]),
+      `printf '%s' '{"ready":true}'`,
+    ].join('\n'),
+  );
+}
+export async function hasModelArtifact(
+  instanceId: string,
+  target: AwsLocation,
+  pin: ModelArtifactPin,
+  signal?: AbortSignal,
+) {
+  const result = await executeSsm(instanceId, target, [modelArtifactProbe(pin)], {
+    executionSeconds: 60,
+    signal,
+  });
+  try {
+    const parsed: unknown = JSON.parse(result.stdout);
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      Object.keys(parsed).length !== 1 ||
+      !('ready' in parsed) ||
+      typeof parsed.ready !== 'boolean'
+    )
+      throw new Error('Invalid artifact probe result');
+    return parsed.ready;
+  } catch {
+    throw new Error('Model artifact availability could not be verified');
+  }
 }
 /** Root writes only under a root-owned artifact tree, never through Ubuntu's
  * state. Atomic create-only publication supports concurrent identical delivery;
@@ -181,6 +305,9 @@ export async function deliverModelArtifact(
   artifact: ModelArtifact,
   signal?: AbortSignal,
 ) {
+  const pin = pinModelArtifact(artifact);
+  if (await hasModelArtifact(instanceId, target, pin, signal))
+    return { digest: pin.digest, directory: modelArtifactDirectory(pin.digest) };
   const commands = modelArtifactCommands(artifact);
   // Preserve ordering: a file's final assembly depends on all of its chunks.
   // Batch only adjacent bounded commands, without concurrent host mutations.
@@ -190,5 +317,7 @@ export async function deliverModelArtifact(
       signal,
     });
   }
+  if (!(await hasModelArtifact(instanceId, target, pin, signal)))
+    throw new Error('Model artifact delivery was not fully verified');
   return { digest: artifact.digest, directory: modelArtifactDirectory(artifact.digest) };
 }

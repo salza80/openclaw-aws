@@ -154,7 +154,62 @@ export async function runModelOperation(
         : observation(await inspectModelSelection(readOnly, job.scope))),
     };
   }
-  const journal = await modelHostJournal(host.home, job, mode === 'execute');
+  const expectedHash = job.action.expectedHash;
+  const cancelPending = async (
+    journal: Awaited<ReturnType<typeof modelHostJournal>>,
+    current: ModelSelectionObservation,
+  ) => {
+    if (current.configHash !== expectedHash)
+      throw new Error('The preview changed; an unrecorded request cannot be accepted as unchanged');
+    await journal.claim();
+    await journal.append({ phase: 'unchanged' });
+    await journal.release();
+    return {
+      ...header,
+      phase: 'unchanged',
+      maintenanceHeld: false,
+      reconciled: true,
+      observed: observation(current),
+      replayAllowed: false,
+    };
+  };
+  let journal;
+  try {
+    journal = await modelHostJournal(host.home, job, mode === 'execute');
+  } catch (error) {
+    if (
+      mode === 'execute' ||
+      !(error instanceof Error) ||
+      !('code' in error) ||
+      error.code !== 'ENOENT'
+    )
+      throw error;
+    let current: ModelSelectionObservation | undefined;
+    try {
+      current = await inspectModelSelection(readOnly, job.scope);
+    } catch {
+      /* Unknown history is never a healthy result. */
+    }
+    if (mode === 'inspect')
+      return {
+        ...header,
+        phase: 'not-recorded',
+        maintenanceHeld: null,
+        recordedAt: null,
+        observed: current ? observation(current) : null,
+        replayAllowed: false,
+      };
+    if (mode !== 'accept-previous' || !current || current.configHash !== job.action.expectedHash)
+      throw new Error(
+        'No durable model intent exists; only an unchanged preview can be explicitly accepted to cancel a pending request',
+        { cause: error },
+      );
+    // A delayed original SSM command may still arrive. Persist its immutable
+    // no-write terminal receipt under the same flock before allowing a new job.
+    // Its later execute path will refuse to replay this operation ID.
+    const cancelled = await modelHostJournal(host.home, job, true);
+    return cancelPending(cancelled, current);
+  }
   if (mode !== 'execute') {
     const events = await journal.events();
     const mutations = events.filter(
@@ -178,11 +233,20 @@ export async function runModelOperation(
         observed: current ? observation(current) : null,
         replayAllowed: false,
       };
-    if (!held || !current)
+    if (!current)
       throw new Error('Reconciliation requires owned maintenance and a fresh native observation');
+    if (!held && !latest && mode === 'accept-previous') return cancelPending(journal, current);
+    const acceptedPhase =
+      mode === 'accept-requested' ? 'complete' : !intent ? 'unchanged' : 'rolled-back';
+    if (!held && latest?.phase !== acceptedPhase)
+      throw new Error('This operation has no owned hold for the requested reconciliation outcome');
     // A crash before the first model intent has no write to adopt. Only the
     // explicit previous-state acceptance may release that preflight hold.
     if (!intent) {
+      if (current.configHash !== expectedHash)
+        throw new Error(
+          'The preview changed before model intent; previous-state acceptance cannot certify unchanged configuration',
+        );
       if (
         mode !== 'accept-previous' ||
         events.some((value) => value.phase !== 'started' && value.phase !== 'unchanged')
@@ -216,7 +280,7 @@ export async function runModelOperation(
       const phase = requested ? 'complete' : 'rolled-back';
       if (latest?.phase !== phase) await journal.append({ ...intent, phase });
     }
-    await journal.release();
+    if (held) await journal.release();
     return {
       ...header,
       phase: intent ? (mode === 'accept-requested' ? 'complete' : 'rolled-back') : 'unchanged',

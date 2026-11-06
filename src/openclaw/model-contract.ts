@@ -74,7 +74,7 @@ export function parseModelJob(value: unknown): ModelJob {
     !/^\d{12}$/.test(account) ||
     !validAwsRegion(region) ||
     !new RegExp(
-      `^arn:(aws|aws-us-gov|aws-cn):cloudformation:${region}:${account}:stack/OpenclawStack-${deploymentName}/[A-Za-z0-9-]+$`,
+      `^arn:(aws|aws-us-gov|aws-cn):cloudformation:${region}:${account}:stack/[A-Za-z][A-Za-z0-9-]{0,127}/[A-Za-z0-9-]+$`,
     ).test(stackId) ||
     !/^i-[a-f0-9]{8,17}$/.test(instanceId) ||
     !/^AROA[A-Z0-9]{12,124}$/.test(roleId)
@@ -87,7 +87,19 @@ export function parseModelJob(value: unknown): ModelJob {
   exact(runtime, ['openclaw', 'node']);
   if (runtime.openclaw !== OPENCLAW_VERSION || runtime.node !== OPENCLAW_NODE_VERSION)
     throw new Error('Model operation requires the supported pinned native runtime');
-  const action = modelObject(row.action);
+  const parsedAction = nativeModelAction(row.action);
+  return {
+    schemaVersion: 1,
+    operationId,
+    target: { deploymentName, stackId, instanceId, roleId, account, region },
+    scope: parsedScope,
+    action: parsedAction,
+    bedrockRole: row.bedrockRole,
+    runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
+  };
+}
+export function nativeModelAction(value: unknown): ModelAction {
+  const action = modelObject(value);
   let parsedAction: ModelAction;
   if (action.kind === 'current') {
     exact(action, ['kind']);
@@ -121,15 +133,7 @@ export function parseModelJob(value: unknown): ModelJob {
       allowRestart: action.allowRestart,
     };
   } else throw new Error('Unsupported model operation');
-  return {
-    schemaVersion: 1,
-    operationId,
-    target: { deploymentName, stackId, instanceId, roleId, account, region },
-    scope: parsedScope,
-    action: parsedAction,
-    bedrockRole: row.bedrockRole,
-    runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
-  };
+  return parsedAction;
 }
 export const modelJobDigest = (job: ModelJob) =>
   createHash('sha256')

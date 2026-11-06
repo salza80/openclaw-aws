@@ -147,6 +147,21 @@ See the [sizing report](https://github.com/salza80/openclaw-aws/blob/main/docs/e
 
 ## Commands
 
+### `openclaw-aws models`
+
+Read the running Gateway's native inventory and change its persistent default or one existing agent's model through SSM:
+
+```bash
+openclaw-aws models current --name my-bot --json
+openclaw-aws models list --name my-bot --agent researcher --provider openrouter --json
+openclaw-aws models set 'openrouter/MODEL_FROM_LIST' --name my-bot --agent researcher --dry-run
+openclaw-aws models set 'openrouter/MODEL_FROM_LIST' --name my-bot --agent researcher --yes
+openclaw-aws models inspect --name my-bot --operation-id <operation-uuid> --json
+openclaw-aws models reconcile --name my-bot --operation-id <operation-uuid> --accept requested --yes
+```
+
+Copy an exact model reference from `models list`. Omit `--agent` to target Gateway defaults; explicit sibling agent settings and session overrides remain distinct. The provider must already be configured. These commands do not send model prompts or replace EC2/storage. A Gateway with native reload disabled requires explicit `--allow-restart` consent. See [model management](docs/model-management.md) for policy, first-use tool delivery and recovery after interrupted commands.
+
 ### `openclaw-aws init`
 
 Interactive setup wizard to create a config.
