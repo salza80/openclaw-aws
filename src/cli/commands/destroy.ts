@@ -43,6 +43,7 @@ async function deleteApiKeyParam(
   provider: Provider,
   region: AwsLocation,
 ): Promise<void> {
+  if (provider === 'amazon-bedrock') return;
   const client = createSsmClient(region);
   const paramName = getApiKeyParamName(configName, provider);
   try {

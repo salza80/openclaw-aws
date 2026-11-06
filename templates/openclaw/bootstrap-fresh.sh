@@ -8,11 +8,10 @@ else
     printf 'ERROR: existing OpenClaw environment without configuration; back up ~/.openclaw/.env, then complete onboarding manually or move it aside before retrying setup\n' >&2
     exit 1
   fi
-  fetch_parameter @@API_KEY_PARAM_NAME@@ "$WORK_DIR/api-key.json"
+  : > "$WORK_DIR/openclaw.env"
+  @@PROVIDER_KEY_SETUP@@
   fetch_parameter @@GATEWAY_TOKEN_PARAM_NAME@@ "$WORK_DIR/gateway-token.json"
-  API_KEY="$(jq -er '.Parameter.Value' "$WORK_DIR/api-key.json")"
   GATEWAY_TOKEN="$(jq -er '.Parameter.Value' "$WORK_DIR/gateway-token.json")"
-  write_dotenv_entry @@PROVIDER_ENV@@ "$API_KEY" > "$WORK_DIR/openclaw.env"
   write_dotenv_entry OPENCLAW_GATEWAY_TOKEN "$GATEWAY_TOKEN" >> "$WORK_DIR/openclaw.env"
   install -o ubuntu -g ubuntu -m 600 "$WORK_DIR/openclaw.env" "$STATE_DIR/.env"
   unset API_KEY GATEWAY_TOKEN

@@ -6,7 +6,7 @@ import {
 } from '@aws-sdk/client-ssm';
 import { OPENCLAW_PROVIDER_SETUP } from './install.js';
 import { getApiKeyParamName } from '../cli/utils/api-keys.js';
-import type { Provider } from '../cli/types/index.js';
+import type { ApiKeyProvider } from '../cli/types/index.js';
 
 export interface RestoreSecretOwner {
   deploymentName: string;
@@ -22,7 +22,7 @@ export async function importRestoreProviderSecrets(
   client: Pick<SSMClient, 'send'>,
   owner: RestoreSecretOwner,
   environment: Record<string, string>,
-): Promise<{ providers: Provider[]; parameterNames: string[] }> {
+): Promise<{ providers: ApiKeyProvider[]; parameterNames: string[] }> {
   if (
     !/^[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?$/.test(owner.deploymentName) ||
     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(owner.operationId) ||
@@ -42,9 +42,9 @@ export async function importRestoreProviderSecrets(
       throw new Error('A restored provider credential exceeds the supported SSM secret format');
     return [
       {
-        provider: provider as Provider,
+        provider: provider as ApiKeyProvider,
         value,
-        name: getApiKeyParamName(owner.deploymentName, provider as Provider),
+        name: getApiKeyParamName(owner.deploymentName, provider as ApiKeyProvider),
       },
     ];
   });

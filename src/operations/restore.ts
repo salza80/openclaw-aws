@@ -129,7 +129,6 @@ export async function stageRestore(
           ctx,
           {
             stackName: ctx.config.stack.name,
-            stackStatus: 'CREATE_COMPLETE',
             stackId: outputs.DeploymentId,
           },
           { restoredFrom: { operationId: record.operationId, pointId: record.recovery.pointId } },

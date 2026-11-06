@@ -60,6 +60,27 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 describe('create workflow', () => {
+  it('accepts Bedrock setup without resolving a model key or probing an invented provider-key namespace', async () => {
+    await createDeployment({
+      name: 'alpha',
+      provider: 'bedrock',
+      bedrockRegion: 'eu-central-1',
+      model: 'amazon-bedrock/example-profile',
+      yes: true,
+    });
+    expect(mocks.key).not.toHaveBeenCalled();
+    expect(mocks.configure.mock.calls[0][0]).toMatchObject({
+      apiProvider: 'amazon-bedrock',
+      bedrockRegion: 'eu-central-1',
+    });
+    expect(mocks.ssm.mock.calls[0][0].input.Names).toEqual([
+      '/openclaw/alpha/gateway-token',
+      '/openclaw/alpha/api-key',
+    ]);
+    const input = mocks.deploy.mock.calls[0][1];
+    expect(input.apiProvider).toBe('amazon-bedrock');
+    expect(input).not.toHaveProperty('apiKey');
+  });
   it('composes setup and the shared deployment operation using the selected identity', async () => {
     await createDeployment({
       name: 'alpha',

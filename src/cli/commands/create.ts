@@ -2,7 +2,6 @@ import type { CommandModule } from 'yargs';
 import prompts from 'prompts';
 import { GetParametersCommand } from '@aws-sdk/client-ssm';
 import { configureDeployment, type InitArgs } from './init.js';
-import { API_PROVIDERS } from '../constants.js';
 import { providerChoice } from '../utils/providers.js';
 import { configExistsByName, getConfigPathByName, loadConfigByName } from '../utils/config.js';
 import { getCurrentName } from '../utils/config-store.js';
@@ -21,6 +20,7 @@ import { logger } from '../utils/logger.js';
 import { resolveAwsTarget } from '../../aws/target.js';
 import type { CommandContext } from '../utils/context.js';
 import { deployDeployment } from '../../operations/deployment.js';
+import { freshProviderCredentials, PROVIDER_CONNECTIONS } from '../../openclaw/connections.js';
 
 interface CreateArgs extends InitArgs {
   name: string;
@@ -39,9 +39,11 @@ export async function createDeployment(argv: CreateArgs): Promise<void> {
   const provider = argv.provider
     ? providerChoice(argv.provider)
     : (argv.apiProvider ?? defaults?.openclaw?.apiProvider ?? 'anthropic-api-key');
-  let apiKey = resolveApiKey(provider);
+  if (provider !== 'amazon-bedrock' && argv.bedrockRegion !== undefined)
+    throw new ValidationError('--bedrock-region requires Amazon Bedrock as the initial provider');
+  let apiKey = provider === 'amazon-bedrock' ? undefined : resolveApiKey(provider);
   const interactive = !argv.yes && Boolean(process.stdin.isTTY);
-  if (!apiKey && interactive) {
+  if (provider !== 'amazon-bedrock' && !apiKey && interactive) {
     const response = await prompts({
       type: 'password',
       name: 'key',
@@ -53,7 +55,7 @@ export async function createDeployment(argv: CreateArgs): Promise<void> {
       return;
     }
   }
-  if (!apiKey)
+  if (provider !== 'amazon-bedrock' && !apiKey)
     throw new AWSError(`Missing API key: ${getApiKeyEnvVar(provider)}`, [
       `Set ${getApiKeyEnvVar(provider)} in your environment or .env; credentials are never saved in the deployment config`,
     ]);
@@ -65,6 +67,10 @@ export async function createDeployment(argv: CreateArgs): Promise<void> {
       ...argv,
       yes: !interactive,
       apiProvider: provider,
+      bedrockRegion:
+        provider === 'amazon-bedrock'
+          ? (argv.bedrockRegion ?? defaults?.openclaw?.bedrock?.region)
+          : argv.bedrockRegion,
       region: argv.region ?? defaults?.aws.region,
       profile: argv.profile ?? defaults?.aws.profile,
       instanceType: argv.instanceType ?? defaults?.instance.type,
@@ -89,7 +95,7 @@ export async function createDeployment(argv: CreateArgs): Promise<void> {
         }
         const client = createSsmClient(target);
         const names = [
-          getApiKeyParamName(name, provider),
+          ...(provider === 'amazon-bedrock' ? [] : [getApiKeyParamName(name, provider)]),
           getGatewayTokenParamName(name),
           `/openclaw/${name}/api-key`,
         ];
@@ -135,8 +141,7 @@ export async function createDeployment(argv: CreateArgs): Promise<void> {
   }
   await validatePreDeploy(ctx.config, ctx.target, Boolean(argv.yes));
   await deployDeployment(ctx, {
-    apiProvider: provider,
-    apiKey,
+    ...freshProviderCredentials(provider, apiKey),
     progress: (message) => logger.info(message),
   });
   logger.success(`OpenClaw '${ctx.name}' is ready. Run openclaw-aws status --name ${ctx.name}`);
@@ -150,8 +155,13 @@ export const createCommand: CommandModule<{}, CreateArgs> = {
       .positional('name', { type: 'string', demandOption: true, describe: 'New deployment name' })
       .option('provider', {
         type: 'string',
-        describe: 'Provider, e.g. openrouter or anthropic',
-        choices: API_PROVIDERS.flatMap(({ value }) => [value, value.replace(/-api-key$/, '')]),
+        describe: 'Provider, e.g. openrouter, anthropic or bedrock',
+        choices: [
+          ...new Set([
+            ...PROVIDER_CONNECTIONS.flatMap(({ value }) => [value, value.replace(/-api-key$/, '')]),
+            'bedrock',
+          ]),
+        ],
       })
       .option('region', {
         type: 'string',
@@ -160,6 +170,10 @@ export const createCommand: CommandModule<{}, CreateArgs> = {
       .option('profile', { type: 'string', describe: 'AWS credential profile' })
       .option('instance-type', { type: 'string', describe: 'EC2 instance type' })
       .option('model', { type: 'string', describe: 'Initial native provider/model reference' })
+      .option('bedrock-region', {
+        type: 'string',
+        describe: 'Bedrock inference region (separate from EC2 region)',
+      })
       .option('cloudflare-account-id', { type: 'string' })
       .option('cloudflare-gateway-id', { type: 'string' })
       .option('yes', {

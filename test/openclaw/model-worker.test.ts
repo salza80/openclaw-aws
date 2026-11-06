@@ -95,6 +95,23 @@ afterEach(async () => {
 });
 const writes = () => calls.filter((method) => method === 'config.patch');
 describe('durable host model operations', () => {
+  it.each([
+    [{ available: false, unavailableReason: 'missing-auth' }, /authentication is unavailable/],
+    [{ available: false, unavailableReason: 'unavailable' }, /route is unavailable/],
+    [{ supportsTools: false }, /unsupported tool use/],
+    [{ manualSelectionAllowed: false }, /policy does not permit/],
+  ])(
+    'reports actionable native preflight guidance without publishing provider diagnostics: %j',
+    async (overrides, message) => {
+      catalog[1] = { ...(catalog[1] as object), ...overrides, providerDiagnostic: secret };
+      const result = await runModelOperation(modelJob, host);
+      expect(result).toMatchObject({ phase: 'unchanged', maintenanceHeld: false });
+      expect(result).toHaveProperty('message', expect.stringMatching(message));
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expect(writes()).toHaveLength(0);
+      expect(published).toBe('openrouter/old');
+    },
+  );
   it('reports missing history truthfully and explicitly fences a delayed SSM request without repeating a model write', async () => {
     expect(await runModelOperation(modelJob, host, 'inspect')).toMatchObject({
       phase: 'not-recorded',

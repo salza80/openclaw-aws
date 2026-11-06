@@ -2,11 +2,12 @@ import { Stack, type StackProps } from 'aws-cdk-lib';
 import { CfnRolePolicy, PolicyDocument, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import type { Construct } from 'constructs';
 import { RegionInfo } from 'aws-cdk-lib/region-info';
+import { validBedrockRegion, type BedrockRoute } from '../aws/bedrock-routes.js';
 import {
-  validateBedrockRoute,
-  validBedrockRegion,
-  type BedrockRoute,
-} from '../aws/bedrock-routes.js';
+  BEDROCK_SELECTION_METADATA,
+  bedrockSelectionMetadata,
+  parseBedrockSelection,
+} from '../aws/bedrock-selection.js';
 
 export interface BedrockAccessProps extends StackProps {
   roleName: string;
@@ -28,7 +29,14 @@ export class BedrockAccessStack extends Stack {
     const partition = RegionInfo.get(props.env.region).partition;
     if (!partition) throw new Error('CDK cannot establish the selected Bedrock partition');
     const identity = { account: props.env.account, partition };
-    const routes = props.routes.map((route) => validateBedrockRoute(route, identity));
+    const selection = parseBedrockSelection(
+      { discoveryRegion: props.discoveryRegion, routes: props.routes },
+      identity,
+    );
+    const routes = selection.routes;
+    this.templateOptions.metadata = {
+      [BEDROCK_SELECTION_METADATA]: bedrockSelectionMetadata(selection, identity),
+    };
     const document = new PolicyDocument({ minimize: true });
     const regions = [
       ...new Set([props.discoveryRegion, ...routes.map((route) => route.region)]),

@@ -34,7 +34,10 @@ import {
   previewBedrockAccess,
   applyBedrockAccess,
   discardBedrockAccessPreview,
+  inspectBedrockAccess,
+  planBedrockAccessExtension,
 } from '../../src/aws/bedrock-access.js';
+import { BEDROCK_SELECTION_METADATA } from '../../src/aws/bedrock-selection.js';
 const ctx = makeCommandContext({ target: { ...testTarget, region: 'eu-central-1' } });
 const source = {
   stackId: 'arn:aws:cloudformation:eu-central-1:123456789012:stack/OpenclawStack-alpha/source-id',
@@ -59,6 +62,7 @@ const selection = {
   ],
 };
 type Template = {
+  Metadata?: Record<string, unknown>;
   Resources: Record<
     string,
     {
@@ -184,6 +188,71 @@ async function existingPreview() {
   return created;
 }
 describe('Bedrock policy-only preview and execution', () => {
+  it('discovers the exact applied host route union after local state loss without AWS writes', async () => {
+    expect(await inspectBedrockAccess(ctx)).toBeUndefined();
+    const preview = await previewBedrockAccess(ctx, selection, { pollMs: 0 });
+    await applyBedrockAccess(ctx, selection, preview, { pollMs: 0 });
+    saved = structuredClone(desired);
+    exists = true;
+    executed = false;
+    mocks.cfn.mockClear();
+    expect(await inspectBedrockAccess(ctx)).toEqual(selection);
+    const model = 'provider.second';
+    const arn = `arn:aws:bedrock:eu-central-1::foundation-model/${model}`;
+    const additional = {
+      discoveryRegion: selection.discoveryRegion,
+      routes: [
+        {
+          ...selection.routes[0],
+          model: `amazon-bedrock/${model}`,
+          invocationArn: arn,
+          modelArns: [arn],
+        },
+      ],
+    };
+    const union = await planBedrockAccessExtension(ctx, additional);
+    expect(union.routes).toHaveLength(2);
+    expect(union.routes).toContainEqual(selection.routes[0]);
+    expect(union.routes).toContainEqual(additional.routes[0]);
+    expect(
+      mocks.cfn.mock.calls.every(
+        ([command]) =>
+          command instanceof DescribeStacksCommand || command instanceof GetTemplateCommand,
+      ),
+    ).toBe(true);
+    await expect(
+      planBedrockAccessExtension(ctx, { ...additional, discoveryRegion: 'us-east-1' }),
+    ).rejects.toThrow(/whole-host region change/);
+  });
+  it('does not treat missing, mismatched or drifted remote route metadata as an empty grant inventory', async () => {
+    const preview = await previewBedrockAccess(ctx, selection, { pollMs: 0 });
+    await applyBedrockAccess(ctx, selection, preview, { pollMs: 0 });
+    saved = structuredClone(desired);
+    exists = true;
+    executed = false;
+    const original = structuredClone(saved);
+    delete saved.Metadata;
+    await expect(inspectBedrockAccess(ctx)).rejects.toThrow(/no managed route metadata/);
+    saved = structuredClone(original);
+    saved.Metadata![BEDROCK_SELECTION_METADATA] = {
+      schemaVersion: 1,
+      discoveryRegion: 'eu-central-1',
+      routes: [],
+    };
+    await expect(inspectBedrockAccess(ctx)).rejects.toThrow(/does not match its route inventory/);
+    saved = structuredClone(original);
+    const originalIam = mocks.iam.getMockImplementation()!;
+    mocks.iam.mockImplementation((command) =>
+      command instanceof GetRolePolicyCommand
+        ? Promise.resolve({
+            RoleName: source.role.name,
+            PolicyName: stackName,
+            PolicyDocument: '{}',
+          })
+        : originalIam(command),
+    );
+    await expect(inspectBedrockAccess(ctx)).rejects.toThrow(/unmanaged drift/);
+  });
   it('keeps account/role synthesis pinned even when incoming selection data contains extra stack options', async () => {
     const foreign = {
       ...selection,

@@ -13,11 +13,14 @@ import {
 } from '../utils/validation.js';
 import { handleError, ValidationError } from '../utils/errors.js';
 import type { OpenClawConfig, Provider } from '../types/index.js';
-import { API_PROVIDERS, OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../constants.js';
+import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../constants.js';
+import { PROVIDER_CONNECTIONS } from '../../openclaw/connections.js';
+import { nativeModelReference } from '../../openclaw/model-control.js';
 
 export interface InitArgs {
   profile?: string;
   model?: string;
+  bedrockRegion?: string;
   name?: string;
   region?: string;
   instanceType?: string;
@@ -50,7 +53,11 @@ export const initCommand: CommandModule<{}, InitArgs> = {
       .option('api-provider', {
         type: 'string',
         describe: 'API provider',
-        choices: API_PROVIDERS.map((p) => p.value),
+        choices: PROVIDER_CONNECTIONS.map((p) => p.value),
+      })
+      .option('bedrock-region', {
+        type: 'string',
+        describe: 'Bedrock inference region (defaults to the deployment region)',
       })
       .option('cloudflare-account-id', {
         type: 'string',
@@ -86,7 +93,7 @@ export async function configureDeployment(
   } = {},
 ): Promise<{ config: OpenClawConfig; name: string } | undefined> {
   logger.title('OpenClaw AWS - Deployment Setup Wizard');
-  const apiProviderValues = API_PROVIDERS.map((p) => p.value);
+  const apiProviderValues = PROVIDER_CONNECTIONS.map((p) => p.value);
 
   if (argv.apiProvider && !apiProviderValues.includes(argv.apiProvider)) {
     throw new ValidationError(`Invalid API provider: ${argv.apiProvider}`, [
@@ -203,7 +210,7 @@ export async function configureDeployment(
           type: 'select',
           name: 'apiProvider',
           message: 'Select AI API Provider:',
-          choices: [...API_PROVIDERS],
+          choices: [...PROVIDER_CONNECTIONS],
           initial: 0,
         },
         {
@@ -258,6 +265,36 @@ export async function configureDeployment(
       logger.info('ℹ️  Note: A new VPC will be created for this deployment');
     }
   }
+
+  if (config.openclaw?.apiProvider === 'amazon-bedrock') {
+    config.openclaw.authMode = 'instance-role';
+    config.openclaw.bedrock = { region: argv.bedrockRegion ?? config.aws.region };
+    let model = argv.model;
+    if (!model && !argv.yes) {
+      const selected = await prompts({
+        type: 'text',
+        name: 'model',
+        message: 'Bedrock native model or inference-profile reference (amazon-bedrock/...):',
+        validate: (value: string) => {
+          try {
+            return (
+              nativeModelReference(value).startsWith('amazon-bedrock/') ||
+              'Use an amazon-bedrock/model reference'
+            );
+          } catch {
+            return 'Use an amazon-bedrock/model reference';
+          }
+        },
+      });
+      model = selected.model;
+      if (!model) {
+        logger.warn('Setup cancelled');
+        return;
+      }
+    }
+    if (model) config.openclaw.model = model;
+  } else if (argv.bedrockRegion !== undefined)
+    throw new ValidationError('--bedrock-region requires Amazon Bedrock as the initial provider');
 
   if (config.openclaw?.apiProvider === 'cloudflare-ai-gateway-api-key') {
     let accountId = argv.cloudflareAccountId;
@@ -315,13 +352,23 @@ export async function configureDeployment(
   console.log(
     `  ${chalk.bold('API Provider:')} ${chalk.cyan(config.openclaw?.apiProvider || 'anthropic')}`,
   );
+  if (config.openclaw?.apiProvider === 'amazon-bedrock') {
+    console.log(`  ${chalk.bold('Model authentication:')} AWS instance role`);
+    console.log(
+      `  ${chalk.bold('Bedrock inference region:')} ${chalk.cyan(config.openclaw.bedrock!.region)}`,
+    );
+    console.log('  Model usage is billed through AWS. No model API key is required.');
+  }
 
   // Show required environment variable
   const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
-  const envVarName = apiProvider.toUpperCase().replace(/-/g, '_');
-  console.log(`\n${chalk.yellow('⚠ Required before deployment:')}`);
-  console.log(`  Set your API key: export ${envVarName}=your-api-key`);
-  console.log(`  Or add it to .env: ${envVarName}=your-api-key`);
+  const envVarName =
+    apiProvider === 'amazon-bedrock' ? undefined : apiProvider.toUpperCase().replace(/-/g, '_');
+  if (envVarName) {
+    console.log(`\n${chalk.yellow('⚠ Required before deployment:')}`);
+    console.log(`  Set your API key: export ${envVarName}=your-api-key`);
+    console.log(`  Or add it to .env: ${envVarName}=your-api-key`);
+  }
 
   if (apiProvider === 'openrouter-api-key') {
     console.log(`  Get your key: https://openrouter.ai/keys`);
@@ -347,8 +394,10 @@ export async function configureDeployment(
       await deployConfigured({ name: deploymentName });
     } else {
       console.log(`\n${chalk.bold('Next steps:')}`);
-      console.log(`  Set your API key: ${chalk.cyan(`export ${envVarName}=your-api-key`)}`);
-      console.log(`  Or add it to .env: ${chalk.cyan(`${envVarName}=your-api-key`)}`);
+      if (envVarName) {
+        console.log(`  Set your API key: ${chalk.cyan(`export ${envVarName}=your-api-key`)}`);
+        console.log(`  Or add it to .env: ${chalk.cyan(`${envVarName}=your-api-key`)}`);
+      }
       console.log(`  When you're ready, run: ${chalk.cyan('openclaw-aws deploy')}`);
     }
   }

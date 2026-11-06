@@ -87,6 +87,27 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 describe('inactive restore provisioning', () => {
+  it('creates only the Gateway credential for a fresh keyless runtime; no model API-key parameter is written', async () => {
+    const keyless = {
+      ...ctx,
+      config: {
+        ...ctx.config,
+        openclaw: {
+          apiProvider: 'amazon-bedrock' as const,
+          authMode: 'instance-role' as const,
+          bedrock: { region: 'eu-central-1' },
+          model: 'amazon-bedrock/example-profile',
+        },
+      },
+    };
+    await deployDeployment(keyless, { apiProvider: 'amazon-bedrock' });
+    const writes = mocks.ssm.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command instanceof PutParameterCommand);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].input.Name).toBe('/openclaw/alpha/gateway-token');
+    expect(writes[0].input.Value).toMatch(/^[a-f0-9]{48}$/);
+  });
   it('uses the same masked bootstrap for clone setup while recording independent lineage before its callback can fail', async () => {
     const pointId = '22222222-2222-2222-2222-222222222222';
     await expect(

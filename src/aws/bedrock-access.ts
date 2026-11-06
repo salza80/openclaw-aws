@@ -30,13 +30,13 @@ import {
   sourceAccessIdentity,
   type RecoverySource,
 } from './recovery-source.js';
-import type { BedrockRoute } from './bedrock-routes.js';
-
-export interface BedrockAccessSelection {
-  discoveryRegion: string;
-  /** The union still required by all configured agents, defaults and fallbacks. */
-  routes: BedrockRoute[];
-}
+import {
+  BEDROCK_SELECTION_METADATA,
+  extendBedrockSelection,
+  selectionFromBedrockMetadata,
+  type BedrockAccessSelection,
+} from './bedrock-selection.js';
+export type { BedrockAccessSelection } from './bedrock-selection.js';
 export interface BedrockAccessPreview {
   stackName: string;
   stackId?: string;
@@ -300,6 +300,69 @@ function bounded(signal?: AbortSignal) {
   return signal
     ? AbortSignal.any([signal, AbortSignal.timeout(15 * 60_000)])
     : AbortSignal.timeout(15 * 60_000);
+}
+
+/** Read and verify the applied route inventory from AWS rather than local
+ * state. The metadata must reproduce the whole IAM template, and live IAM
+ * must match it. Missing/foreign/drifted policies are never an empty union.
+ * Caller holds the shared deployment lock through preview and application. */
+export async function inspectBedrockAccess(
+  ctx: CommandContext,
+  options: { signal?: AbortSignal } = {},
+): Promise<BedrockAccessSelection | undefined> {
+  const inspected = await inspectRecoverySource(ctx);
+  const source = {
+    stackId: inspected.stackId,
+    instanceId: inspected.instanceId,
+    role: inspected.role,
+    profile: inspected.profile,
+  };
+  const preview: BedrockAccessPreview = {
+    stackName: stackNameFor(source),
+    source,
+    templateDigest: '',
+    noChanges: true,
+  };
+  const signal = bounded(options.signal);
+  const client = new CloudFormationClient(awsClientConfig(ctx.target));
+  try {
+    const stack = await describeStack(client, preview.stackName, signal);
+    if (!stack) return undefined;
+    assertStack(stack, ctx.target, preview);
+    if (
+      !['CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE'].includes(
+        stack.StackStatus ?? '',
+      )
+    )
+      throw new Error('Bedrock policy is not settled; inspect it before preparing another change');
+    const template = await readTemplate(client, stack.StackId!, signal);
+    const metadata = template.Metadata as Record<string, unknown> | undefined;
+    const selection = selectionFromBedrockMetadata(metadata?.[BEDROCK_SELECTION_METADATA], {
+      account: ctx.target.account,
+      partition: ctx.target.arn.split(':')[1],
+    });
+    const expected = await templateFor(ctx.target, source, selection);
+    if (digest(template) !== digest(expected))
+      throw new Error('Bedrock policy does not match its route inventory; inspect unmanaged drift');
+    const [, policy] = policyResource(template, preview);
+    await checkRole(ctx.target, preview, policy, policy, signal);
+    return selection;
+  } finally {
+    client.destroy();
+  }
+}
+
+/** Preserve existing host routes, including fallback/sibling grants, when a
+ * caller adds a connection or model. No policy is changed by this read. */
+export async function planBedrockAccessExtension(
+  ctx: CommandContext,
+  requested: BedrockAccessSelection,
+  options: { signal?: AbortSignal } = {},
+): Promise<BedrockAccessSelection> {
+  return extendBedrockSelection(await inspectBedrockAccess(ctx, options), requested, {
+    account: ctx.target.account,
+    partition: ctx.target.arn.split(':')[1],
+  });
 }
 
 /** Create a reviewable policy-only change set. Caller holds the deployment lock;

@@ -5,7 +5,12 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import type { AwsLocation } from '../aws/target.js';
 import type { CommandContext } from '../cli/utils/context.js';
-import type { OpenClawConfig, Provider } from '../cli/types/index.js';
+import type { OpenClawConfig, ApiKeyProvider } from '../cli/types/index.js';
+import {
+  freshProviderCredentials,
+  initialModelConnection,
+  type FreshProviderCredentials,
+} from '../openclaw/connections.js';
 import { GetParametersByPathCommand, PutParameterCommand } from '@aws-sdk/client-ssm';
 import { createSsmClient } from '../cli/utils/aws-clients.js';
 import { getApiKeyParamName, getGatewayTokenParamName } from '../cli/utils/api-keys.js';
@@ -21,7 +26,7 @@ import { validateProjectName } from '../cli/utils/validation.js';
 
 async function storeApiKey(
   configName: string,
-  provider: Provider,
+  provider: ApiKeyProvider,
   apiKey: string,
   region: AwsLocation,
 ): Promise<string> {
@@ -178,10 +183,8 @@ async function deployFreshStack(
   );
 }
 
-type FreshProvision = {
+type FreshProvision = FreshProviderCredentials & {
   mode: 'fresh';
-  apiProvider: Provider;
-  apiKey: string;
   progress?: (message: string) => void;
 };
 type RestoreProvision = {
@@ -194,10 +197,14 @@ type RestoreProvision = {
 /** The shared, noninteractive provisioning operation. Callers own input and approval. */
 export async function deployDeployment(
   ctx: CommandContext,
-  options: Omit<FreshProvision, 'mode'>,
+  options: FreshProviderCredentials & { progress?: (message: string) => void },
 ): Promise<Record<string, string>> {
   const captured = { ...ctx, config: structuredClone(ctx.config) };
-  const provided: FreshProvision = { ...options, mode: 'fresh' };
+  const provided: FreshProvision = {
+    ...freshProviderCredentials(options.apiProvider, options.apiKey),
+    progress: options.progress,
+    mode: 'fresh',
+  };
   return withDeploymentLock(captured, () => provisionDeployment(captured, provided));
 }
 
@@ -272,11 +279,14 @@ async function provisionDeployment(
   options: FreshProvision | RestoreProvision,
 ): Promise<Record<string, string>> {
   const restore = options.mode === 'restore' ? options.restore : undefined;
-  const apiKey = options.mode === 'fresh' ? options.apiKey : '';
+  const apiKey =
+    options.mode === 'fresh' && options.apiProvider !== 'amazon-bedrock' ? options.apiKey : '';
   const config = structuredClone(ctx.config);
   const snapshot = JSON.stringify(config);
   if (restore) validateConfig(config);
   else validateProvisioningConfig(config);
+  if (options.mode === 'fresh' && initialModelConnection(config).provider !== options.apiProvider)
+    throw new Error('Provisioning credentials differ from the captured initial provider');
   assertDeploymentTarget({ ...ctx, config });
   // Recheck immediately before writing secrets: planning may have taken minutes.
   try {
@@ -314,7 +324,7 @@ async function provisionDeployment(
   const cdkAppPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../cdk/app.js');
   const outputsFile = resolveOutputsPath(ctx.name);
   try {
-    if (options.mode === 'fresh')
+    if (options.mode === 'fresh' && options.apiProvider !== 'amazon-bedrock')
       await storeApiKey(ctx.name, options.apiProvider, apiKey, ctx.target);
     const gatewayToken = crypto.randomBytes(24).toString('hex');
     privateValues.add(gatewayToken);
@@ -381,7 +391,6 @@ async function provisionDeployment(
       ctx,
       {
         stackName: config.stack.name,
-        stackStatus: 'CREATE_COMPLETE',
         stackId: outputs.DeploymentId,
       },
       {

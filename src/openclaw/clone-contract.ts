@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { object, textField } from './backup-contract.js';
 import { parseRestoreJob, type RestoreJob } from './restore-contract.js';
 import { OPENCLAW_PROVIDER_SETUP, openClawProviderAuthArgs } from './install.js';
-import type { Provider } from '../cli/types/index.js';
+import type { ApiKeyProvider } from '../cli/types/index.js';
 import { getApiKeyParamName } from '../cli/utils/api-keys.js';
 
 /** Recovery transport/runtime identity is shared; source identity adoption is not. */
@@ -10,8 +10,8 @@ export interface CloneJob extends RestoreJob {
   kind: 'clone';
   preview: { contentDigest: string; policyDigest: string };
   credentials: {
-    primary: Provider;
-    providers: Provider[];
+    primary: ApiKeyProvider;
+    providers: ApiKeyProvider[];
     cloudflare?: { accountId: string; gatewayId: string };
   };
 }
@@ -37,10 +37,10 @@ export function parseCloneJob(value: unknown): CloneJob {
     throw new Error(
       'Clone requires a bound whole-team preview and explicit target provider selection',
     );
-  const providers = [...credentials.providers] as Provider[];
+  const providers = [...credentials.providers] as ApiKeyProvider[];
   if (base.backup.capture.members.some((member) => !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(member.id)))
     throw new Error('Clone requires supported native role IDs');
-  const primary = credentials.primary as Provider;
+  const primary = credentials.primary as ApiKeyProvider;
   const cloudflare =
     credentials.cloudflare === undefined ? undefined : object(credentials.cloudflare);
   const selected = {

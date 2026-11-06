@@ -35,6 +35,7 @@ import { probeRecoveryBootstrap } from '../aws/recovery-probe.js';
 import { inspectBackup } from './backup.js';
 import { isDeepStrictEqual } from 'node:util';
 import { cleanupInactiveRecovery } from './restore-cleanup.js';
+import { isApiKeyProvider } from '../openclaw/connections.js';
 
 /** Whole-team knowledge clone intake. Source infrastructure may still be live;
  * source identity is not adopted, so no takeover/destruction check is required.
@@ -266,6 +267,7 @@ export async function stageClone(
   const primary = ctx.config.openclaw?.apiProvider;
   if (
     !primary ||
+    !isApiKeyProvider(primary) ||
     plan.operationId !== plan.bootstrap.operationId ||
     ctx.target.account !== recoveryTarget.account ||
     recoveryTarget.region !== plan.point.job.source.region
@@ -328,7 +330,6 @@ export async function stageClone(
           ctx,
           {
             stackName: ctx.config.stack.name,
-            stackStatus: 'CREATE_COMPLETE',
             stackId: outputs.DeploymentId,
           },
           { clonedFrom: { operationId: record.operationId, pointId: plan.point.id } },

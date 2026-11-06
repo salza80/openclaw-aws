@@ -9,7 +9,8 @@ import { backupOperationId } from '../../operations/backup.js';
 import { OPENCLAW_PROVIDER_SETUP } from '../../openclaw/install.js';
 import type { ExplicitCloneCredentials } from '../../openclaw/clone-credentials.js';
 import { explicitCloneCredentials } from '../../openclaw/clone-credentials.js';
-import type { Provider } from '../types/index.js';
+import type { Provider, ApiKeyProvider } from '../types/index.js';
+import { isApiKeyProvider } from '../../openclaw/connections.js';
 import { providerChoice } from '../utils/providers.js';
 import { createSsmClient } from '../utils/aws-clients.js';
 import { handleError, ValidationError } from '../utils/errors.js';
@@ -37,10 +38,18 @@ interface CloneArgs {
   yes?: boolean;
   json?: boolean;
 }
-type CredentialSource = { provider: Provider; kind: 'env' | 'ssm'; reference: string };
+type CredentialSource = { provider: ApiKeyProvider; kind: 'env' | 'ssm'; reference: string };
 export function cloneCredentialSources(argv: CloneArgs, primary: Provider): CredentialSource[] {
+  if (!isApiKeyProvider(primary))
+    throw new ValidationError(
+      'This clone credential flow requires an API-key provider; instance-role recovery must use the Bedrock recovery setup',
+    );
   const sources: CredentialSource[] = [];
   const add = (provider: Provider, kind: 'env' | 'ssm', reference: string) => {
+    if (!isApiKeyProvider(provider))
+      throw new ValidationError(
+        'An instance-role provider cannot receive an API-key credential source',
+      );
     if (sources.some((source) => source.provider === provider))
       throw new ValidationError('Select exactly one explicit credential source per provider');
     if (
@@ -73,6 +82,8 @@ async function credentials(
   target: AwsTarget,
   interactive: boolean,
 ): Promise<ExplicitCloneCredentials> {
+  if (!isApiKeyProvider(primary))
+    throw new ValidationError('Instance-role providers do not accept clone API-key credentials');
   const values: ExplicitCloneCredentials = {};
   for (const source of sources) {
     if (source.kind === 'env') {
@@ -105,9 +116,9 @@ async function credentials(
       values[source.provider] = value;
     }
   }
-  const needed = new Set<Provider>([primary]);
+  const needed = new Set<ApiKeyProvider>([primary]);
   for (const nativeId of required) {
-    const provider = (Object.keys(OPENCLAW_PROVIDER_SETUP) as Provider[]).find(
+    const provider = (Object.keys(OPENCLAW_PROVIDER_SETUP) as ApiKeyProvider[]).find(
       (provider) =>
         OPENCLAW_PROVIDER_SETUP[provider].providerId === nativeId ||
         OPENCLAW_PROVIDER_SETUP[provider].providerAliases?.includes(nativeId),

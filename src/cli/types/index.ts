@@ -1,6 +1,7 @@
 import { API_PROVIDERS } from '../constants.js';
 
-export type Provider = (typeof API_PROVIDERS)[number]['value'];
+export type ApiKeyProvider = (typeof API_PROVIDERS)[number]['value'];
+export type Provider = ApiKeyProvider | 'amazon-bedrock';
 export interface OpenClawConfig {
   version: string;
   aws: {
@@ -26,6 +27,9 @@ export interface OpenClawConfig {
   };
   openclaw?: {
     apiProvider: Provider;
+    /** Omitted on legacy API-key configurations. Never model Gateway auth. */
+    authMode?: 'api-key' | 'instance-role';
+    bedrock?: { region: string };
     model?: string;
     cloudflare?: { accountId: string; gatewayId: string };
   };

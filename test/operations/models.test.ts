@@ -39,6 +39,7 @@ import {
 import type { CommandContext } from '../../src/cli/utils/context.js';
 import type { ModelJob } from '../../src/openclaw/model-contract.js';
 import { modelJob } from '../helpers/model-operation.js';
+import { loadDeploymentState } from '../../src/operations/state.js';
 let home: string;
 let source: {
   stackId: string;
@@ -159,6 +160,9 @@ describe('shared model operations', () => {
     const result = await applyModelChange(ctx, plan);
     expect(result).toMatchObject({ phase: 'complete', effectiveForNewSessions: 'openrouter/new' });
     expect(await loadModelChange(modelJob.operationId)).toEqual(plan);
+    expect(loadDeploymentState(ctx)?.modelSelections?.agents.researcher.model).toBe(
+      'openrouter/new',
+    );
     expect(ctx).toEqual(original);
     expect(mocks.lock).toHaveBeenCalledTimes(2);
     expect(mocks.source).toHaveBeenCalledTimes(2);
@@ -188,6 +192,7 @@ describe('shared model operations', () => {
       commandId: '12345678-1234-1234-1234-123456789abc',
     });
     expect(await loadModelChange(modelJob.operationId)).toEqual(plan);
+    expect(loadDeploymentState(ctx)?.modelSelections).toBeUndefined();
     const nextPlan = {
       ...plan,
       job: {
@@ -199,6 +204,7 @@ describe('shared model operations', () => {
     await expect(applyModelChange(ctx, nextPlan)).rejects.toThrow(/unresolved/);
     const observed = await inspectModelOperation(ctx, modelJob.operationId);
     expect(observed).toMatchObject({ phase: 'complete', maintenanceHeld: false });
+    expect(loadDeploymentState(ctx)?.modelSelections).toBeUndefined();
     const request = JSON.parse(mocks.execute.mock.calls.at(-1)![2][0]);
     expect(request).toEqual({ job: plan.job, pin: plan.artifact, mode: 'inspect' });
     await expect(applyModelChange(ctx, plan)).rejects.toThrow(/already recorded/);

@@ -50,7 +50,8 @@ try {
 // Determine API provider from config
 const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key'; // Default to Anthropic if not set
 
-const apiKeyParamName = getApiKeyParamName(configName, apiProvider);
+const apiKeyParamName =
+  apiProvider === 'amazon-bedrock' ? undefined : getApiKeyParamName(configName, apiProvider);
 const gatewayTokenParamName = getGatewayTokenParamName(configName);
 
 // Build stack config

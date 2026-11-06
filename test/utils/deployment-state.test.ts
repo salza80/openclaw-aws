@@ -26,6 +26,63 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe('deployment identity and native observations', () => {
+  it('records explicit global/agent model intent without changing initial credential provenance or adopting later native drift', () => {
+    const ctx = makeCommandContext();
+    ctx.config.openclaw = { apiProvider: 'openrouter-api-key', model: 'openrouter/initial' };
+    const original = recordDeploymentState(ctx, status, { newlyCreated: true });
+    const checkedAt = new Date().toISOString();
+    const operationId = '11111111-1111-1111-1111-111111111111';
+    recordDeploymentState(ctx, status, {
+      modelSelection: {
+        scope: { kind: 'default' },
+        model: 'amazon-bedrock/example-profile',
+        operationId,
+        checkedAt,
+      },
+    });
+    recordDeploymentState(ctx, status, {
+      modelSelection: {
+        scope: { kind: 'agent', agentId: 'researcher' },
+        model: 'openrouter/research',
+        operationId,
+        checkedAt,
+      },
+    });
+    const saved = recordDeploymentState(ctx, status, {
+      observed: {
+        version: original.desired.version,
+        model: 'openrouter/native-ui-choice',
+        checkedAt,
+      },
+    });
+    expect(saved.desired).toEqual(original.desired);
+    expect(saved.modelSelections?.default?.model).toBe('amazon-bedrock/example-profile');
+    expect(saved.modelSelections?.agents.researcher.model).toBe('openrouter/research');
+    expect(saved.observed?.model).toBe('openrouter/native-ui-choice');
+    expect(ctx.config.openclaw).toEqual({
+      apiProvider: 'openrouter-api-key',
+      model: 'openrouter/initial',
+    });
+    expect(
+      recordDeploymentState(ctx, status, { newlyCreated: true }).modelSelections,
+    ).toBeUndefined();
+  });
+  it('rejects malformed selection metadata before replacing a valid deployment record', () => {
+    const ctx = makeCommandContext();
+    recordDeploymentState(ctx, status);
+    const before = loadDeploymentState(ctx);
+    expect(() =>
+      recordDeploymentState(ctx, status, {
+        modelSelection: {
+          scope: { kind: 'agent', agentId: '__proto__' },
+          model: 'openrouter/model',
+          operationId: '11111111-1111-1111-1111-111111111111',
+          checkedAt: new Date().toISOString(),
+        },
+      }),
+    ).toThrow();
+    expect(loadDeploymentState(ctx)).toEqual(before);
+  });
   it('records desired state separately from observed UI/model changes without modifying configuration', () => {
     const ctx = makeCommandContext();
     const before = JSON.stringify(ctx.config);

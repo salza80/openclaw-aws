@@ -1,9 +1,10 @@
-import type { Provider } from '../cli/types/index.js';
+import type { Provider, ApiKeyProvider } from '../cli/types/index.js';
+import { isApiKeyProvider } from './connections.js';
 import { OPENCLAW_PROVIDER_SETUP } from './install.js';
-export type ExplicitCloneCredentials = Partial<Record<Provider, string>>;
+export type ExplicitCloneCredentials = Partial<Record<ApiKeyProvider, string>>;
 /** No ambient environment or archived credentials are candidates. */
 export function explicitCloneCredentials(primary: Provider, values: ExplicitCloneCredentials) {
-  if (!Object.hasOwn(OPENCLAW_PROVIDER_SETUP, primary) || !Object.hasOwn(values, primary))
+  if (!isApiKeyProvider(primary) || !Object.hasOwn(values, primary))
     throw new Error('Clone requires explicit credentials for the selected target provider');
   for (const [provider, value] of Object.entries(values))
     if (
@@ -14,7 +15,7 @@ export function explicitCloneCredentials(primary: Provider, values: ExplicitClon
       Buffer.byteLength(value) > 4096
     )
       throw new Error('An explicit clone provider credential is unsupported');
-  const providers = (Object.keys(OPENCLAW_PROVIDER_SETUP) as Provider[]).filter((provider) =>
+  const providers = (Object.keys(OPENCLAW_PROVIDER_SETUP) as ApiKeyProvider[]).filter((provider) =>
     Object.hasOwn(values, provider),
   );
   return {

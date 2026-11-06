@@ -32,6 +32,9 @@ function template(routes: BedrockRoute[]) {
   );
 }
 describe('scoped auxiliary Bedrock IAM', () => {
+  it('synthesizes a stable policy and route inventory regardless of request order', () => {
+    expect(template([direct, profile]).toJSON()).toEqual(template([profile, direct]).toJSON());
+  });
   it('grants exact direct/profile invocation and profile-conditioned backing models without touching EC2', () => {
     const value = template([direct, profile]);
     value.resourceCountIs('AWS::IAM::RolePolicy', 1);

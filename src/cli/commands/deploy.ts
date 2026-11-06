@@ -17,6 +17,7 @@ import type { Provider } from '../types/index.js';
 import { getApiKeyEnvVar, resolveApiKey } from '../utils/api-keys.js';
 
 import { deployDeployment, rejectFailedStack } from '../../operations/deployment.js';
+import { freshProviderCredentials } from '../../openclaw/connections.js';
 
 loadEnv({ path: path.join(process.cwd(), '.env'), quiet: true });
 
@@ -73,7 +74,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
       name: string;
       context: Awaited<ReturnType<typeof buildCommandContext>>;
       apiProvider: Provider;
-      apiKey: string;
+      apiKey?: string;
     }> = [];
     const alreadyDeployed: Array<{ name: string; status: string }> = [];
     const missingKeys: Array<{ name: string; envVar: string }> = [];
@@ -95,10 +96,9 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
 
       validateProvisioningConfig(config);
       const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
-      const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
-      const apiKey = resolveApiKey(apiProvider);
-      if (!apiKey) {
-        missingKeys.push({ name, envVar: apiKeyEnvVar });
+      const apiKey = apiProvider === 'amazon-bedrock' ? undefined : resolveApiKey(apiProvider);
+      if (apiProvider !== 'amazon-bedrock' && !apiKey) {
+        missingKeys.push({ name, envVar: getApiKeyEnvVar(apiProvider) });
         continue;
       }
 
@@ -167,8 +167,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
       const spinner = ora('Preparing deployment...').start();
       try {
         await deployDeployment(ctx, {
-          apiProvider: target.apiProvider,
-          apiKey: target.apiKey,
+          ...freshProviderCredentials(target.apiProvider, target.apiKey),
           progress: (message) => {
             spinner.text = message;
           },
@@ -214,9 +213,9 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
   console.log(''); // Empty line after validation
 
   const apiProvider = config.openclaw?.apiProvider || 'anthropic-api-key';
-  const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
-  const apiKey = resolveApiKey(apiProvider);
-  if (!apiKey) {
+  const apiKey = apiProvider === 'amazon-bedrock' ? undefined : resolveApiKey(apiProvider);
+  if (apiProvider !== 'amazon-bedrock' && !apiKey) {
+    const apiKeyEnvVar = getApiKeyEnvVar(apiProvider);
     throw new AWSError(`Missing API key: ${apiKeyEnvVar}`, [
       `Set it in your shell: export ${apiKeyEnvVar}=your-api-key`,
       `Or add it to .env in your current directory: ${apiKeyEnvVar}=your-api-key`,
@@ -255,8 +254,7 @@ export async function deployConfigured(argv: DeployArgs): Promise<void> {
   const spinner = ora('Preparing deployment...').start();
   try {
     const stackOutputs = await deployDeployment(ctx, {
-      apiProvider,
-      apiKey,
+      ...freshProviderCredentials(apiProvider, apiKey),
       progress: (message) => {
         spinner.text = message;
       },

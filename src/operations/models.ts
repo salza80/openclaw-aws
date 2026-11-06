@@ -35,6 +35,7 @@ import { privateModelJson } from '../openclaw/model-journal.js';
 import type { ModelWorkerMode } from '../openclaw/model-worker.js';
 import { assertDirectoryChain } from '../openclaw/restore-layout.js';
 import { withDeploymentLock } from './lock.js';
+import { recordDeploymentState } from './state.js';
 
 export interface ModelChangePlan {
   schemaVersion: 1;
@@ -365,6 +366,22 @@ async function settleModelIntent(plan: ModelChangePlan, result: ModelResult) {
     await directory.close();
   }
 }
+function recordConfirmedSelection(ctx: CommandContext, plan: ModelChangePlan, result: ModelResult) {
+  if (result.phase !== 'complete' || plan.job.action.kind !== 'set') return;
+  const observation = result.reconciled === true ? modelObject(result.observed) : result;
+  recordDeploymentState(
+    ctx,
+    { stackId: plan.job.target.stackId, stackName: ctx.config.stack.name },
+    {
+      modelSelection: {
+        scope: plan.job.scope,
+        model: plan.job.action.model,
+        operationId: plan.job.operationId,
+        checkedAt: modelText(observation.checkedAt, 64),
+      },
+    },
+  );
+}
 /** Save immutable intent before dispatch. No automatic retry, caller-side
  * rollback or implicit update of creation/provider-secret provenance. */
 export async function applyModelChange(
@@ -397,6 +414,7 @@ export async function applyModelChange(
     try {
       const result = await dispatch(ctx, plan.job, plan.artifact, 'execute', options.signal);
       await settleModelIntent(plan, result);
+      recordConfirmedSelection(ctx, plan, result);
       return result;
     } catch (error) {
       throw new ModelOperationError(
@@ -437,6 +455,7 @@ export async function inspectModelOperation(
     if (!mode) throw new Error('Choose requested or previous model state for reconciliation');
     const result = await dispatch(ctx, plan.job, plan.artifact, mode, options.signal);
     await settleModelIntent(plan, result);
+    if (options.accept === 'requested') recordConfirmedSelection(ctx, plan, result);
     return result;
   });
 }

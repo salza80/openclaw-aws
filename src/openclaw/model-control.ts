@@ -219,23 +219,34 @@ async function assertCatalogChoice(client: NativeModelClient, agentId: string, m
       `${field(row, 'provider')}/${field(row, 'id')}` === model,
   );
   if (!match)
-    throw new Error(
+    throw new ModelControlError(
+      'unchanged',
       'Model is absent from native inventory permitted by this agent policy; review policy and provider discovery before selecting it',
     );
   if (field(match, 'available') === false) {
     const reason = field(match, 'unavailableReason');
-    throw new Error(
+    throw new ModelControlError(
+      'unchanged',
       reason === 'missing-auth'
         ? 'Native model authentication is unavailable; configure the provider before selecting it'
         : 'Native model route is unavailable; inspect provider access and runtime compatibility',
     );
   }
   if (field(match, 'supportsTools') === false)
-    throw new Error('Native catalog reports unsupported tool use for this model');
+    throw new ModelControlError(
+      'unchanged',
+      'Native catalog reports unsupported tool use for this model',
+    );
   if (field(match, 'manualSelectionAllowed') === false)
-    throw new Error('Native model policy does not permit manually selecting this model');
+    throw new ModelControlError(
+      'unchanged',
+      'Native model policy does not permit manually selecting this model',
+    );
   if (Array.isArray(result.pendingProviders) && result.pendingProviders.includes(provider))
-    throw new Error('Native provider refresh is pending; retry after it publishes');
+    throw new ModelControlError(
+      'unchanged',
+      'Native provider refresh is pending; retry after it publishes',
+    );
   // Unknown capabilities/readiness remain advisory. No discovery, token refresh
   // probe or paid inference is hidden inside model selection.
 }
