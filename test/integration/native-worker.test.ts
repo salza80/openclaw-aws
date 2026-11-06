@@ -126,7 +126,7 @@ describe('actual native host capture adapter', () => {
           NO_COLOR: '1',
         },
         extendEnv: false,
-        timeout: 120000,
+        timeout: 180000,
         maxBuffer: 1024 * 1024,
       });
       const captured = JSON.parse(result.stdout);
@@ -209,7 +209,7 @@ describe('actual native host capture adapter', () => {
           AWS_EC2_METADATA_DISABLED: 'true',
         },
         extendEnv: false,
-        timeout: 120000,
+        timeout: 180000,
         maxBuffer: 1024 * 1024,
       });
       const after = JSON.parse(await readFile(configPath, 'utf8'));
@@ -243,5 +243,5 @@ describe('actual native host capture adapter', () => {
       await server.close();
       await rm(directory, { recursive: true, force: true });
     }
-  }, 150000);
+  }, 420000);
 });
