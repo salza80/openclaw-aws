@@ -1,8 +1,15 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { ApiKeyProvider } from '../cli/types/index.js';
 import { isApiKeyProvider } from './connections.js';
-import { object, textField, type BackupMember } from './backup-contract.js';
+import {
+  object,
+  textField,
+  parseMembers,
+  archiveMemberIdentity,
+  type BackupMember,
+} from './backup-contract.js';
 import {
   nativeModelReference,
   nativeModelScope,
@@ -249,4 +256,19 @@ export function teamMembers(
           agentDir: path.join(root, 'agents', id, 'agent'),
         };
   });
+}
+export function assertTeamLayout(definition: TeamDefinition, home: string, input: BackupMember[]) {
+  const members = parseMembers(input);
+  const main = members.find((member) => member.id === 'main');
+  if (
+    !main ||
+    !isDeepStrictEqual(
+      archiveMemberIdentity(members),
+      archiveMemberIdentity(teamMembers(parseTeamDefinition(definition), home, main)),
+    )
+  )
+    throw new Error(
+      'Team configuration requires the complete declared native roster and separate owned roots',
+    );
+  return members;
 }

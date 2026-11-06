@@ -14,17 +14,26 @@ import type { ModelWorkerMode } from './model-worker.js';
 import { assertDirectoryChain } from './restore-layout.js';
 import { parseBedrockJob, type BedrockWorkerMode } from './bedrock-contract.js';
 import { runAwsBedrockWorker } from './bedrock-host.js';
+import { parseTeamJob, type TeamWorkerMode } from './team-contract.js';
+import { runAwsTeamWorker } from './team-host.js';
 
 async function main() {
   const [lock, mode, inputFile] = process.argv.slice(2);
   const provider = lock?.startsWith('--bedrock-') ?? false;
-  const step = provider ? lock.replace('--bedrock-', '--') : lock;
+  const team = lock?.startsWith('--team-') ?? false;
+  const step = team
+    ? lock.replace('--team-', '--')
+    : provider
+      ? lock.replace('--bedrock-', '--')
+      : lock;
   if (
     !['--dispatch', '--lock', '--run'].includes(step) ||
     !(
-      provider
-        ? ['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous', 'abort']
-        : ['execute', 'inspect', 'accept-requested', 'accept-previous']
+      team
+        ? ['execute', 'inspect', 'resume', 'abort']
+        : provider
+          ? ['preview', 'execute', 'inspect', 'accept-configured', 'accept-previous', 'abort']
+          : ['execute', 'inspect', 'accept-requested', 'accept-previous']
     ).includes(mode) ||
     !inputFile ||
     process.argv.length !== 5
@@ -35,18 +44,25 @@ async function main() {
   if (home !== '/home/ubuntu' || process.getuid?.() === 0)
     throw new Error('Model dispatch requires the Ubuntu service user');
   if (step === '--dispatch') {
-    if (inputFile.length > 16000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(inputFile))
+    if (inputFile.length > (team ? 48000 : 16000) || !/^[A-Za-z0-9+/]+={0,2}$/.test(inputFile))
       throw new Error('Invalid bounded model request encoding');
     const decoded = Buffer.from(inputFile, 'base64');
     if (decoded.toString('base64') !== inputFile)
       throw new Error('Noncanonical model request encoding');
     const data = JSON.parse(decoded.toString('utf8'));
-    const filename = provider
-      ? await installNativeControlRequest(home, 'bedrock-requests', parseBedrockJob(data))
-      : await installModelRequest(home, data);
+    const filename = team
+      ? await installNativeControlRequest(home, 'team-requests', parseTeamJob(data))
+      : provider
+        ? await installNativeControlRequest(home, 'bedrock-requests', parseBedrockJob(data))
+        : await installModelRequest(home, data);
     const result = await execa(
       process.execPath,
-      [process.argv[1], provider ? '--bedrock-lock' : '--lock', mode, filename],
+      [
+        process.argv[1],
+        team ? '--team-lock' : provider ? '--bedrock-lock' : '--lock',
+        mode,
+        filename,
+      ],
       {
         timeout: 15 * 60 * 1000,
         forceKillAfterDelay: 10000,
@@ -58,12 +74,12 @@ async function main() {
     return;
   }
   const data = await privateModelJson(inputFile);
-  const job = provider ? parseBedrockJob(data) : parseModelJob(data);
+  const job = team ? parseTeamJob(data) : provider ? parseBedrockJob(data) : parseModelJob(data);
   if (
     path.resolve(inputFile) !==
     path.join(
       root,
-      provider ? 'bedrock-requests' : 'model-requests',
+      team ? 'team-requests' : provider ? 'bedrock-requests' : 'model-requests',
       job.operationId,
       'request.json',
     )
@@ -98,7 +114,7 @@ async function main() {
           path.join(root, 'host.lock'),
           process.execPath,
           process.argv[1],
-          provider ? '--bedrock-run' : '--run',
+          team ? '--team-run' : provider ? '--bedrock-run' : '--run',
           mode,
           inputFile,
         ],
@@ -123,9 +139,11 @@ async function main() {
   process.once('SIGTERM', () => cancellation.abort());
   process.once('SIGINT', () => cancellation.abort());
   const signal = AbortSignal.any([cancellation.signal, AbortSignal.timeout(12 * 60 * 1000)]);
-  const result = provider
-    ? await runAwsBedrockWorker(job, mode as BedrockWorkerMode, signal)
-    : await runAwsModelWorker(job, mode as ModelWorkerMode, signal);
+  const result = team
+    ? await runAwsTeamWorker(job, mode as TeamWorkerMode, signal)
+    : provider
+      ? await runAwsBedrockWorker(job, mode as BedrockWorkerMode, signal)
+      : await runAwsModelWorker(job, mode as ModelWorkerMode, signal);
   const serialized = JSON.stringify({ ok: true, ...result });
   if (Buffer.byteLength(serialized) > 18000)
     throw new Error('Model result exceeds bounded remote output');

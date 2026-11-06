@@ -7,7 +7,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execa } from 'execa';
 import { parseTeamDefinition, teamMembers } from '../../src/openclaw/team-definition.js';
-import { teamConfigurationPatch, teamInstructions } from '../../src/openclaw/team-configuration.js';
+import { createNativeModelClient } from '../../src/openclaw/model-client.js';
+import { runTeamOperation } from '../../src/openclaw/team-worker.js';
+import { parseTeamJob } from '../../src/openclaw/team-contract.js';
+import { parseMembers } from '../../src/openclaw/backup-contract.js';
+import { modelJob } from '../helpers/model-operation.js';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 describe('native configured team coordination', () => {
@@ -142,12 +146,11 @@ describe('native configured team coordination', () => {
         workspace: path.join(state, 'workspace'),
         agentDir: path.join(state, 'agents/main/agent'),
       });
-      for (const member of members) {
+      for (const member of members.filter((member) => member.id === 'main')) {
         await mkdir(member.workspace, { recursive: true });
-        const logicalId = member.id === 'main' ? definition.coordinator : member.id;
         await writeFile(
           path.join(member.workspace, 'AGENTS.md'),
-          teamInstructions(definition, logicalId),
+          'Fresh coordinator instructions awaiting approved team setup.\n',
         );
       }
       const token = 'c'.repeat(48);
@@ -157,10 +160,12 @@ describe('native configured team coordination', () => {
           ownership: 'explicit',
           defaults: { model: { primary: 'fixture/model' }, skipBootstrap: true },
           entries: Object.fromEntries(
-            members.map((member) => [
-              member.id,
-              { workspace: member.workspace, agentDir: member.agentDir },
-            ]),
+            members
+              .filter((member) => member.id === 'main')
+              .map((member) => [
+                member.id,
+                { workspace: member.workspace, agentDir: member.agentDir },
+              ]),
           ),
         },
         models: {
@@ -177,21 +182,8 @@ describe('native configured team coordination', () => {
         cron: { enabled: false, triggers: { enabled: false } },
         hooks: { enabled: false, internal: { enabled: false } },
       };
-      const patch = teamConfigurationPatch({ definition, home, members, config });
       const configPath = path.join(state, 'openclaw.json');
-      await writeFile(
-        configPath,
-        JSON.stringify({
-          ...config,
-          ...patch,
-          agents: {
-            ...config.agents,
-            ...patch.agents,
-            defaults: { ...config.agents.defaults, ...patch.agents?.defaults },
-          },
-        }),
-        { mode: 0o600 },
-      );
+      await writeFile(configPath, JSON.stringify(config), { mode: 0o600 });
       const env = {
         HOME: home,
         PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
@@ -228,6 +220,70 @@ describe('native configured team coordination', () => {
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
       if (!healthy) throw Error('Configured native team Gateway did not become healthy');
+      const client = createNativeModelClient({
+        home,
+        packageJson: path.join(root, 'node_modules/openclaw/package.json'),
+        gatewayToken: token,
+        port,
+        record: async () => {},
+      });
+      const methods: string[] = [];
+      const host = {
+        home,
+        identify: async () => {},
+        client: {
+          ...client,
+          call: async (method: string, params: Record<string, unknown>) => {
+            methods.push(method);
+            return client.call(method, params);
+          },
+        },
+        members: async () =>
+          parseMembers(
+            JSON.parse(
+              (
+                await execa(process.execPath, [native, 'agents', 'list', '--json'], {
+                  env,
+                  extendEnv: false,
+                  timeout: 30000,
+                  maxBuffer: 1024 * 1024,
+                })
+              ).stdout,
+            ),
+          ),
+      };
+      const previewJob = parseTeamJob({
+        schemaVersion: 1,
+        kind: 'native-team',
+        operationId: modelJob.operationId,
+        teamId: modelJob.operationId,
+        target: modelJob.target,
+        runtime: modelJob.runtime,
+        bedrockRole: false,
+        definition,
+        action: { kind: 'preview' },
+      });
+      const preview = await runTeamOperation(previewJob, host, 'execute');
+      if (!('preflight' in preview)) throw Error('No native team preview');
+      const job = parseTeamJob({
+        ...previewJob,
+        operationId: '22222222-2222-2222-2222-222222222222',
+        action: { kind: 'configure', allowRestart: false, ...preview.preflight },
+      });
+      const configured = await runTeamOperation(job, host, 'execute');
+      expect(configured).toMatchObject({
+        recordedPhase: 'complete',
+        requestedConfigurationVerified: true,
+        maintenanceHeld: false,
+        inferenceVerified: false,
+      });
+      expect(JSON.stringify(configured)).not.toContain('fixture-only-key');
+      await expect(runTeamOperation(job, host, 'resume')).resolves.toMatchObject({
+        recordedPhase: 'complete',
+        requestedConfigurationVerified: true,
+        maintenanceHeld: false,
+      });
+      expect(methods.filter((method) => method === 'config.patch')).toHaveLength(1);
       const result = await execa(
         process.execPath,
         [

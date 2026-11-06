@@ -22,6 +22,9 @@ export function teamConfigurationPatch(options: {
   definition: TeamDefinition;
   home: string;
   members: BackupMember[];
+  /** Exact preflight roster. New declared entries may be added atomically by
+   * the native revision-bound patch without separate agents.create writes. */
+  existingMembers?: BackupMember[];
   config: unknown;
 }): Pick<NativeConfig, 'agents' | 'tools' | 'bindings'> {
   const definition = parseTeamDefinition(options.definition);
@@ -39,16 +42,27 @@ export function teamConfigurationPatch(options: {
     );
   const config = object(options.config);
   const entries = object(object(config.agents).entries);
+  const existing = parseMembers(options.existingMembers ?? members);
   if (
-    Object.keys(entries).length !== members.length ||
-    members.some((member) => !Object.hasOwn(entries, member.id))
+    !existing.some((member) => member.id === 'main') ||
+    Object.keys(entries).length !== existing.length ||
+    existing.some(
+      (member) =>
+        !Object.hasOwn(entries, member.id) ||
+        !members.some(
+          (desired) =>
+            desired.id === member.id &&
+            desired.workspace === member.workspace &&
+            desired.agentDir === member.agentDir,
+        ),
+    )
   )
     throw new Error('Team configuration would change unrelated co-hosted agents');
   const nativeEntries: NonNullable<NonNullable<NativeConfig['agents']>['entries']> = {};
   for (const member of definition.members) {
     const id = teamNativeId(definition, member.id);
     const roots = members.find((value) => value.id === id)!;
-    const observed = object(entries[id]);
+    const observed = entries[id] === undefined ? {} : object(entries[id]);
     if (
       (observed.workspace !== undefined && observed.workspace !== roots.workspace) ||
       (observed.agentDir !== undefined && observed.agentDir !== roots.agentDir)
@@ -105,4 +119,12 @@ export function teamInstructions(input: TeamDefinition, logicalId: string): stri
   const describe = (ids: string[]) =>
     ids.map((id) => `${id} (native agentId: ${teamNativeId(definition, id)})`).join(', ') || 'none';
   return `# ${member.role}\n\n${member.instructions}\n\n## Team handoffs\n\nYour logical role is ${member.id}; your native agent ID is ${teamNativeId(definition, member.id)}.\nSend work with native sessions_send to: ${describe(member.sendTo)}.\nDelegate with native sessions_spawn to: ${describe(member.delegateTo)}.\nUse the native tool discovery/dispatch interface when tools are deferred. Collect actual peer replies before presenting a combined result.\n\nEach agent has a separate writable workspace. Share findings through native session tools; do not assume shared files or OS/IAM isolation.\n`;
+}
+/** Match only approved settings, preserving unrelated native/provider fields. */
+export function teamConfigurationMatches(config: unknown, patch: unknown): boolean {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch))
+    return isDeepStrictEqual(config, patch);
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+  const row = config as Record<string, unknown>;
+  return Object.entries(patch).every(([key, value]) => teamConfigurationMatches(row[key], value));
 }
