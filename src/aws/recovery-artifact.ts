@@ -16,10 +16,12 @@ export interface RecoveryArtifact {
 const filenames = [
   'index.js',
   'worker.js',
+  'restore-worker.js',
   'package.json',
   'openclaw.plugin.json',
   'index.js.LEGAL.txt',
   'worker.js.LEGAL.txt',
+  'restore-worker.js.LEGAL.txt',
   'THIRD-PARTY-LICENSES.txt',
 ];
 

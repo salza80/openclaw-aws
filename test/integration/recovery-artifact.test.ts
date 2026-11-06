@@ -20,8 +20,9 @@ describe('packaged recovery worker delivery', () => {
         bucket: 'private-backups',
         prefix: 'vault/main',
       });
-      expect(first.files).toHaveLength(7);
+      expect(first.files).toHaveLength(9);
       expect(first.files.map((file) => file.name)).toContain('worker.js');
+      expect(first.files.map((file) => file.name)).toContain('restore-worker.js');
       expect(first.files.every((file) => file.versionId && file.key.includes(first.digest))).toBe(
         true,
       );

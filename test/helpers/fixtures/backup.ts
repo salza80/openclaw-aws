@@ -130,3 +130,22 @@ export const backupReceipt: BackupReceipt = {
   source: { ...backupSource, resources: [] },
   capture: backupCapture,
 };
+export const restoreJobFixture = {
+  schemaVersion: 1 as const,
+  bootstrap: {
+    operationId: '22222222-2222-2222-2222-222222222222',
+    volumeGiB: 30,
+    runtime: backupCapture.runtime,
+  },
+  target: {
+    deploymentName: 'restored',
+    stackId:
+      'arn:aws:cloudformation:us-east-1:123456789012:stack/OpenclawStack-restored/target-guid',
+    instanceId: 'i-11111111111111111',
+    roleId: 'AROA-TARGET',
+    region: 'us-east-1',
+    account: '123456789012',
+  },
+  backup: { job: backupJob, capture: backupCapture },
+  pluginDirectory: `/home/ubuntu/.openclaw-aws/plugins/${'c'.repeat(64)}`,
+};
