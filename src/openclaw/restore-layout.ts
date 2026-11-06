@@ -92,7 +92,7 @@ export function planRestoreLayout(options: {
   return moves;
 }
 
-async function assertDirectoryChain(directory: string, root: string, create: boolean) {
+export async function assertDirectoryChain(directory: string, root: string, create: boolean) {
   if (!inside(root, directory)) throw new Error('Restore path escaped its owned root');
   const segments = path.relative(root, directory).split(path.sep).filter(Boolean);
   let current = root;
