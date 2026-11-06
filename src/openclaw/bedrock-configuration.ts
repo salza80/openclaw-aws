@@ -105,6 +105,26 @@ export function bedrockConfigurationPatch(options: {
   };
 }
 
+/** Inactive recovery uses the same owned patch through the public native file
+ * SDK. This returns a private full config, never an operation result/journal. */
+export function inactiveBedrockConfiguration(
+  options: Parameters<typeof bedrockConfigurationPatch>[0],
+) {
+  const merge = (
+    source: Record<string, unknown>,
+    patch: Record<string, unknown>,
+  ): Record<string, unknown> => {
+    const result = structuredClone(source);
+    for (const [key, value] of Object.entries(patch))
+      result[key] =
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? merge(optionalObject(result[key]), value as Record<string, unknown>)
+          : structuredClone(value);
+    return result;
+  };
+  return merge(modelObject(options.config), bedrockConfigurationPatch(options));
+}
+
 /** Check only fields owned by this patch. Concurrent unrelated native settings
  * remain untouched, while another writer changing our fields blocks rollback. */
 function matches(config: unknown, patch: Record<string, unknown>): boolean {

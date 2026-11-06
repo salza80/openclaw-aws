@@ -211,7 +211,7 @@ export async function resumeClone(
     )
       throw new Error('Pinned clone delivery does not belong to this live target');
     // Do not reattach source archive/key access just to activate installed code.
-    await removeSourceRecoveryAccess(target, live.stackId);
+    await removeSourceRecoveryAccess(target, live.stackId, { preserveBedrock: true });
     record.permissionCleanupPending = false;
     saveCloneRecord(record);
     const activate =

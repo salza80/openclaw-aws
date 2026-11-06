@@ -15,6 +15,7 @@ import {
 } from './backup-contract.js';
 import { importRestoreProviderSecrets, type RestoreSecretOwner } from './restore-secrets.js';
 import { holdRestoredSessions } from './restore-session-hold.js';
+import { recoverySessionModels } from './recovery-session-models.js';
 import {
   restoredPluginInstalls,
   verifyRestoredPluginInstalls,
@@ -22,6 +23,12 @@ import {
 } from './restore-plugins.js';
 import { isDeepStrictEqual } from 'node:util';
 import { ownedRestoreRecord } from './restore-control.js';
+import type { BedrockRecoveryPlan } from './bedrock-recovery-plan.js';
+import {
+  prepareInactiveRecoveryBedrock,
+  assertRecoveryBedrockNative,
+} from './recovery-bedrock-native.js';
+import { bedrockRoleProfile } from './bedrock-profile.js';
 
 type ConfigSdk = typeof import('openclaw/plugin-sdk/config-mutation');
 type NativeConfig = NonNullable<Parameters<ConfigSdk['replaceConfigFile']>[0]['sourceConfig']>;
@@ -118,6 +125,8 @@ export async function reconcileNativeRestore(options: {
   nativePackageJson?: string;
   assertInactive?: () => Promise<void>;
   signal?: AbortSignal;
+  bedrock?: BedrockRecoveryPlan;
+  deploymentRegion: string;
 }) {
   const home = homedir();
   await importRestoreProviderSecrets(options.ssm, options.owner, {});
@@ -150,7 +159,7 @@ export async function reconcileNativeRestore(options: {
     throw new Error('Restored native configuration is unavailable at the supported path');
   const source = before.snapshot.sourceConfig;
   if (!source) throw new Error('Restored native source configuration is unavailable');
-  const config = restoredInactiveConfig(source, {
+  let config = restoredInactiveConfig(source, {
     gatewayToken: options.gatewayToken,
     oldPluginDirectory: options.job.pluginDirectory,
     pluginDirectory: options.pluginDirectory,
@@ -170,6 +179,25 @@ export async function reconcileNativeRestore(options: {
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
   }
+  const prepared = await prepareInactiveRecoveryBedrock({
+    config,
+    environment,
+    home,
+    deploymentRegion: options.deploymentRegion,
+    plan: options.bedrock,
+    source: {
+      home: path.dirname(path.dirname(options.capture.credentials.configurationPath)),
+      deploymentRegion: options.job.source.region,
+      members: options.capture.members,
+      sessionModels: await recoverySessionModels({
+        nativePackageJson: packageJson,
+        config: source,
+        members: options.capture.members,
+      }),
+    },
+  });
+  config = prepared.config as NativeConfig;
+  environment = prepared.environment;
   environment.OPENCLAW_GATEWAY_TOKEN = options.gatewayToken;
   delete environment.OPENCLAW_GATEWAY_PASSWORD;
   const incoming = `${envPath}.restore-${options.owner.operationId}`;
@@ -227,6 +255,7 @@ export async function reconcileNativeRestore(options: {
     AWS_CONFIG_FILE: '/dev/null',
     AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
     AWS_EC2_METADATA_V1_DISABLED: 'true',
+    ...(options.bedrock ? bedrockRoleProfile(home, options.deploymentRegion).environment : {}),
   };
   const run = async (args: string[], json = true, inspectionConfig?: string): Promise<unknown> => {
     try {
@@ -258,6 +287,14 @@ export async function reconcileNativeRestore(options: {
   };
   await run(['config', 'validate']);
   const installs = restoredPluginInstalls(await run(['plugins', 'registry']));
+  if (options.bedrock) {
+    const expected = options.bedrock.intent.plugin;
+    const installed = installs.find((entry) => entry.id === expected.id);
+    if (installed?.spec !== expected.spec || installed.integrity !== expected.integrity)
+      throw new Error(
+        'Restored Bedrock plugin provenance differs from the reviewed recovery connection',
+      );
+  }
   await ownedRestoreRecord(
     path.join(home, '.openclaw-aws/jobs', options.owner.operationId, 'plugin-rebuild.json'),
     {
@@ -270,7 +307,20 @@ export async function reconcileNativeRestore(options: {
     await assertInactive();
     // Native installation preserves policy and capability-consent checks. Never
     // accept widened capabilities or choose a newer package on recovery.
-    await run(['plugins', 'install', install.spec, '--force', '--pin', '--no-enable'], false);
+    await run(
+      [
+        'plugins',
+        'install',
+        install.spec,
+        '--force',
+        '--pin',
+        '--no-enable',
+        ...(options.bedrock && install.id === options.bedrock.intent.plugin.id
+          ? ['--accept-capabilities']
+          : []),
+      ],
+      false,
+    );
   }
   if (installs.length) {
     verifyRestoredPluginInstalls(installs, await run(['plugins', 'registry']));
@@ -332,6 +382,13 @@ export async function reconcileNativeRestore(options: {
       'Restored native credential references are unresolved; Gateway remains inactive',
     );
   await assertInactive();
+  await assertRecoveryBedrockNative({
+    config,
+    environment,
+    home,
+    deploymentRegion: options.deploymentRegion,
+    intent: options.bedrock?.intent,
+  });
   return {
     members,
     imported,

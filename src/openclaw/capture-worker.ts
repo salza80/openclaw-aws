@@ -226,7 +226,7 @@ export async function captureInstallation(
     if (capture.location.namespace !== job.namespace || capture.location.locationId !== locationId)
       throw new Error('Native capture storage identity differs from the planned location');
     assertMemberCoverage(capture, members);
-    const credentials = await host.credentials(capture);
+    const credentials = await host.credentials(capture, members);
     const archive = await storage.archive(capture);
     const archivePath = `backups/${job.namespace}/${capture.location.key}`;
     const verification = await host.verify(capture.location.key, {

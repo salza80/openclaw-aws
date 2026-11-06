@@ -22,6 +22,15 @@ import { assertDeploymentTarget, recordDeploymentState } from './state.js';
 import { loadConfigByName } from '../cli/utils/config.js';
 import { parseRestoreJob } from '../openclaw/restore-contract.js';
 import { loadRestoreRecord, saveRestoreRecord, type RestoreRecord } from './restore-record.js';
+import {
+  prepareRecoveryBedrock,
+  recoveryBedrockSummary,
+  ensureRecoveryBedrockAccess,
+} from './recovery-bedrock.js';
+import {
+  parseBedrockRecoveryPlan,
+  type BedrockRecoveryPlan,
+} from '../openclaw/bedrock-recovery-plan.js';
 export type { RestoreRecord } from './restore-record.js';
 
 export interface RestorePlan {
@@ -32,6 +41,7 @@ export interface RestorePlan {
   bootstrap: RestoreBootstrap;
   sourcePresence: RecoveryPresence;
   prerequisites: string[];
+  bedrock?: BedrockRecoveryPlan;
 }
 
 /** Read-only intake for CLI and dashboard. No source config, source disk or old SSM key.
@@ -59,6 +69,7 @@ export async function prepareRestore(options: {
   const sourcePresence = await inspectRecoveryPresence(options.recoveryTarget, point.job.source);
   // Full native decryption/inventory/database verification precedes any provisioning.
   await verifyBackup(options.recoveryTarget, options.vaultUri, options.pointId);
+  const bedrock = await prepareRecoveryBedrock(context, point.capture.credentials.bedrock);
   return {
     schemaVersion: 1,
     operationId,
@@ -66,8 +77,10 @@ export async function prepareRestore(options: {
     context,
     bootstrap,
     sourcePresence,
+    ...(bedrock ? { bedrock } : {}),
     prerequisites: [
       ...point.capture.credentials.prerequisites,
+      ...(bedrock ? [recoveryBedrockSummary(bedrock)] : []),
       ...point.capture.omissions,
       'Gateway credentials are rotated; reconnect clients and review device/channel pairing before enabling integrations.',
       'Restoration starts with messaging, scheduled work and replay paths inactive; reactivation is a separate deliberate step.',
@@ -100,6 +113,15 @@ export async function stageRestore(
       'Source identity is still present. Use the independent clone workflow to keep both claws, or remove the source after a verified backup before restoring its identity.',
     );
   if (configExistsByName(ctx.name)) throw new Error('Restore configuration name is already in use');
+  const bedrock =
+    plan.bedrock === undefined
+      ? undefined
+      : parseBedrockRecoveryPlan(plan.bedrock, {
+          account: ctx.target.account,
+          partition: ctx.target.arn.split(':')[1],
+        });
+  if (!isDeepStrictEqual(bedrock?.intent, plan.point.capture.credentials.bedrock))
+    throw new Error('Restore connection approval differs from its saved recovery point');
   const record: RestoreRecord = {
     schemaVersion: 1,
     account: ctx.target.account,
@@ -109,6 +131,7 @@ export async function stageRestore(
     name: ctx.name,
     config: ctx.config,
     bootstrap,
+    ...(bedrock ? { bedrock } : {}),
     recovery: {
       uri: plan.point.vaultUri,
       region: recoveryTarget.region,
@@ -269,19 +292,31 @@ async function continueRestoreOnTarget(
   mode: 'stage' | 'activate',
 ): Promise<RestoreRecord> {
   const bootstrap = record.bootstrap;
+  record.permissionCleanupPending = true;
+  saveRestoreRecord(record);
   const lease = await prepareRecoveryDelivery({
     record,
     ctx,
     recoveryTarget,
     point,
     kind: 'restore',
-    buildJob: parseRestoreJob,
+    buildJob: (base) =>
+      parseRestoreJob({ ...base, ...(record.bedrock ? { bedrock: record.bedrock } : {}) }),
     progress: options.progress,
   });
   const { target, delivery, access } = lease;
   const { job, artifact, request } = delivery;
   record.delivery = delivery;
   saveRestoreRecord(record);
+  if (!isDeepStrictEqual(job.bedrock, record.bedrock))
+    throw new Error('Pinned restore Bedrock plan differs from the approved recovery intent');
+  await ensureRecoveryBedrockAccess({
+    ctx,
+    record,
+    jobTarget: job.target,
+    source: target,
+    save: () => saveRestoreRecord(record),
+  });
   options.progress?.(
     mode === 'activate'
       ? 'Installing the native service and verifying health while integrations and restored work remain paused...'
@@ -354,6 +389,19 @@ async function continueRestoreOnTarget(
     };
   }
   record.phase = mode === 'activate' ? 'active-held' : 'ready-inactive';
+  if (mode === 'activate' && record.bedrock)
+    recordDeploymentState(
+      ctx,
+      { stackId: target.stackId, stackName: ctx.config.stack.name },
+      {
+        bedrockConnection: {
+          authMode: 'instance-role',
+          inferenceRegion: record.bedrock.intent.inferenceRegion,
+          operationId: record.operationId,
+          checkedAt: new Date().toISOString(),
+        },
+      },
+    );
   record.permissionCleanupPending = true;
   saveRestoreRecord(record);
   options.progress?.(

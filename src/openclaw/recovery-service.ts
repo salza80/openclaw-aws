@@ -3,6 +3,14 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { execa } from 'execa';
 import { object } from './backup-contract.js';
+import { bedrockRoleProfile } from './bedrock-profile.js';
+import { createNativeModelClient } from './model-client.js';
+import {
+  bedrockNativeSnapshot,
+  inspectNativeBedrockPlugin,
+  nativeBedrockConfigured,
+  refreshNativeBedrockDiscovery,
+} from './bedrock-native.js';
 export interface RecoveryActivationHost {
   validate(): Promise<void>;
   unmaskAndInstall(): Promise<void>;
@@ -46,6 +54,7 @@ export function createRecoveryServiceHost(options: {
   validate: () => Promise<void>;
   assertInactive: () => Promise<void>;
   commit?: () => Promise<void>;
+  bedrock?: { deploymentRegion: string; inferenceRegion: string };
 }): RecoveryActivationHost {
   const { home, work, packageJson, gatewayToken, signal, validate } = options;
   const childEnv = {
@@ -61,6 +70,9 @@ export function createRecoveryServiceHost(options: {
     AWS_CONFIG_FILE: '/dev/null',
     AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
     AWS_EC2_METADATA_V1_DISABLED: 'true',
+    ...(options.bedrock
+      ? bedrockRoleProfile(home, options.bedrock.deploymentRegion).environment
+      : {}),
   };
   const native = async (args: string[], timeout = 120000) => {
     try {
@@ -75,7 +87,7 @@ export function createRecoveryServiceHost(options: {
   };
   const systemctl = (args: string[]) =>
     execa('systemctl', ['--user', ...args], { timeout: 60000, maxBuffer: 1024 * 1024 });
-  const health = async () => {
+  const gatewayHealth = async () => {
     const deadline = Date.now() + 120000;
     while (Date.now() < deadline) {
       signal?.throwIfAborted();
@@ -99,6 +111,28 @@ export function createRecoveryServiceHost(options: {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
     throw new Error('Recovery Gateway did not establish authenticated native health');
+  };
+  const health = async () => {
+    await gatewayHealth();
+    if (options.bedrock) {
+      const client = createNativeModelClient({
+        home,
+        packageJson,
+        gatewayToken,
+        signal,
+        bedrockDeploymentRegion: options.bedrock.deploymentRegion,
+        record: async () => {},
+      });
+      const current = await bedrockNativeSnapshot(client);
+      if (!nativeBedrockConfigured(current.config, { home, ...options.bedrock }))
+        throw new Error(
+          'Active recovery Gateway has not published the approved Bedrock role connection',
+        );
+      const plugin = await inspectNativeBedrockPlugin(client);
+      if (!plugin.installed || !plugin.enabled)
+        throw new Error('Active recovery Gateway has not loaded the reviewed Bedrock plugin');
+      await refreshNativeBedrockDiscovery(client, { signal });
+    }
   };
   return {
     validate,

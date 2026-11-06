@@ -225,6 +225,33 @@ describe('source recovery ownership', () => {
     });
     expect(mocks.remove).not.toHaveBeenCalled();
   });
+  it('also inspects the deterministic Bedrock stack when an unexecuted review has no inline policy', async () => {
+    mocks.iam.mockImplementation(async (command) =>
+      command instanceof GetRoleCommand ? { Role: role } : { PolicyNames: [] },
+    );
+    await removeSourceRecoveryAccess(target, stackId);
+    expect(mocks.removeOwned).toHaveBeenCalledWith(
+      target,
+      expect.objectContaining({
+        kind: 'bedrock-access',
+        stackName: bedrockAccessStackName(stackId, role.RoleId!),
+      }),
+    );
+  });
+  it('preserves Bedrock model grants when only temporary source-backup access is being revoked', async () => {
+    const recovery = `OpenclawRecovery-${sourceHash(stackId)}-vault-id`;
+    mocks.iam.mockImplementation(async (command) =>
+      command instanceof GetRoleCommand
+        ? { Role: role }
+        : { PolicyNames: [recovery, bedrockAccessStackName(stackId, role.RoleId!)] },
+    );
+    await removeSourceRecoveryAccess(target, stackId, { preserveBedrock: true });
+    expect(mocks.remove).toHaveBeenCalledWith(
+      target,
+      expect.objectContaining({ stackName: recovery }),
+    );
+    expect(mocks.removeOwned).not.toHaveBeenCalled();
+  });
   it('handles an explicitly absent role during a partial teardown retry', async () => {
     mocks.iam.mockRejectedValue(
       Object.assign(new Error('role deleted'), { name: 'NoSuchEntityException' }),

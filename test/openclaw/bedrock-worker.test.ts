@@ -215,16 +215,13 @@ describe('durable Bedrock provider lifecycle', () => {
     expect(host.configure).not.toHaveBeenCalled();
     expect(host.installPlugin).toHaveBeenCalledOnce();
   });
-  it('does not invent proof for legacy interrupted history, abort a completed connection or release a competing owner', async () => {
-    const legacy = await bedrockHostJournal(home, bedrockJob, true);
-    await legacy.claim();
-    await legacy.append({ phase: 'started' });
-    await legacy.append({ phase: 'plugin-intent' });
-    await legacy.append({ phase: 'uncertain' });
+  it('does not invent proof after an interrupted preflight, abort a completed connection or release a competing owner', async () => {
+    const pending = await bedrockHostJournal(home, bedrockJob, true);
+    await pending.claim();
     await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(
       /no durable original-settings proof/,
     );
-    expect(await legacy.ownsMaintenance()).toBe(true);
+    expect(await pending.ownsMaintenance()).toBe(true);
     await rm(path.join(home, '.openclaw-aws'), { recursive: true });
     await runBedrockOperation(bedrockJob, host);
     await expect(runBedrockOperation(bedrockJob, host, 'abort')).rejects.toThrow(

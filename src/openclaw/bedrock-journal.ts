@@ -31,7 +31,7 @@ export interface BedrockEvent {
 }
 const transitions: Record<BedrockPhase | 'none', BedrockPhase[]> = {
   none: ['started', 'unchanged', 'complete'],
-  started: ['preflight-ready', 'plugin-intent', 'unchanged', 'uncertain'],
+  started: ['preflight-ready', 'unchanged', 'uncertain'],
   'preflight-ready': ['plugin-intent', 'unchanged', 'uncertain'],
   'plugin-intent': ['plugin-ready', 'uncertain'],
   'plugin-ready': ['environment-intent', 'uncertain'],

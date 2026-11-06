@@ -182,6 +182,7 @@ describe('independent clone AWS operations', () => {
     expect(mocks.put).not.toHaveBeenCalled();
     expect(mocks.provision).not.toHaveBeenCalled();
     expect(mocks.removeSource).toHaveBeenCalledOnce();
+    expect(mocks.removeSource.mock.calls[0][2]).toEqual({ preserveBedrock: true });
     expect(mocks.removeSource.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.remote.mock.invocationCallOrder[1],
     );

@@ -240,6 +240,7 @@ export async function inspectRecoverySource(ctx: CommandContext): Promise<Recove
 export async function removeSourceRecoveryAccess(
   target: AwsTarget,
   stackId: string,
+  options: { preserveBedrock?: boolean } = {},
 ): Promise<void> {
   const resources = await sourceResources(target, stackId);
   const iam = new IAMClient(awsClientConfig(target));
@@ -281,7 +282,7 @@ export async function removeSourceRecoveryAccess(
         for (const policy of policies.PolicyNames.filter(
           (entry) =>
             entry.startsWith(`OpenclawRecovery-${sourceHash(stackId)}-`) ||
-            entry === bedrockAccessStackName(stackId, role.RoleId!),
+            (!options.preserveBedrock && entry === bedrockAccessStackName(stackId, role.RoleId!)),
         ))
           ownedPolicies.add(policy);
         if (!policies.IsTruncated) break;
@@ -292,6 +293,9 @@ export async function removeSourceRecoveryAccess(
       }
       // Finish the read inventory before deletion: changing the policy collection
       // while paginating can skip policies, and a denied later page is not consent.
+      // A prepared CREATE change set has no inline policy yet. Its deterministic
+      // owned stack still needs inspection/removal before the role disappears.
+      if (!options.preserveBedrock) ownedPolicies.add(bedrockAccessStackName(stackId, role.RoleId));
       for (const policy of ownedPolicies) {
         const plan = {
           stackName: policy,
