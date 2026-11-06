@@ -66,7 +66,7 @@ function bootstrap(
   const statements = Object.values(policies).flatMap(
     (policy) => policy.Properties.PolicyDocument.Statement,
   );
-  return { template, instanceId, instance, userData, script, policies, statements };
+  return { stack, template, instanceId, instance, userData, script, policies, statements };
 }
 
 function actions(statement: { Action: string | string[] }): string[] {
@@ -75,7 +75,7 @@ function actions(statement: { Action: string | string[] }): string[] {
 
 describe('EC2 bootstrap', () => {
   it('provisions recorded restore capacity with an inactive compatible runtime', () => {
-    const { instance, script, statements } = bootstrap(true, 't3a.small', {
+    const { stack, instance, script, statements } = bootstrap(true, 't3a.small', {
       operationId: '11111111-1111-1111-1111-111111111111',
       volumeGiB: 60,
       runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
@@ -84,6 +84,9 @@ describe('EC2 bootstrap', () => {
     expect(instance.Properties.BlockDeviceMappings[0].Ebs.Encrypted).toBe(true);
     expect(script).toContain('phase restore-inactive');
     expect(script).not.toContain('onboard --non-interactive');
+    expect(stack.tags.tagValues()).toMatchObject({
+      'openclaw-aws:restore-id': '11111111-1111-1111-1111-111111111111',
+    });
     const read = statements.find(
       (statement) =>
         statement.Effect === 'Allow' && actions(statement).includes('ssm:GetParameter'),

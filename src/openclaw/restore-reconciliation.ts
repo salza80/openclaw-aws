@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { lstat, readFile, rename, writeFile } from 'node:fs/promises';
+import { lstat, readFile, rename, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { execa } from 'execa';
@@ -14,6 +15,13 @@ import {
 } from './backup-contract.js';
 import { importRestoreProviderSecrets, type RestoreSecretOwner } from './restore-secrets.js';
 import { holdRestoredSessions } from './restore-session-hold.js';
+import {
+  restoredPluginInstalls,
+  verifyRestoredPluginInstalls,
+  assertRestoredPluginHealth,
+} from './restore-plugins.js';
+import { isDeepStrictEqual } from 'node:util';
+import { ownedRestoreRecord } from './restore-control.js';
 
 type ConfigSdk = typeof import('openclaw/plugin-sdk/config-mutation');
 type NativeConfig = NonNullable<Parameters<ConfigSdk['replaceConfigFile']>[0]['sourceConfig']>;
@@ -220,20 +228,28 @@ export async function reconcileNativeRestore(options: {
     AWS_SHARED_CREDENTIALS_FILE: '/dev/null',
     AWS_EC2_METADATA_V1_DISABLED: 'true',
   };
-  const run = async (args: string[]): Promise<unknown> => {
+  const run = async (args: string[], json = true, inspectionConfig?: string): Promise<unknown> => {
     try {
       const result = await execa(
         process.execPath,
-        [path.join(path.dirname(packageJson), 'openclaw.mjs'), ...args, '--json'],
+        [
+          path.join(path.dirname(packageJson), 'openclaw.mjs'),
+          ...args,
+          ...(json ? ['--json'] : []),
+        ],
         {
-          env: childEnv,
+          env: {
+            ...childEnv,
+            ...(inspectionConfig ? { OPENCLAW_CONFIG_PATH: inspectionConfig } : {}),
+          },
           extendEnv: false,
-          timeout: 120000,
+          timeout: json ? 120000 : 600000,
           cancelSignal: options.signal,
           maxBuffer: 8 * 1024 * 1024,
+          reject: !(args[0] === 'plugins' && args[1] === 'doctor'),
         },
       );
-      return JSON.parse(result.stdout);
+      return json ? JSON.parse(result.stdout) : undefined;
     } catch {
       throw new Error(
         'Restored native diagnostics failed; Gateway remains inactive and no private diagnostic output was published',
@@ -241,6 +257,56 @@ export async function reconcileNativeRestore(options: {
     }
   };
   await run(['config', 'validate']);
+  const installs = restoredPluginInstalls(await run(['plugins', 'registry']));
+  await ownedRestoreRecord(
+    path.join(home, '.openclaw-aws/jobs', options.owner.operationId, 'plugin-rebuild.json'),
+    {
+      schemaVersion: 1,
+      owner: options.owner,
+      installs,
+    },
+  );
+  for (const install of installs) {
+    await assertInactive();
+    // Native installation preserves policy and capability-consent checks. Never
+    // accept widened capabilities or choose a newer package on recovery.
+    await run(['plugins', 'install', install.spec, '--force', '--pin', '--no-enable'], false);
+  }
+  if (installs.length) {
+    verifyRestoredPluginInstalls(installs, await run(['plugins', 'registry']));
+    const after = await sdk.readConfigFileSnapshotForWrite();
+    if (!after.snapshot.valid || !isDeepStrictEqual(after.snapshot.sourceConfig, config))
+      throw new Error(
+        'Native plugin repair changed restored configuration; inspect the inactive target before continuing',
+      );
+  }
+  // A multi-agent roster need not have a system owner. Inspect each member's
+  // workspace through a private temporary config view instead of silently
+  // accepting the native 'workspace-scope-omitted' partial result.
+  for (const member of options.capture.members) {
+    const inspection = structuredClone(config);
+    inspection.agents ??= {};
+    inspection.agents.defaults ??= {};
+    inspection.agents.defaults.systemAgent = {
+      ...inspection.agents.defaults.systemAgent,
+      agentId: member.id,
+    };
+    const inspectionFile = path.join(
+      home,
+      '.openclaw-aws/jobs',
+      options.owner.operationId,
+      `plugin-inspection-${randomUUID()}.json`,
+    );
+    await writeFile(inspectionFile, JSON.stringify(inspection), { flag: 'wx', mode: 0o600 });
+    try {
+      assertRestoredPluginHealth(await run(['plugins', 'doctor'], true, inspectionFile), [
+        path.join(options.pluginDirectory, 'index.js'),
+        '~/' + path.relative(home, path.join(options.pluginDirectory, 'index.js')),
+      ]);
+    } finally {
+      await rm(inspectionFile, { force: true });
+    }
+  }
   const members = parseMembers(await run(['agents', 'list']));
   if (
     members.length !== options.capture.members.length ||

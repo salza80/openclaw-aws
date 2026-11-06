@@ -100,6 +100,7 @@ describe('inactive restore provisioning', () => {
       Name: '/openclaw/alpha/gateway-token',
       Type: 'SecureString',
       Overwrite: false,
+      Tags: [{ Key: 'openclaw-aws:restore-id', Value: restore.operationId }],
     });
     expect(writes[0].input.Value).toMatch(/^[a-f0-9]{48}$/);
     const deploy = mocks.execa.mock.calls.find(([, args]) => args[0] === 'deploy');
@@ -115,7 +116,7 @@ describe('inactive restore provisioning', () => {
     expect(mocks.state).toHaveBeenCalledWith(
       expect.objectContaining({ name: ctx.name }),
       expect.objectContaining({ stackId }),
-      { newlyCreated: true },
+      { newlyCreated: true, restoredFrom: { operationId: restore.operationId } },
     );
     expect(mocks.held).toBe(false);
   });

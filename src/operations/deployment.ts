@@ -48,6 +48,7 @@ async function storeGatewayToken(
   configName: string,
   token: string,
   region: AwsLocation,
+  restoreOperationId?: string,
 ): Promise<string> {
   const client = createSsmClient(region);
   const paramName = getGatewayTokenParamName(configName);
@@ -59,6 +60,9 @@ async function storeGatewayToken(
         Type: 'SecureString',
         Overwrite: false,
         Description: `OpenClaw gateway token for ${configName}`,
+        ...(restoreOperationId
+          ? { Tags: [{ Key: 'openclaw-aws:restore-id', Value: restoreOperationId }] }
+          : {}),
       }),
     );
   } finally {
@@ -299,7 +303,7 @@ async function provisionDeployment(
       await storeApiKey(ctx.name, options.apiProvider, apiKey, ctx.target);
     const gatewayToken = crypto.randomBytes(24).toString('hex');
     privateValues.add(gatewayToken);
-    await storeGatewayToken(ctx.name, gatewayToken, ctx.target);
+    await storeGatewayToken(ctx.name, gatewayToken, ctx.target, restore?.operationId);
     options.progress?.(
       restore
         ? 'Installing the pinned runtime with the Gateway masked and inactive...'
@@ -365,7 +369,10 @@ async function provisionDeployment(
         stackStatus: 'CREATE_COMPLETE',
         stackId: outputs.DeploymentId,
       },
-      { newlyCreated: true },
+      {
+        newlyCreated: true,
+        ...(restore ? { restoredFrom: { operationId: restore.operationId } } : {}),
+      },
     );
     return outputs;
   } catch (error) {

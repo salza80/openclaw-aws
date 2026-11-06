@@ -16,6 +16,18 @@ const mocks = vi.hoisted(() => ({
 const absent = () => Object.assign(new Error('missing'), { code: 'ENOENT' });
 vi.mock('node:os', () => ({ homedir: () => '/home/ubuntu' }));
 vi.mock('node:fs/promises', () => ({
+  open: vi.fn(async (filename: string, flag: string) => {
+    if (flag === 'wx' && mocks.files.has(filename))
+      throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+    if (flag === 'wx') mocks.files.set(filename, '');
+    return {
+      writeFile: async (body: string) => {
+        mocks.files.set(filename, body);
+      },
+      sync: async () => {},
+      close: async () => {},
+    };
+  }),
   mkdir: vi.fn(async () => {}),
   lstat: vi.fn(async (filename: string) => {
     if (!mocks.files.has(filename)) throw absent();

@@ -1,3 +1,6 @@
+vi.mock('../../src/operations/restore-cleanup.js', () => ({
+  cleanupRestoredDeployment: vi.fn(async () => false),
+}));
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import fs from 'fs';
 import type { CommandModule } from 'yargs';

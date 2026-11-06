@@ -1,3 +1,4 @@
+import { cleanupRestoredDeployment } from '../../operations/restore-cleanup.js';
 import { withDeploymentLock } from '../../operations/lock.js';
 import { assertDeploymentTarget } from '../../operations/state.js';
 import { removeSourceRecoveryAccess } from '../../aws/recovery-source.js';
@@ -168,8 +169,10 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
 
             if (!stackExists) {
               logger.info('No resources to delete');
-              await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-              await deleteGatewayTokenParam(ctx.name, ctx.target);
+              if (!(await cleanupRestoredDeployment(ctx))) {
+                await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+                await deleteGatewayTokenParam(ctx.name, ctx.target);
+              }
               console.log('');
               return;
             }
@@ -215,8 +218,10 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
               destroySpinner.succeed('Stack destroyed successfully');
               logger.success('Deployment stack removed');
               console.log('\nRetained data and shared AWS resources may still incur charges.');
-              await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-              await deleteGatewayTokenParam(ctx.name, ctx.target);
+              if (!(await cleanupRestoredDeployment(ctx))) {
+                await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+                await deleteGatewayTokenParam(ctx.name, ctx.target);
+              }
             } catch {
               destroySpinner.fail('Destruction failed');
               throw new AWSError('Stack destruction failed', [
@@ -300,8 +305,10 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           console.log('\n' + chalk.bold('Next steps:'));
           console.log('  ' + chalk.cyan('openclaw-aws deploy') + '    - Create a deployment');
           console.log('  ' + chalk.cyan('openclaw-aws status') + '    - Check current status');
-          await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-          await deleteGatewayTokenParam(ctx.name, ctx.target);
+          if (!(await cleanupRestoredDeployment(ctx))) {
+            await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+            await deleteGatewayTokenParam(ctx.name, ctx.target);
+          }
           if (argv.deleteConfig) {
             const configPath = getConfigPathByName(ctx.name);
             if (fs.existsSync(configPath)) {
@@ -409,8 +416,10 @@ export const destroyCommand: CommandModule<{}, DestroyArgs> = {
           destroySpinner.succeed('Stack destroyed successfully');
           logger.success('Deployment stack removed');
           console.log('\nRetained data and shared AWS resources may still incur charges.');
-          await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
-          await deleteGatewayTokenParam(ctx.name, ctx.target);
+          if (!(await cleanupRestoredDeployment(ctx))) {
+            await deleteApiKeyParam(ctx.name, apiProvider, ctx.target);
+            await deleteGatewayTokenParam(ctx.name, ctx.target);
+          }
 
           // Ask about config file
           if (argv.deleteConfig) {

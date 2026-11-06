@@ -39,10 +39,16 @@ export interface OpenClawStackProps extends StackProps {
 
 export class OpenClawStack extends Stack {
   constructor(scope: Construct, id: string, props: OpenClawStackProps) {
-    super(scope, id, props);
+    const restore = props.restore ? parseRestoreBootstrap(props.restore) : undefined;
+    super(scope, id, {
+      ...props,
+      tags: {
+        ...props.tags,
+        ...(restore ? { 'openclaw-aws:restore-id': restore.operationId } : {}),
+      },
+    });
 
     const { config, apiProvider, apiKeyParamName, gatewayTokenParamName } = props;
-    if (props.restore) parseRestoreBootstrap(props.restore);
     const gatewayPort = 18789;
     const logGroupName = `/openclaw/${this.stackName}`;
     const logGroup = config.enableCloudWatchLogs
@@ -56,7 +62,7 @@ export class OpenClawStack extends Stack {
     // VPC Configuration - Use default or create new based on config
     let vpc: IVpc;
     if (props.useDefaultVpc) {
-      // Use default VPC (exists in every AWS account)
+      // Use the account's default VPC when one is available.
       vpc = Vpc.fromLookup(this, 'DefaultVpc', {
         isDefault: true,
       });

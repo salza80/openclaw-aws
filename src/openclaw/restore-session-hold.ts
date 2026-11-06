@@ -1,11 +1,12 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { lstat, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 import type { BackupMember } from './backup-contract.js';
 import type { RestoreSecretOwner } from './restore-secrets.js';
+import { ownedRestoreRecord } from './restore-control.js';
 
 type SessionsSdk = typeof import('openclaw/plugin-sdk/session-store-runtime');
 interface HeldSession {
@@ -14,16 +15,54 @@ interface HeldSession {
   sessionKey: string;
   sessionId: string;
   alreadyPending: boolean;
+  archivedAt: number;
+  archiveReason: NonNullable<
+    import('openclaw/plugin-sdk/session-store-runtime').SessionEntry['archiveReason']
+  >;
 }
 interface SessionHold {
-  schemaVersion: 1;
+  schemaVersion: 2;
   owner: RestoreSecretOwner;
   sessions: HeldSession[];
 }
+function validHold(hold: SessionHold, owner: RestoreSecretOwner, members: BackupMember[]) {
+  return (
+    hold.schemaVersion === 2 &&
+    isDeepStrictEqual(hold.owner, owner) &&
+    Array.isArray(hold.sessions) &&
+    hold.sessions.every(
+      (session) =>
+        members.some(
+          (member) =>
+            member.id === session.agentId &&
+            path.join(member.agentDir, 'openclaw-agent.sqlite') === session.storePath,
+        ) &&
+        typeof session.sessionKey === 'string' &&
+        session.sessionKey.length > 0 &&
+        typeof session.sessionId === 'string' &&
+        session.sessionId.length > 0 &&
+        typeof session.alreadyPending === 'boolean' &&
+        Number.isSafeInteger(session.archivedAt) &&
+        session.archivedAt > 0 &&
+        [
+          'active-session-cap',
+          'age-retention',
+          'manual',
+          'restart-recovery',
+          'stale-dashboard',
+        ].includes(session.archiveReason),
+    ) &&
+    new Set(
+      hold.sessions.map((session) =>
+        JSON.stringify([session.agentId, session.storePath, session.sessionKey]),
+      ),
+    ).size === hold.sessions.length
+  );
+}
 
-/** Session adoption on a fresh machine is incomplete until reviewed. Native
- * initializationPending blocks work admission without editing database internals,
- * deleting transcripts or replacing native recovery records.
+/** Native archived state prevents automatic recovery while retaining history.
+ * Operators can explicitly restore selected conversations through native UI/API.
+ * Existing incomplete initialization flags are never cleared.
  */
 export async function holdRestoredSessions(options: {
   owner: RestoreSecretOwner;
@@ -58,11 +97,7 @@ export async function holdRestoredSessions(options: {
     )
       throw new Error('Restored session hold journal is unsafe');
     hold = JSON.parse(await readFile(options.journal, 'utf8')) as SessionHold;
-    if (
-      hold.schemaVersion !== 1 ||
-      !isDeepStrictEqual(hold.owner, options.owner) ||
-      !Array.isArray(hold.sessions)
-    )
+    if (!validHold(hold, options.owner, options.members))
       throw new Error('Another operation owns the restored session hold');
   } catch (error) {
     if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
@@ -84,10 +119,12 @@ export async function holdRestoredSessions(options: {
           sessionKey,
           sessionId: entry.sessionId,
           alreadyPending: entry.initializationPending === true,
+          archivedAt: entry.archivedAt ?? Date.now(),
+          archiveReason: entry.archiveReason ?? 'manual',
         });
     }
-    hold = { schemaVersion: 1, owner: options.owner, sessions };
-    await writeFile(options.journal, JSON.stringify(hold), { flag: 'wx', mode: 0o600 });
+    hold = { schemaVersion: 2, owner: options.owner, sessions };
+    await ownedRestoreRecord(options.journal, hold);
   }
   const expected = JSON.stringify(hold);
   const assertCurrent = () => {
@@ -107,10 +144,14 @@ export async function holdRestoredSessions(options: {
       prepare(current) {
         if (current.sessionId !== session.sessionId)
           throw new Error('Restored session generation changed before adoption');
-        return { initializationPending: true };
+        return { archivedAt: session.archivedAt, archiveReason: session.archiveReason };
       },
     });
-    if (entry?.sessionId !== session.sessionId || entry.initializationPending !== true)
+    if (
+      entry?.sessionId !== session.sessionId ||
+      entry.archivedAt !== session.archivedAt ||
+      (session.alreadyPending && entry.initializationPending !== true)
+    )
       throw new Error('Native session adoption hold was not established');
   }
   await options.assertInactive();
@@ -118,4 +159,59 @@ export async function holdRestoredSessions(options: {
     held: hold.sessions.length,
     preexistingIncomplete: hold.sessions.filter((session) => session.alreadyPending).length,
   };
+}
+
+/** Read-only check used before and after service activation. It never releases work. */
+export async function inspectRestoredSessionHolds(options: {
+  owner: RestoreSecretOwner;
+  members: BackupMember[];
+  nativePackageJson: string;
+  journal: string;
+}) {
+  const stat = await lstat(options.journal);
+  if (
+    !stat.isFile() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== process.getuid?.() ||
+    stat.mode & 0o077 ||
+    stat.size > 8 * 1024 * 1024
+  )
+    throw new Error('Restored session hold journal is unsafe');
+  const hold = JSON.parse(await readFile(options.journal, 'utf8')) as SessionHold;
+  if (!validHold(hold, options.owner, options.members))
+    throw new Error('Restored session hold ownership differs');
+  const require = createRequire(options.nativePackageJson);
+  const sdk = (await import(
+    pathToFileURL(require.resolve('openclaw/plugin-sdk/session-store-runtime')).href
+  )) as SessionsSdk;
+  let count = 0;
+  for (const member of options.members) {
+    const storePath = path.join(member.agentDir, 'openclaw-agent.sqlite');
+    const expected = hold.sessions.filter(
+      (session) => session.agentId === member.id && session.storePath === storePath,
+    );
+    const actual = await sdk.listSessionEntriesAsync({
+      agentId: member.id,
+      storePath,
+      readConsistency: 'latest',
+    });
+    if (
+      expected.length !== actual.length ||
+      actual.some(
+        ({ sessionKey, entry }) =>
+          !expected.some(
+            (saved) =>
+              saved.sessionKey === sessionKey &&
+              saved.sessionId === entry.sessionId &&
+              saved.archivedAt === entry.archivedAt &&
+              (!saved.alreadyPending || entry.initializationPending === true),
+          ),
+      )
+    )
+      throw new Error('Restored session adoption holds or generations changed');
+    count += actual.length;
+  }
+  if (count !== hold.sessions.length)
+    throw new Error('Session hold inventory includes another member or store');
+  return { held: count };
 }

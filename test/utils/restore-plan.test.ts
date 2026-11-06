@@ -59,6 +59,17 @@ beforeEach(() => {
   vi.spyOn(fs, 'existsSync').mockReturnValue(false);
 });
 describe('fresh-client restore intake', () => {
+  it('reserves the downloaded archive alongside extracted data instead of trusting the old disk size alone', async () => {
+    const point = structuredClone(backupReceipt);
+    point.capture.capture.location.storedBytes = 20 * 1024 ** 3;
+    point.capture.capture.location.plaintextBytes = 20 * 1024 ** 3 - 100;
+    point.capture.objects[
+      `backups/${point.job.namespace}/${point.capture.capture.location.key}`
+    ].storedBytes = point.capture.capture.location.storedBytes;
+    mocks.inspect.mockResolvedValue(point);
+    expect((await prepareRestore(options)).bootstrap.volumeGiB).toBe(51);
+    await expect(prepareRestore({ ...options, volumeGiB: 30 })).rejects.toThrow('at least 51');
+  });
   it('defaults to the saved source region, type, name and recorded runtime after full verification', async () => {
     const plan = await prepareRestore(options);
     expect(plan.context.config).toMatchObject({
@@ -68,7 +79,7 @@ describe('fresh-client restore intake', () => {
     });
     expect(plan.bootstrap).toEqual({
       operationId: options.operationId,
-      volumeGiB: 30,
+      volumeGiB: 32,
       runtime: backupReceipt.capture.runtime,
     });
     expect(plan.context.config.openclaw).toBeUndefined(); // Native provider intent is inside encrypted state.
@@ -122,6 +133,6 @@ describe('fresh-client restore intake', () => {
     });
     const plan = await prepareRestore(options);
     expect(plan.sourcePresence.kind).toBe('retained-host');
-    expect(plan.prerequisites.join(' ')).toContain('persistent takeover');
+    expect(plan.prerequisites.join(' ')).toContain('independent cloning');
   });
 });

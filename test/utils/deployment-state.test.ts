@@ -42,6 +42,17 @@ describe('deployment identity and native observations', () => {
     expect(loadDeploymentState(ctx)).toEqual(updated);
     expect(fs.statSync(path.join(mocks.root, 'deployments/alpha.json')).mode & 0o777).toBe(0o600);
   });
+  it('retains restore lineage and native model intent without inventing a provider', () => {
+    const ctx = makeCommandContext();
+    const lineage = {
+      operationId: '11111111-1111-1111-1111-111111111111',
+      pointId: '22222222-2222-2222-2222-222222222222',
+    };
+    const restored = recordDeploymentState(ctx, status, { restoredFrom: lineage });
+    expect(restored.restoredFrom).toEqual(lineage);
+    expect(restored.desired.provider).toBe('native-restored');
+    expect(recordDeploymentState(ctx, status).restoredFrom).toEqual(lineage);
+  });
   it('rejects mismatched or missing AWS identity without replacing the saved receipt', () => {
     const ctx = makeCommandContext();
     recordDeploymentState(ctx, status);

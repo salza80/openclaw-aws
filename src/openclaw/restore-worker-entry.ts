@@ -5,10 +5,16 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { parseRestoreJob } from './restore-contract.js';
 import { runRestoreWorker } from './restore-worker.js';
+import { runRestoreActivation } from './restore-activation.js';
 
 async function main() {
   const [mode, inputFile, resultFile] = process.argv.slice(2);
-  if (!['--lock', '--run'].includes(mode) || !inputFile || !resultFile || process.argv.length !== 5)
+  if (
+    !['--lock', '--run', '--lock-activate', '--activate'].includes(mode) ||
+    !inputFile ||
+    !resultFile ||
+    process.argv.length !== 5
+  )
     throw new Error('Invalid restore worker invocation');
   const file = await open(inputFile, constants.O_RDONLY | constants.O_NOFOLLOW);
   let input: unknown;
@@ -43,7 +49,7 @@ async function main() {
     )
       throw new Error('Restore operation directory is not private');
   }
-  if (mode === '--lock') {
+  if (mode === '--lock' || mode === '--lock-activate') {
     await execa(
       'flock',
       [
@@ -53,7 +59,7 @@ async function main() {
         path.join(root, 'host.lock'),
         process.execPath,
         process.argv[1],
-        '--run',
+        mode === '--lock-activate' ? '--activate' : '--run',
         inputFile,
         resultFile,
       ],
@@ -65,7 +71,8 @@ async function main() {
     const cancellation = new AbortController();
     process.once('SIGTERM', () => cancellation.abort());
     process.once('SIGINT', () => cancellation.abort());
-    const result = await runRestoreWorker(
+    const run = mode === '--activate' ? runRestoreActivation : runRestoreWorker;
+    const result = await run(
       job,
       AbortSignal.any([cancellation.signal, AbortSignal.timeout(40 * 60 * 1000)]),
     );

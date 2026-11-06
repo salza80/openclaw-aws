@@ -9,6 +9,7 @@ export function recoveryRemoteCommand(options: {
   bucket: string;
   pluginDirectory: string;
   worker: 'worker.js' | 'restore-worker.js';
+  mode?: 'stage' | 'activate';
   artifact: RecoveryArtifact;
   request: { key: string; versionId: string; sha256: string };
 }): string {
@@ -16,6 +17,11 @@ export function recoveryRemoteCommand(options: {
     throw new Error('Recovery delivery requires an operation UUID');
   if (!['worker.js', 'restore-worker.js'].includes(options.worker))
     throw new Error('Unsupported recovery worker');
+  if (
+    (options.mode !== undefined && !['stage', 'activate'].includes(options.mode)) ||
+    (options.mode === 'activate' && options.worker !== 'restore-worker.js')
+  )
+    throw new Error('Unsupported recovery worker mode');
   const { artifact, request } = options;
   if (
     artifact.files.some(
@@ -76,7 +82,7 @@ export function recoveryRemoteCommand(options: {
       ),
       install('request.json', request.sha256, `${work}/request.json`),
       'set +e',
-      `${clean('/home/ubuntu')}${options.worker === 'restore-worker.js' ? ' OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw OPENCLAW_CONFIG_PATH=/home/ubuntu/.openclaw/openclaw.json' : ''} XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" node ${shellQuote(`${options.pluginDirectory}/${options.worker}`)} --lock ${shellQuote(`${work}/request.json`)} ${shellQuote(`${work}/result.json`)} >${shellQuote(`${work}/private.log`)} 2>&1`,
+      `${clean('/home/ubuntu')}${options.worker === 'restore-worker.js' ? ' OPENCLAW_STATE_DIR=/home/ubuntu/.openclaw OPENCLAW_CONFIG_PATH=/home/ubuntu/.openclaw/openclaw.json' : ''} XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" node ${shellQuote(`${options.pluginDirectory}/${options.worker}`)} ${options.mode === 'activate' ? '--lock-activate' : '--lock'} ${shellQuote(`${work}/request.json`)} ${shellQuote(`${work}/result.json`)} >${shellQuote(`${work}/private.log`)} 2>&1`,
       'capture_status=$?',
       'set -e',
       `if [ -f ${shellQuote(`${work}/result.json`)} ]; then cat ${shellQuote(`${work}/result.json`)}; fi`,
