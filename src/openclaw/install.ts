@@ -20,35 +20,104 @@ export interface OpenClawBootstrapOptions {
 // Public config values remain compatible while upstream auth choices and env names evolve.
 export const OPENCLAW_PROVIDER_SETUP: Record<
   Provider,
-  { envVar: string; authChoice: string; tokenProvider?: string }
+  { envVar: string; authChoice: string; providerId: string; tokenProvider?: string }
 > = {
   'anthropic-api-key': {
     envVar: 'ANTHROPIC_API_KEY',
+    providerId: 'anthropic',
     authChoice: 'apiKey',
     tokenProvider: 'anthropic',
   },
-  'openrouter-api-key': { envVar: 'OPENROUTER_API_KEY', authChoice: 'openrouter-api-key' },
-  'openai-api-key': { envVar: 'OPENAI_API_KEY', authChoice: 'openai-api-key' },
-  'gemini-api-key': { envVar: 'GEMINI_API_KEY', authChoice: 'gemini-api-key' },
-  'ai-gateway-api-key': { envVar: 'AI_GATEWAY_API_KEY', authChoice: 'ai-gateway-api-key' },
+  'openrouter-api-key': {
+    envVar: 'OPENROUTER_API_KEY',
+    providerId: 'openrouter',
+    authChoice: 'openrouter-api-key',
+  },
+  'openai-api-key': {
+    envVar: 'OPENAI_API_KEY',
+    providerId: 'openai',
+    authChoice: 'openai-api-key',
+  },
+  'gemini-api-key': {
+    envVar: 'GEMINI_API_KEY',
+    providerId: 'google',
+    authChoice: 'gemini-api-key',
+  },
+  'ai-gateway-api-key': {
+    envVar: 'AI_GATEWAY_API_KEY',
+    providerId: 'vercel-ai-gateway',
+    authChoice: 'ai-gateway-api-key',
+  },
   'cloudflare-ai-gateway-api-key': {
     envVar: 'CLOUDFLARE_AI_GATEWAY_API_KEY',
+    providerId: 'cloudflare-ai-gateway',
     authChoice: 'cloudflare-ai-gateway-api-key',
   },
-  'moonshot-api-key': { envVar: 'MOONSHOT_API_KEY', authChoice: 'moonshot-api-key' },
-  'kimi-code-api-key': { envVar: 'KIMI_API_KEY', authChoice: 'kimi-code-api-key' },
-  'synthetic-api-key': { envVar: 'SYNTHETIC_API_KEY', authChoice: 'synthetic-api-key' },
-  'venice-api-key': { envVar: 'VENICE_API_KEY', authChoice: 'venice-api-key' },
-  'zai-api-key': { envVar: 'ZAI_API_KEY', authChoice: 'zai-api-key' },
-  'xiaomi-api-key': { envVar: 'XIAOMI_API_KEY', authChoice: 'xiaomi-api-key' },
-  'xai-api-key': { envVar: 'XAI_API_KEY', authChoice: 'xai-api-key' },
-  'minimax-api-key': { envVar: 'MINIMAX_API_KEY', authChoice: 'minimax-global-api' },
-  'opencode-zen-api-key': { envVar: 'OPENCODE_API_KEY', authChoice: 'opencode-zen' },
+  'moonshot-api-key': {
+    envVar: 'MOONSHOT_API_KEY',
+    providerId: 'moonshot',
+    authChoice: 'moonshot-api-key',
+  },
+  'kimi-code-api-key': {
+    envVar: 'KIMI_API_KEY',
+    providerId: 'kimi',
+    authChoice: 'kimi-code-api-key',
+  },
+  'synthetic-api-key': {
+    envVar: 'SYNTHETIC_API_KEY',
+    providerId: 'synthetic',
+    authChoice: 'synthetic-api-key',
+  },
+  'venice-api-key': {
+    envVar: 'VENICE_API_KEY',
+    providerId: 'venice',
+    authChoice: 'venice-api-key',
+  },
+  'zai-api-key': { envVar: 'ZAI_API_KEY', providerId: 'zai', authChoice: 'zai-api-key' },
+  'xiaomi-api-key': {
+    envVar: 'XIAOMI_API_KEY',
+    providerId: 'xiaomi',
+    authChoice: 'xiaomi-api-key',
+  },
+  'xai-api-key': { envVar: 'XAI_API_KEY', providerId: 'xai', authChoice: 'xai-api-key' },
+  'minimax-api-key': {
+    envVar: 'MINIMAX_API_KEY',
+    providerId: 'minimax',
+    authChoice: 'minimax-global-api',
+  },
+  'opencode-zen-api-key': {
+    envVar: 'OPENCODE_API_KEY',
+    providerId: 'opencode',
+    authChoice: 'opencode-zen',
+  },
 };
 
 function shellQuote(value: string): string {
   if (value.includes('\0')) throw new Error('Bootstrap settings cannot contain NUL bytes');
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+/** Public native onboarding arguments shared by fresh deployment and cloning. */
+export function openClawProviderAuthArgs(options: {
+  apiProvider: Provider;
+  cloudflareAccountId?: string;
+  cloudflareGatewayId?: string;
+}): string[] {
+  const setup = OPENCLAW_PROVIDER_SETUP[options.apiProvider];
+  if (!setup) throw new Error(`Unsupported OpenClaw provider: ${options.apiProvider}`);
+  const args = ['--auth-choice', setup.authChoice];
+  if (setup.tokenProvider) args.push('--token-provider', setup.tokenProvider);
+  if (options.apiProvider === 'cloudflare-ai-gateway-api-key') {
+    if (!options.cloudflareAccountId?.trim() || !options.cloudflareGatewayId?.trim())
+      throw new Error('Cloudflare AI Gateway requires both account and gateway IDs');
+    args.push(
+      '--cloudflare-ai-gateway-account-id',
+      options.cloudflareAccountId,
+      '--cloudflare-ai-gateway-gateway-id',
+      options.cloudflareGatewayId,
+    );
+  }
+  return args;
 }
 
 /** Render the same packaged bootstrap asset from either src/ or dist/. */
@@ -62,19 +131,9 @@ export function renderOpenClawBootstrap(options: OpenClawBootstrapOptions): stri
     throw new Error('Restore bootstrap requires a valid operation UUID');
   const setup = OPENCLAW_PROVIDER_SETUP[options.apiProvider];
   if (!setup) throw new Error(`Unsupported OpenClaw provider: ${options.apiProvider}`);
-  const authArgs = ['--auth-choice', setup.authChoice];
-  if (setup.tokenProvider) authArgs.push('--token-provider', setup.tokenProvider);
-  if (options.apiProvider === 'cloudflare-ai-gateway-api-key' && !options.restoreOperationId) {
-    if (!options.cloudflareAccountId?.trim() || !options.cloudflareGatewayId?.trim()) {
-      throw new Error('Cloudflare AI Gateway requires both account and gateway IDs');
-    }
-    authArgs.push(
-      '--cloudflare-ai-gateway-account-id',
-      options.cloudflareAccountId,
-      '--cloudflare-ai-gateway-gateway-id',
-      options.cloudflareGatewayId,
-    );
-  }
+  const authArgs = options.restoreOperationId
+    ? ['--auth-choice', setup.authChoice]
+    : openClawProviderAuthArgs(options);
   const gatewayLogPath = '/home/ubuntu/.openclaw/logs/gateway.log';
   const cloudWatchSetup = options.logGroupName
     ? `phase cloudwatch

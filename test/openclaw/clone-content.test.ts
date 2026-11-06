@@ -56,6 +56,7 @@ async function fixture(base = root) {
       { source: research, destination: members[1].workspace },
     ],
     members,
+    credentialPaths: [] as string[],
   };
 }
 describe('independent clone content selection', () => {
@@ -83,6 +84,39 @@ describe('independent clone content selection', () => {
     expect(plan.members[0].workspace).toBe('/home/ubuntu/.openclaw/workspaces/main');
     expect(plan.members[0].agentDir).toBe('/home/ubuntu/.openclaw/agents/main/agent');
     expect(plan.members[0].files.every((file) => /^[a-f0-9]{64}$/.test(file.sha256))).toBe(true);
+  });
+  it('includes shared file-backed skills without copying skill-library identity or installation state', async () => {
+    const input = await fixture();
+    const state = path.join(input.stagingDirectory, 'payload/state');
+    await mkdir(path.join(state, 'skills/shared'), { recursive: true });
+    await mkdir(path.join(state, 'skill-library/old-owner'), { recursive: true });
+    await writeFile(path.join(state, 'skills/shared/SKILL.md'), 'shared skill');
+    await writeFile(path.join(state, 'skills/shared/.env'), 'secret');
+    await writeFile(path.join(state, 'skill-library/old-owner/ownership.json'), 'opaque ownership');
+    input.moves.push({ source: state, destination: '/home/ubuntu/.openclaw' });
+    const plan = await planCloneContent(input);
+    expect(plan.sharedSkills?.root).toBe('/home/ubuntu/.openclaw/skills');
+    expect(plan.sharedSkills?.files.map((file) => file.path)).toEqual(['shared/SKILL.md']);
+    expect(plan.sharedSkills?.omitted).toEqual([
+      { path: 'shared/.env', reason: 'credential-file' },
+    ]);
+    const before = plan.digest;
+    await writeFile(path.join(state, 'skills/shared/SKILL.md'), 'updated shared skill');
+    expect((await planCloneContent(input)).digest).not.toBe(before);
+  });
+  it('excludes referenced credential files even when their names look like ordinary data', async () => {
+    const input = await fixture();
+    await writeFile(
+      path.join(input.moves[0].source, 'reference.json'),
+      'private provider material',
+    );
+    input.credentialPaths = ['/home/ubuntu/personal/reference.json'];
+    const plan = await planCloneContent(input);
+    expect(plan.members[0].files.some((file) => file.path === 'reference.json')).toBe(false);
+    expect(plan.members[0].omitted).toContainEqual({
+      path: 'reference.json',
+      reason: 'referenced-credential',
+    });
   });
   it('never follows workspace links or copies hard-linked credential content', async () => {
     const input = await fixture();

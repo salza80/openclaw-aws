@@ -22,6 +22,7 @@ async function fixture() {
   await writeFile(path.join(workspace, 'SOUL.md'), 'retained persona');
   const plan = await planCloneContent({
     stagingDirectory,
+    credentialPaths: [],
     targetHome: home,
     members: [
       {
@@ -43,6 +44,30 @@ describe('owned fresh clone workspace installation', () => {
     expect((await lstat(destination)).mode & 0o077).toBe(0);
     expect(await readFile(input.plan.members[0].files[0].source, 'utf8')).toBe('retained persona');
     expect(await installCloneWorkspaces(input)).toEqual({ members: 1, files: 1 });
+  });
+  it('publishes shared file-backed skills under fresh state alongside each native workspace', async () => {
+    const input = await fixture();
+    const source = path.join(home, 'staging/shared-skill');
+    await writeFile(source, 'shared skill');
+    const { createHash } = await import('node:crypto');
+    input.plan.sharedSkills = {
+      root: `${home}/.openclaw/skills`,
+      files: [
+        {
+          path: 'helper/SKILL.md',
+          source,
+          bytes: 12,
+          sha256: createHash('sha256').update('shared skill').digest('hex'),
+        },
+      ],
+      omitted: [],
+    };
+    input.plan.digest = cloneContentDigest(input.plan.members, input.plan.sharedSkills);
+    expect(await installCloneWorkspaces(input)).toEqual({ members: 1, files: 2 });
+    expect(await readFile(path.join(home, '.openclaw/skills/helper/SKILL.md'), 'utf8')).toBe(
+      'shared skill',
+    );
+    expect(await installCloneWorkspaces(input)).toEqual({ members: 1, files: 2 });
   });
   it('recovers a publication interrupted before removing its private incoming link', async () => {
     const input = await fixture();

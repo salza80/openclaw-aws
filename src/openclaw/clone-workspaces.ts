@@ -25,18 +25,36 @@ export async function installCloneWorkspaces(options: {
     !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(operationId) ||
     !/^[a-f0-9]{64}$/.test(plan.digest) ||
     !plan.members.length ||
-    cloneContentDigest(plan.members) !== plan.digest ||
+    cloneContentDigest(plan.members, plan.sharedSkills) !== plan.digest ||
     new Set(plan.members.map((member) => member.id)).size !== plan.members.length ||
     !path.isAbsolute(home) ||
     path.normalize(home) !== home
   )
     throw new Error('Invalid clone content operation');
+  if (plan.sharedSkills && plan.sharedSkills.root !== `${home}/.openclaw/skills`)
+    throw new Error('Shared clone skills escaped the fresh target');
+  const scopes = [
+    ...plan.members,
+    ...plan.members.flatMap((member) =>
+      member.workshopSkills
+        ? [{ workspace: member.workshopSkills.root, files: member.workshopSkills.files }]
+        : [],
+    ),
+    ...(plan.sharedSkills
+      ? [{ workspace: plan.sharedSkills.root, files: plan.sharedSkills.files }]
+      : []),
+  ];
   for (const member of plan.members) {
     if (
       !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(member.id) ||
-      member.workspace !== `${home}/.openclaw/workspaces/${member.id}`
+      member.workspace !== `${home}/.openclaw/workspaces/${member.id}` ||
+      (member.workshopSkills &&
+        member.workshopSkills.root !==
+          `${home}/.openclaw/agents/${member.id}/agent/workshop-skills`)
     )
       throw new Error('Clone workspace mapping escaped the fresh target');
+  }
+  for (const member of scopes) {
     for (const file of member.files)
       if (
         path.posix.isAbsolute(file.path) ||
@@ -44,6 +62,7 @@ export async function installCloneWorkspaces(options: {
         ['.', '..'].includes(file.path) ||
         file.path.startsWith('../') ||
         file.path.includes('\0') ||
+        (file.executable !== undefined && file.executable !== true) ||
         !/^[a-f0-9]{64}$/.test(file.sha256) ||
         !Number.isSafeInteger(file.bytes) ||
         file.bytes < 0
@@ -55,14 +74,14 @@ export async function installCloneWorkspaces(options: {
     schemaVersion: 1,
     operationId,
     digest: plan.digest,
-    workspaces: plan.members.map((member) => member.workspace),
+    workspaces: scopes.map((member) => member.workspace),
   };
   try {
     if (!isDeepStrictEqual(await privateRestoreJson(options.journal), expected))
       throw new Error('Clone workspace journal belongs to another operation');
   } catch (error) {
     if (!missing(error)) throw error;
-    for (const member of plan.members) {
+    for (const member of scopes) {
       try {
         await lstat(member.workspace);
         throw new Error('Clone target workspace already exists', { cause: error });
@@ -73,7 +92,7 @@ export async function installCloneWorkspaces(options: {
     await ownedRestoreRecord(options.journal, expected);
   }
   let files = 0;
-  for (const member of plan.members) {
+  for (const member of scopes) {
     await assertDirectoryChain(member.workspace, home, true);
     for (const item of member.files) {
       options.signal?.throwIfAborted();
@@ -87,6 +106,7 @@ export async function installCloneWorkspaces(options: {
           existing.isSymbolicLink() ||
           existing.uid !== process.getuid?.() ||
           existing.mode & 0o077 ||
+          Boolean(existing.mode & 0o100) !== Boolean(item.executable) ||
           existing.nlink > 2
         )
           throw new Error('Clone destination has foreign or linked content');
@@ -136,9 +156,14 @@ export async function installCloneWorkspaces(options: {
         const input = await open(item.source, constants.O_RDONLY | constants.O_NOFOLLOW);
         try {
           const original = await input.stat();
-          if (!original.isFile() || original.nlink !== 1 || original.size !== item.bytes)
+          if (
+            !original.isFile() ||
+            original.nlink !== 1 ||
+            original.size !== item.bytes ||
+            Boolean(original.mode & 0o100) !== Boolean(item.executable)
+          )
             throw new Error('Selected clone source changed');
-          const output = await open(incoming, 'wx', 0o600);
+          const output = await open(incoming, 'wx', item.executable ? 0o700 : 0o600);
           try {
             const digest = createHash('sha256');
             let copied = 0;
