@@ -373,6 +373,16 @@ openclaw-aws restore cleanup --operation-id <restore-uuid> --yes
 
 Staging creates an inactive host; activation starts a validated Gateway with channels, schedules, hooks and restored sessions still paused. Add `--activate` to the first command to request both steps. `--target-region`, `--target-profile`, `--instance-type` and `--volume-gib` override the new target settings within the same account. The disk includes space for staged extraction. Resume verifies an existing operation and reuses its exact code/request versions; it does not create another instance when the original target is missing. Inspection reports the saved operation state. Cleanup verifies operation ownership and removes imported provider keys as well as the Gateway credential; the independent backup remains. After activation, review pairing and integrations in the native dashboard and restore selected archived conversations or create a new thread to deliberately restart reviewed work. See the [reconnection runbook](docs/native-backup-transport.md#reconnection-and-reviewed-work). The fresh-host AWS acceptance drill is deferred; the complete EC2 restore path has not yet been demonstrated.
 
+### Archive while idle
+
+```sh
+openclaw-aws archive --name personal --vault s3://my-vault/recovery
+openclaw-aws archive inspect --operation-id <uuid> --vault s3://my-vault/recovery --region eu-central-1 --json
+openclaw-aws archive resume --operation-id <uuid> --vault s3://my-vault/recovery --region eu-central-1 --yes
+```
+
+Archive commits and independently verifies one complete native backup for the whole host, keeps the Gateway inactive, then removes its owned stack, root disk and unchanged source credentials. The vault/key and shared resources remain billable. Local source configuration is removed only after confirmed teardown and ownership checks; `--keep-config` retains it. An owned `archive abort` can restore the source before teardown commitment. Interrupted teardown resumes from the independent receipt instead of taking another backup. See the [archive runbook](docs/archiving.md). Live AWS validation remains deferred to the final campaign in #28.
+
 ### Independent knowledge clones
 
 Clone a saved installation into one new EC2/Gateway host with fresh native ownership and credentials. The original can remain live. All saved agent roles share the new host; their valid IDs, internal delegation relationships, supported model settings, workspace memory and file-backed skills are preserved. History, source credentials and opaque native stores are excluded.

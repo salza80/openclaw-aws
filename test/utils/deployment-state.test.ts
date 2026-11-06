@@ -11,7 +11,7 @@ import {
   observeRuntime,
   recordDeploymentState,
 } from '../../src/operations/state.js';
-import { withDeploymentLock } from '../../src/operations/lock.js';
+import { withDeploymentLock, type DeploymentLease } from '../../src/operations/lock.js';
 import { makeCommandContext } from '../helpers/fixtures/command-context.js';
 const status = {
   stackName: 'OpenclawStack-alpha',
@@ -26,6 +26,25 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe('deployment identity and native observations', () => {
+  it('lets archive compose backup under one live lease without reacquiring its own lock', async () => {
+    const ctx = makeCommandContext();
+    let saved: DeploymentLease | undefined;
+    await withDeploymentLock(ctx, async (lease) => {
+      saved = lease;
+      await expect(
+        withDeploymentLock(ctx, async (nested) => nested === lease, lease),
+      ).resolves.toBe(true);
+      const other = { ...ctx, config: { ...ctx.config, stack: { name: 'OtherStack' } } };
+      await expect(withDeploymentLock(other, async () => 'wrong', lease)).rejects.toThrow(
+        /another target/,
+      );
+    });
+    await expect(withDeploymentLock(ctx, async () => 'expired', saved)).rejects.toThrow(/expired/);
+    await expect(
+      withDeploymentLock(ctx, async () => 'forged', { deployment: saved!.deployment }),
+    ).rejects.toThrow(/expired/);
+    expect(fs.readdirSync(path.join(mocks.root, 'locks'))).toEqual([]);
+  });
   it('records a confirmed Bedrock connection separately from original API credentials and resets it for a new identity', () => {
     const ctx = makeCommandContext();
     ctx.config.openclaw = { apiProvider: 'openrouter-api-key', model: 'openrouter/initial' };

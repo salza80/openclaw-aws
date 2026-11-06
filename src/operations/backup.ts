@@ -28,7 +28,7 @@ import {
 } from '../openclaw/backup-contract.js';
 import { runBackupHelper } from '../openclaw/backup-helper.js';
 import { readRecoveryVault, recoveryPassphrase, type RecoveryVault } from './vault.js';
-import { withDeploymentLock } from './lock.js';
+import { withDeploymentLock, type DeploymentLease } from './lock.js';
 
 export interface BackupReceipt {
   schemaVersion: 1;
@@ -41,6 +41,12 @@ export interface BackupReceipt {
   job: BackupCaptureJob;
   source: RecoverySource;
   capture: CapturedBackup;
+}
+export interface BackupPreparation {
+  job: BackupCaptureJob;
+  source: RecoverySource;
+  artifact: RecoveryArtifact;
+  request: { key: string; versionId: string; sha256: string };
 }
 export const backupOperationId = (value?: string) => {
   const id = value ?? randomUUID();
@@ -204,139 +210,192 @@ export async function createBackup(
     operationId?: string;
     label?: string;
     progress?: (message: string) => void;
+    archive?: BackupCaptureJob['archive'];
+    beforeCapture?: (preparation: BackupPreparation) => Promise<void>;
+    lock?: DeploymentLease;
+    preparation?: BackupPreparation;
   },
 ): Promise<BackupReceipt> {
+  const archivePlan = options.archive ? structuredClone(options.archive) : undefined;
   const id = backupOperationId(options.operationId);
   if (options.label !== undefined) textField(options.label, 128);
-  return withDeploymentLock(ctx, async () => {
-    const vault = await checkVault(ctx.target, options.vaultUri);
-    const store = recoveryStore(ctx.target, vault.uri);
-    try {
-      const completed = await store.read(`receipts/${id}.json`, {
-        signal: AbortSignal.timeout(30000),
-      });
-      if (completed) {
-        const existing = parsedReceipt(completed.value, ctx.target, vault, id);
-        if (existing.source.stackName !== ctx.config.stack.name)
-          throw new Error('This recovery point belongs to another deployment');
-        return existing;
-      }
-      const source = await inspectRecoverySource(ctx);
-      assertIndependentVault(source, vault);
-      const preflight = await executeSsm(
-        source.instanceId,
-        ctx.target,
-        [asUbuntu('node -p process.versions.node\nopenclaw --version')],
-        { executionSeconds: 60 },
-      );
-      const versions = preflight.stdout.split('\n');
-      if (
-        versions.length !== 2 ||
-        versions[0] !== OPENCLAW_NODE_VERSION ||
-        !versions[1].startsWith(`OpenClaw ${OPENCLAW_VERSION} (`)
-      )
-        throw new Error(
-          `Backup requires the supported OpenClaw ${OPENCLAW_VERSION} / Node ${OPENCLAW_NODE_VERSION}; existing instances are not implicitly upgraded`,
-        );
-      const location = parseVaultUri(vault.uri);
-      const dataPrefix = `${location.prefix}/native/${sourceHash(source.stackId)}`;
-      options.progress?.(`Preparing prefix-scoped backup access; operation ${id}`);
-      await ensureRecoveryStack(ctx.target, {
-        kind: 'recovery-access',
-        stackName: `OpenclawRecovery-${sourceHash(source.stackId)}-${vault.id.slice(0, 16)}`,
-        identity: sourceAccessIdentity(source.stackId, source.role.id),
-        access: {
-          roleName: source.role.name,
-          bucket: location.bucket,
-          dataPrefix,
-          keyArn: vault.key.arn,
-          s3KmsKeyArn: vault.encryption.s3Key?.arn,
-          secretKmsKeyArn: vault.encryption.secretKey?.arn,
-        },
-      });
-      const artifact = await uploadRecoveryArtifact(ctx.target, {
-        bucket: location.bucket,
-        prefix: dataPrefix,
-      });
-      const job = parseBackupJob({
-        schemaVersion: 1,
-        operationId: id,
-        source: {
-          stackId: source.stackId,
-          instanceId: source.instanceId,
-          roleId: source.role.id,
-          account: ctx.target.account,
-          region: ctx.target.region,
-        },
-        settings: {
-          bucket: location.bucket,
-          prefix: dataPrefix,
-          region: ctx.target.region,
-          expectedBucketOwner: ctx.target.account,
-          credentialSource: 'instance-role',
-        },
-        key: vault.key,
-        pluginDirectory: `/home/ubuntu/.openclaw-aws/plugins/${artifact.digest}`,
-        namespace: 'installation',
-      });
-      const requestName = `native/${sourceHash(source.stackId)}/_operations/${id}/request.json`;
-      const request = await store.putImmutable(requestName, job, {
-        signal: AbortSignal.timeout(30000),
-      });
-      const captureName = `native/${sourceHash(source.stackId)}/_operations/${id}/capture.json`;
-      let captured = await store.read(captureName, { signal: AbortSignal.timeout(30000) });
-      if (!captured) {
-        options.progress?.(
-          'Quiescing the Gateway, capturing all native state, and verifying the exact remote archive...',
-        );
-        const result = await executeSsm(
-          source.instanceId,
-          ctx.target,
-          [
-            captureRemoteCommand(job, artifact, {
-              key: `${location.prefix}/${requestName}`,
-              versionId: request.versionId,
-              sha256: Buffer.from(request.checksumSHA256, 'base64').toString('hex'),
-            }),
-          ],
-          { executionSeconds: 45 * 60 },
-        );
-        const response = object(JSON.parse(result.stdout));
-        if (
-          response.ok !== true ||
-          response.operationId !== id ||
-          response.key !== `_operations/${id}/capture.json`
-        )
-          throw new Error(
-            `Remote capture was not confirmed; inspect operation ${id} before retrying`,
-          );
-        captured = await store.read(captureName, {
-          versionId: textField(response.versionId, 1024),
+  return withDeploymentLock(
+    ctx,
+    async () => {
+      const vault = await checkVault(ctx.target, options.vaultUri);
+      const store = recoveryStore(ctx.target, vault.uri);
+      try {
+        const completed = await store.read(`receipts/${id}.json`, {
           signal: AbortSignal.timeout(30000),
         });
+        if (completed) {
+          const existing = parsedReceipt(completed.value, ctx.target, vault, id);
+          if (existing.source.stackName !== ctx.config.stack.name)
+            throw new Error('This recovery point belongs to another deployment');
+          return existing;
+        }
+        const source = await inspectRecoverySource(ctx);
+        assertIndependentVault(source, vault);
+        const preflight = await executeSsm(
+          source.instanceId,
+          ctx.target,
+          [asUbuntu('node -p process.versions.node\nopenclaw --version')],
+          { executionSeconds: 60 },
+        );
+        const versions = preflight.stdout.split('\n');
+        if (
+          versions.length !== 2 ||
+          versions[0] !== OPENCLAW_NODE_VERSION ||
+          !versions[1].startsWith(`OpenClaw ${OPENCLAW_VERSION} (`)
+        )
+          throw new Error(
+            `Backup requires the supported OpenClaw ${OPENCLAW_VERSION} / Node ${OPENCLAW_NODE_VERSION}; existing instances are not implicitly upgraded`,
+          );
+        const location = parseVaultUri(vault.uri);
+        const dataPrefix = `${location.prefix}/native/${sourceHash(source.stackId)}`;
+        const saved = options.preparation;
+        if (saved) {
+          const prior = parseBackupJob(saved.job);
+          if (
+            prior.operationId !== id ||
+            prior.source.stackId !== source.stackId ||
+            prior.source.instanceId !== source.instanceId ||
+            prior.source.roleId !== source.role.id ||
+            prior.source.account !== ctx.target.account ||
+            prior.source.region !== ctx.target.region ||
+            prior.settings.bucket !== location.bucket ||
+            prior.settings.prefix !== dataPrefix ||
+            !isDeepStrictEqual(prior.key, vault.key) ||
+            !isDeepStrictEqual(prior.archive, archivePlan)
+          )
+            throw new Error('Prepared backup belongs to another source, vault or archive approval');
+        }
+        options.progress?.(`Preparing prefix-scoped backup access; operation ${id}`);
+        await ensureRecoveryStack(ctx.target, {
+          kind: 'recovery-access',
+          stackName: `OpenclawRecovery-${sourceHash(source.stackId)}-${vault.id.slice(0, 16)}`,
+          identity: sourceAccessIdentity(source.stackId, source.role.id),
+          access: {
+            roleName: source.role.name,
+            bucket: location.bucket,
+            dataPrefix,
+            keyArn: vault.key.arn,
+            s3KmsKeyArn: vault.encryption.s3Key?.arn,
+            secretKmsKeyArn: vault.encryption.secretKey?.arn,
+          },
+        });
+        const artifact =
+          saved?.artifact ??
+          (await uploadRecoveryArtifact(ctx.target, {
+            bucket: location.bucket,
+            prefix: dataPrefix,
+          }));
+        const job = parseBackupJob(
+          saved?.job ?? {
+            schemaVersion: 1,
+            operationId: id,
+            source: {
+              stackId: source.stackId,
+              instanceId: source.instanceId,
+              roleId: source.role.id,
+              account: ctx.target.account,
+              region: ctx.target.region,
+            },
+            settings: {
+              bucket: location.bucket,
+              prefix: dataPrefix,
+              region: ctx.target.region,
+              expectedBucketOwner: ctx.target.account,
+              credentialSource: 'instance-role',
+            },
+            key: vault.key,
+            pluginDirectory: `/home/ubuntu/.openclaw-aws/plugins/${artifact.digest}`,
+            namespace: 'installation',
+            ...(archivePlan ? { archive: archivePlan } : {}),
+          },
+        );
+        const requestName = `native/${sourceHash(source.stackId)}/_operations/${id}/request.json`;
+        const request = saved
+          ? await store.read(requestName, {
+              versionId: saved.request.versionId,
+              signal: AbortSignal.timeout(30000),
+            })
+          : await store.putImmutable(requestName, job, { signal: AbortSignal.timeout(30000) });
+        if (
+          !request ||
+          !isDeepStrictEqual(request.value, job) ||
+          (saved &&
+            (saved.request.key !== `${location.prefix}/${requestName}` ||
+              saved.request.sha256 !==
+                Buffer.from(request.checksumSHA256, 'base64').toString('hex')))
+        )
+          throw new Error('Prepared backup request version or checksum changed');
+        const captureName = `native/${sourceHash(source.stackId)}/_operations/${id}/capture.json`;
+        await options.beforeCapture?.({
+          job,
+          source,
+          artifact,
+          request: {
+            key: `${location.prefix}/${requestName}`,
+            versionId: request.versionId,
+            sha256: Buffer.from(request.checksumSHA256, 'base64').toString('hex'),
+          },
+        });
+        let captured = await store.read(captureName, { signal: AbortSignal.timeout(30000) });
+        if (!captured) {
+          options.progress?.(
+            'Quiescing the Gateway, capturing all native state, and verifying the exact remote archive...',
+          );
+          const result = await executeSsm(
+            source.instanceId,
+            ctx.target,
+            [
+              captureRemoteCommand(job, artifact, {
+                key: `${location.prefix}/${requestName}`,
+                versionId: request.versionId,
+                sha256: Buffer.from(request.checksumSHA256, 'base64').toString('hex'),
+              }),
+            ],
+            { executionSeconds: 45 * 60 },
+          );
+          const response = object(JSON.parse(result.stdout));
+          if (
+            response.ok !== true ||
+            response.operationId !== id ||
+            response.key !== `_operations/${id}/capture.json`
+          )
+            throw new Error(
+              `Remote capture was not confirmed; inspect operation ${id} before retrying`,
+            );
+          captured = await store.read(captureName, {
+            versionId: textField(response.versionId, 1024),
+            signal: AbortSignal.timeout(30000),
+          });
+        }
+        if (!captured) throw new Error('Native capture was not durably published');
+        const capture = parseCapturedBackup(captured.value, job);
+        const receipt: BackupReceipt = {
+          schemaVersion: 1,
+          kind: 'openclaw-aws-backup',
+          id,
+          vaultId: vault.id,
+          vaultUri: vault.uri,
+          completedAt: new Date().toISOString(),
+          ...(options.label ? { label: options.label } : {}),
+          job,
+          source: { ...source, resources: [] },
+          capture,
+        };
+        await store.putImmutable(`receipts/${id}.json`, receipt, {
+          signal: AbortSignal.timeout(30000),
+        });
+        return receipt;
+      } finally {
+        store.close();
       }
-      if (!captured) throw new Error('Native capture was not durably published');
-      const capture = parseCapturedBackup(captured.value, job);
-      const receipt: BackupReceipt = {
-        schemaVersion: 1,
-        kind: 'openclaw-aws-backup',
-        id,
-        vaultId: vault.id,
-        vaultUri: vault.uri,
-        completedAt: new Date().toISOString(),
-        ...(options.label ? { label: options.label } : {}),
-        job,
-        source: { ...source, resources: [] },
-        capture,
-      };
-      await store.putImmutable(`receipts/${id}.json`, receipt, {
-        signal: AbortSignal.timeout(30000),
-      });
-      return receipt;
-    } finally {
-      store.close();
-    }
-  });
+    },
+    options.lock,
+  );
 }
 
 export async function verifyBackup(target: AwsTarget, uri: string, id: string) {

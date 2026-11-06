@@ -18,6 +18,7 @@ import startCommand from './commands/start.js';
 import restartCommand from './commands/restart.js';
 import vaultCommand from './commands/vault.js';
 import backupCommand from './commands/backup.js';
+import archiveCommand from './commands/archive.js';
 import restoreCommand from './commands/restore.js';
 import cloneCommand from './commands/clone.js';
 import modelsCommand from './commands/models.js';
@@ -43,6 +44,7 @@ yargs(hideBin(process.argv))
   .command(destroyCommand)
   .command(vaultCommand)
   .command(backupCommand)
+  .command(archiveCommand)
   .command(restoreCommand)
   .command(cloneCommand)
   .command(modelsCommand)

@@ -1,4 +1,7 @@
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { parseModelHostTarget } from './model-contract.js';
 import {
   parseBedrockRecoveryIntent,
   type BedrockRecoveryIntent,
@@ -20,7 +23,10 @@ export interface BackupCaptureJob {
   key: { arn: string; versionId: string; versionStage: string };
   pluginDirectory: string;
   namespace: string;
+  /** Explicit whole-host archive approval, bound to the preflight roster. */
+  archive?: { deploymentName: string; expectedMembers: ArchiveMember[] };
 }
+export type ArchiveMember = Pick<BackupMember, 'id' | 'workspace' | 'agentDir'>;
 export interface BackupAsset {
   kind: string;
   sourcePath: string;
@@ -73,7 +79,11 @@ export interface CapturedBackup {
     bedrock?: BedrockRecoveryIntent;
   };
   omissions: string[];
-  gateway: { initial: 'active' | 'inactive' | 'failed'; restored: boolean };
+  gateway: {
+    initial: 'active' | 'inactive' | 'failed';
+    restored: boolean;
+    held?: { kind: 'archive'; operationId: string; requestDigest: string };
+  };
 }
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value))
@@ -131,6 +141,15 @@ export function parseBackupJob(value: unknown): BackupCaptureJob {
     throw new Error('Backup job requires an independent retained key version');
   const pluginDirectory = textField(job.pluginDirectory);
   if (!path.isAbsolute(pluginDirectory)) throw new Error('Backup plugin path must be absolute');
+  let archive: BackupCaptureJob['archive'];
+  if (job.archive !== undefined) {
+    const plan = object(job.archive);
+    const target = parseModelHostTarget({ ...source, deploymentName: plan.deploymentName });
+    archive = {
+      deploymentName: target.deploymentName,
+      expectedMembers: archiveMemberIdentity(parseMembers(plan.expectedMembers)),
+    };
+  }
   return {
     schemaVersion: 1,
     operationId,
@@ -151,7 +170,28 @@ export function parseBackupJob(value: unknown): BackupCaptureJob {
     key: { arn, versionId: key.versionId as string, versionStage: key.versionStage as string },
     pluginDirectory,
     namespace,
+    ...(archive ? { archive } : {}),
   };
+}
+export function archiveMemberIdentity(members: BackupMember[]): ArchiveMember[] {
+  return members
+    .map(({ id, workspace, agentDir }) => ({ id, workspace, agentDir }))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+export function assertArchiveRoster(expected: ArchiveMember[], observed: BackupMember[]) {
+  if (!isDeepStrictEqual(archiveMemberIdentity(expected), archiveMemberIdentity(observed)))
+    throw new Error('The whole-host archive roster changed; no deletion is authorized');
+}
+export function backupJobDigest(job: BackupCaptureJob) {
+  return createHash('sha256')
+    .update(JSON.stringify(parseBackupJob(job)))
+    .digest('hex');
+}
+export function archiveCaptureDigest(capture: CapturedBackup, job: BackupCaptureJob) {
+  if (!job.archive) throw new Error('Archive verification requires a whole-host request');
+  return createHash('sha256')
+    .update(JSON.stringify(parseCapturedBackup(capture, job)))
+    .digest('hex');
 }
 export function parseMembers(value: unknown): BackupMember[] {
   const members = list(value).map((entry) => {
@@ -315,6 +355,25 @@ export function parseCapturedBackup(value: unknown, job: BackupCaptureJob): Capt
   )
     throw new Error('Native backup omitted the source configuration');
   const members = parseMembers(row.members);
+  let held: CapturedBackup['gateway']['held'];
+  if (job.archive) {
+    assertArchiveRoster(job.archive.expectedMembers, members);
+    const proof = object(gateway.held);
+    if (
+      gateway.restored !== false ||
+      proof.kind !== 'archive' ||
+      proof.operationId !== job.operationId ||
+      proof.requestDigest !== backupJobDigest(job)
+    )
+      throw new Error('Archive capture has no matching held-source proof');
+    held = {
+      kind: 'archive',
+      operationId: job.operationId,
+      requestDigest: proof.requestDigest as string,
+    };
+  } else if (gateway.held !== undefined) {
+    throw new Error('Ordinary backup cannot adopt an archive service hold');
+  }
   const verification = parseVerification(row.verification);
   assertMemberCoverage(capture, members);
   if (
@@ -359,6 +418,7 @@ export function parseCapturedBackup(value: unknown, job: BackupCaptureJob): Capt
     gateway: {
       initial: gateway.initial as 'active' | 'inactive' | 'failed',
       restored: gateway.restored,
+      ...(held ? { held } : {}),
     },
   };
 }

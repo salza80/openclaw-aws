@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { captureInstallation } from '../../src/openclaw/capture-worker.js';
 import type { BackupCaptureJob, NativeCaptureSummary } from '../../src/openclaw/backup-contract.js';
+import { backupJobDigest } from '../../src/openclaw/backup-contract.js';
+import type { ArchiveCaptureControl } from '../../src/openclaw/archive-capture-control.js';
+import { backupJob as validBackupJob } from '../helpers/fixtures/backup.js';
 
 const job: BackupCaptureJob = {
   schemaVersion: 1,
@@ -41,7 +44,11 @@ const capture: NativeCaptureSummary = {
     storedBytes: 200,
   },
 };
-function fixture(initial: 'active' | 'inactive' | 'failed' = 'active') {
+function fixture(
+  initial: 'active' | 'inactive' | 'failed' = 'active',
+  captureJob = job,
+  archive?: ArchiveCaptureControl,
+) {
   const host = {
     locationName: 'aws-vault',
     runtime: { openclaw: '2026.11.1', node: '24.22.2' },
@@ -86,7 +93,7 @@ function fixture(initial: 'active' | 'inactive' | 'failed' = 'active') {
     host,
     storage,
     maintenance,
-    run: () => captureInstallation(job, host, storage, maintenance),
+    run: () => captureInstallation(captureJob, host, storage, maintenance, archive),
   };
 }
 describe('host capture recovery barrier', () => {
@@ -166,6 +173,114 @@ describe('host capture recovery barrier', () => {
     const f = fixture();
     f.host.verify.mockResolvedValueOnce({ ...(await f.host.verify()), createdAt: 'other' });
     await expect(f.run()).rejects.toThrow('no completed point was published');
+    expect(f.storage.publish).not.toHaveBeenCalled();
+  });
+});
+function archiveFixture() {
+  const archivedJob: BackupCaptureJob = {
+    ...structuredClone(validBackupJob),
+    source: { ...validBackupJob.source, roleId: 'AROATESTHOSTROLE000001' },
+    namespace: 'fixture',
+    archive: {
+      deploymentName: 'alpha',
+      expectedMembers: [
+        { id: 'main', workspace: '/workspace', agentDir: '/state/agents/main/agent' },
+      ],
+    },
+  };
+  const archive = {
+    resume: vi.fn<ArchiveCaptureControl['resume']>(async () => undefined),
+    begin: vi.fn(async () => {}),
+    assertHeld: vi.fn(async () => {}),
+    verified: vi.fn<ArchiveCaptureControl['verified']>(async () => {}),
+    restore: vi.fn(async () => {}),
+    close: vi.fn(),
+    commit: vi.fn<ArchiveCaptureControl['commit']>(),
+    inspect: vi.fn<ArchiveCaptureControl['inspect']>(),
+  };
+  return { ...fixture('active', archivedJob, archive), archive, job: archivedJob };
+}
+describe('archive capture while the whole source is persistently held', () => {
+  it('captures and verifies once, retains host maintenance/inactivity, and binds the durable held-source proof', async () => {
+    const f = archiveFixture();
+    await expect(f.run()).resolves.toMatchObject({ gatewayRestored: false, gatewayHeld: true });
+    expect(f.archive.begin).toHaveBeenCalledWith('active');
+    expect(f.host.gateway.stop).not.toHaveBeenCalled();
+    expect(f.host.gateway.start).not.toHaveBeenCalled();
+    expect(f.maintenance.release).not.toHaveBeenCalled();
+    expect(f.archive.restore).not.toHaveBeenCalled();
+    expect(f.archive.verified).toHaveBeenCalledOnce();
+    expect(f.storage.publish.mock.calls[0][0].gateway).toEqual({
+      initial: 'active',
+      restored: false,
+      held: {
+        kind: 'archive',
+        operationId: f.job.operationId,
+        requestDigest: backupJobDigest(f.job),
+      },
+    });
+    expect(f.archive.verified.mock.invocationCallOrder[0]).toBeLessThan(
+      f.storage.publish.mock.invocationCallOrder[0],
+    );
+  });
+  for (const step of ['prepareStorage', 'capture', 'credentials', 'verify'] as const) {
+    it(`restores this source and releases ownership after an observed ${step} failure`, async () => {
+      const f = archiveFixture();
+      f.host[step].mockRejectedValueOnce(new Error('private failure'));
+      await expect(f.run()).rejects.toThrow(/source service state was restored/);
+      expect(f.archive.restore).toHaveBeenCalledOnce();
+      expect(f.maintenance.release).toHaveBeenCalledOnce();
+      expect(f.storage.publish).not.toHaveBeenCalled();
+    });
+  }
+  it('refuses changed/unrelated members before capture and restores the owned source', async () => {
+    const f = archiveFixture();
+    f.host.members.mockResolvedValueOnce([
+      { id: 'unrelated', workspace: '/other', agentDir: '/state/agents/other/agent' },
+    ]);
+    await expect(f.run()).rejects.toThrow(/no completed point/);
+    expect(f.host.capture).not.toHaveBeenCalled();
+    expect(f.host.prepareStorage).not.toHaveBeenCalled();
+    expect(f.archive.restore).toHaveBeenCalledOnce();
+  });
+  it('does not restart/release another or interrupted capture when initial reconciliation is uncertain', async () => {
+    const f = archiveFixture();
+    f.archive.resume.mockRejectedValueOnce(new Error('Incomplete previous native capture'));
+    await expect(f.run()).rejects.toThrow(/retained maintenance/);
+    expect(f.archive.begin).not.toHaveBeenCalled();
+    expect(f.archive.restore).not.toHaveBeenCalled();
+    expect(f.host.capture).not.toHaveBeenCalled();
+    expect(f.maintenance.release).not.toHaveBeenCalled();
+  });
+  it('retains the verified held source after an uncertain publication without restarting it', async () => {
+    const f = archiveFixture();
+    f.storage.publish.mockRejectedValueOnce(new Error('Unknown S3 receipt outcome'));
+    await expect(f.run()).rejects.toThrow(/Unknown S3/);
+    expect(f.archive.verified).toHaveBeenCalledOnce();
+    expect(f.archive.restore).not.toHaveBeenCalled();
+    expect(f.host.gateway.start).not.toHaveBeenCalled();
+    expect(f.maintenance.release).not.toHaveBeenCalled();
+  });
+  it('adopts a verified held capture after a lost reply, publishing metadata without recapturing', async () => {
+    const f = archiveFixture();
+    await f.run();
+    const captured = structuredClone(f.archive.verified.mock.calls[0][0]);
+    const retry = archiveFixture();
+    retry.archive.resume.mockResolvedValueOnce(captured);
+    await retry.run();
+    expect(retry.archive.begin).not.toHaveBeenCalled();
+    expect(retry.host.capture).not.toHaveBeenCalled();
+    expect(retry.host.prepareStorage).not.toHaveBeenCalled();
+    expect(retry.host.verify).not.toHaveBeenCalled();
+    expect(retry.storage.publish).toHaveBeenCalledWith(captured);
+    expect(retry.maintenance.release).not.toHaveBeenCalled();
+  });
+  it('never treats a failed rollback as a restored source', async () => {
+    const f = archiveFixture();
+    f.host.capture.mockRejectedValueOnce(new Error('capture failed'));
+    f.archive.restore.mockRejectedValueOnce(new Error('source status unknown'));
+    await expect(f.run()).rejects.toThrow(/retained maintenance/);
+    expect(f.maintenance.release).not.toHaveBeenCalled();
     expect(f.storage.publish).not.toHaveBeenCalled();
   });
 });

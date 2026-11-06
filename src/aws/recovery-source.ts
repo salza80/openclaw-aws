@@ -42,7 +42,7 @@ export const sourceAccessIdentity = (stackId: string, roleId: string) =>
     .digest('hex');
 export const bedrockAccessStackName = (stackId: string, roleId: string) =>
   `OpenclawBedrock-${sourceAccessIdentity(stackId, roleId).slice(0, 24)}`;
-async function sourceResources(
+export async function sourceResources(
   target: AwsTarget,
   stackId: string,
 ): Promise<StackResourceSummary[]> {
