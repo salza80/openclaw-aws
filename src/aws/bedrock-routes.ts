@@ -4,6 +4,8 @@ import {
   GetInferenceProfileCommand,
 } from '@aws-sdk/client-bedrock';
 import { awsClientConfig, type AwsTarget } from './target.js';
+import { validAwsRegion as validBedrockRegion } from './regions.js';
+export { validBedrockRegion };
 
 export interface BedrockRoute {
   /** Native OpenClaw selection; it can contain an AWS model/profile ARN. */
@@ -17,7 +19,6 @@ export interface BedrockIdentity {
   account: string;
   partition: string;
 }
-export const validBedrockRegion = (value: string) => /^[a-z]{2}(?:-[a-z0-9]+)+-\d+$/.test(value);
 const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9.:-]{0,2047}$/;
 function modelIdentifier(model: string) {
   if (!model.startsWith('amazon-bedrock/'))
