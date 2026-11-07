@@ -283,7 +283,7 @@ export function createUiBackend(): UiBackend {
             await import('../operations/credential-references.js');
           const values = await resolveCredentialReferences(
             request.credentials ?? [],
-            clone.context.target,
+            recoveryTarget,
           );
           const result = await stageClone(clone, recoveryTarget, values, { progress });
           return {

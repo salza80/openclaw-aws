@@ -15,6 +15,8 @@
 
 ### Patch Changes
 
+- Resolve UI clone SSM credentials from the selected vault region/profile when the new host uses a different AWS context.
+
 - Report the installed CLI's own version even when it runs inside another project's directory. Keep generated release and lockfile versions synchronized, and configure npm registry authentication for publishing with the existing CI secret.
 
 - 4cf5812: Update dependencies and development tooling. Require Node.js 22.13+ for the local CLI and use Node.js 24.22.2 for new AWS deployments.

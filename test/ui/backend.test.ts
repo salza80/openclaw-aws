@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   archivePreview: vi.fn(),
   restorePreview: vi.fn(),
   restoreStage: vi.fn(),
+  clonePreview: vi.fn(),
+  cloneStage: vi.fn(),
+  credentials: vi.fn(),
   teamRestoreStage: vi.fn(),
   teamState: vi.fn(),
   teamPreview: vi.fn(),
@@ -46,6 +49,14 @@ vi.mock('../../src/operations/restore.js', async (importOriginal) => ({
   ...(await importOriginal()),
   prepareRestore: mocks.restorePreview,
   stageRestore: mocks.restoreStage,
+}));
+vi.mock('../../src/operations/clone.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  prepareClone: mocks.clonePreview,
+  stageClone: mocks.cloneStage,
+}));
+vi.mock('../../src/operations/credential-references.js', () => ({
+  resolveCredentialReferences: mocks.credentials,
 }));
 vi.mock('../../src/operations/team-lifecycle.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -215,6 +226,52 @@ describe('UI application adapter', () => {
       activate: true,
     });
     expect(mocks.restoreStage).not.toHaveBeenCalled();
+  });
+  it('resolves cross-region clone credentials in the vault profile only after approval', async () => {
+    const destination = { ...target, region: 'eu-west-1', profile: 'destination' };
+    const references = [
+      { provider: 'openrouter', kind: 'ssm', reference: '/openclaw/source/api-key:3' },
+    ] as const;
+    const plan = {
+      context: { ...ctx, name: 'copy', target: destination },
+      point,
+      bootstrap: { volumeGiB: 32 },
+      preview: {
+        content: { members: [{ id: 'main', files: [], omitted: [] }] },
+        policy: { omissions: ['Conversation history'] },
+        providersInUse: ['openrouter'],
+      },
+    };
+    mocks.clonePreview.mockResolvedValue(plan);
+    mocks.credentials.mockResolvedValue({ openrouter: 'PRIVATE-MODEL-KEY' });
+    mocks.cloneStage.mockResolvedValue({ phase: 'ready-inactive' });
+    const operation = await createUiBackend().prepare(
+      {
+        action: 'clone',
+        name: 'copy',
+        vault: 's3://fixture-vault/backups',
+        from: id,
+        region: target.region,
+        profile: target.profile,
+        targetRegion: destination.region,
+        targetProfile: destination.profile,
+        provider: 'openrouter',
+        credentials: [...references],
+      },
+      id,
+    );
+    expect(mocks.credentials).not.toHaveBeenCalled();
+    expect(mocks.cloneStage).not.toHaveBeenCalled();
+    expect(parseUiPlanView(operation.view).target.region).toBe(destination.region);
+    const result = await operation.apply(() => {});
+    expect(mocks.credentials).toHaveBeenCalledExactlyOnceWith(references, target);
+    expect(mocks.cloneStage).toHaveBeenCalledWith(
+      plan,
+      target,
+      { openrouter: 'PRIVATE-MODEL-KEY' },
+      expect.objectContaining({ progress: expect.any(Function) }),
+    );
+    expect(JSON.stringify({ view: operation.view, result })).not.toContain('PRIVATE-');
   });
   it('does not infer destroyed compute from a held archive backup', async () => {
     mocks.list.mockResolvedValue([
