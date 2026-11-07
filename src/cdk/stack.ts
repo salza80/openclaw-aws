@@ -22,7 +22,7 @@ import {
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
-import { renderOpenClawBootstrap } from '../openclaw/install.js';
+import { renderOpenClawBootstrap, renderOpenClawLauncher } from '../openclaw/install.js';
 import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
 import {
   parseTeamBootstrap,
@@ -161,7 +161,7 @@ export class OpenClawStack extends Stack {
     );
     const readinessPolicy = role.addToPrincipalPolicy(
       new PolicyStatement({
-        actions: ['cloudformation:SignalResource'],
+        actions: ['cloudformation:DescribeStackResource', 'cloudformation:SignalResource'],
         resources: [this.stackId],
       }),
     );
@@ -172,7 +172,7 @@ export class OpenClawStack extends Stack {
       owners: ['099720109477'], // Canonical
     });
 
-    // UserData script - simplified without Tailscale
+    // Keep EC2 user data small; cfn-init retrieves the full installation from metadata.
     const userData = UserData.forLinux();
 
     // EC2 instance
@@ -200,20 +200,40 @@ export class OpenClawStack extends Stack {
     instance.instance.cfnOptions.creationPolicy = {
       resourceSignal: { count: 1, timeout: 'PT20M' },
     };
+    const bootstrap = renderOpenClawBootstrap({
+      region: this.region,
+      stackId: this.stackId,
+      logicalResourceId: this.getLogicalId(instance.instance),
+      apiProvider,
+      restoreOperationId: props.restore?.operationId,
+      additionalProviders: team ? teamProviderParameters(config.projectName, team) : undefined,
+      model: props.model,
+      apiKeyParamName,
+      gatewayTokenParamName,
+      logGroupName: logGroup ? logGroupName : undefined,
+      cloudflareAccountId: props.cloudflareAccountId,
+      cloudflareGatewayId: props.cloudflareGatewayId,
+    });
+    instance.instance.addMetadata('AWS::CloudFormation::Init', {
+      configSets: { default: ['install'] },
+      install: {
+        files: {
+          '/opt/openclaw-aws/bootstrap.sh': {
+            content: bootstrap,
+            mode: '000700',
+            owner: 'root',
+            group: 'root',
+          },
+        },
+        commands: { install: { command: '/bin/bash /opt/openclaw-aws/bootstrap.sh' } },
+      },
+    });
     userData.addCommands(
-      renderOpenClawBootstrap({
+      renderOpenClawLauncher({
         region: this.region,
         stackId: this.stackId,
         logicalResourceId: this.getLogicalId(instance.instance),
-        apiProvider,
-        restoreOperationId: props.restore?.operationId,
-        additionalProviders: team ? teamProviderParameters(config.projectName, team) : undefined,
-        model: props.model,
-        apiKeyParamName,
-        gatewayTokenParamName,
-        logGroupName: logGroup ? logGroupName : undefined,
-        cloudflareAccountId: props.cloudflareAccountId,
-        cloudflareGatewayId: props.cloudflareGatewayId,
+        roleName: role.roleName,
       }),
     );
     if (readinessPolicy.policyDependable) {

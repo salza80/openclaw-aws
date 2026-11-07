@@ -253,14 +253,38 @@ systemctl enable amazon-cloudwatch-agent
       'utf8',
     ),
   );
-  const rendered = template.replace(/@@([A-Z_]+)@@/g, (_, name: string) => {
+  return template.replace(/@@([A-Z_]+)@@/g, (_, name: string) => {
     if (!(name in replacements)) throw new Error(`Unknown bootstrap placeholder: ${name}`);
     return replacements[name];
   });
-  // CDK adds a shell header and resolves the stack-ID token to a longer ARN.
-  // Leave room for those bytes within EC2's decoded 16 KiB user-data limit.
-  if (Buffer.byteLength(rendered) > 16 * 1024 - 256) {
-    throw new Error('OpenClaw bootstrap exceeds the EC2 user-data limit');
+}
+
+/** Small EC2 user data; the full nonsecret payload lives in CloudFormation metadata. */
+export function renderOpenClawLauncher(
+  options: Pick<OpenClawBootstrapOptions, 'region' | 'stackId' | 'logicalResourceId'> & {
+    roleName: string;
+  },
+): string {
+  const replacements: Record<string, string> = {
+    REGION: shellQuote(options.region),
+    STACK_ID: shellQuote(options.stackId),
+    LOGICAL_RESOURCE_ID: shellQuote(options.logicalResourceId),
+    ROLE_NAME: shellQuote(options.roleName),
+    CFN_REQUIREMENTS: readFileSync(
+      new URL('../../templates/openclaw/cfn-bootstrap-requirements.txt', import.meta.url),
+      'utf8',
+    ).trimEnd(),
+  };
+  const rendered = readFileSync(
+    new URL('../../templates/openclaw/launch.sh', import.meta.url),
+    'utf8',
+  ).replace(/@@([A-Z_]+)@@/g, (_, name: string) => {
+    if (!(name in replacements)) throw new Error(`Unknown launcher placeholder: ${name}`);
+    return replacements[name];
+  });
+  // Reserve CDK's shell header and expansion of unresolved stack/role tokens.
+  if (Buffer.byteLength(rendered) > 16 * 1024 - 512) {
+    throw new Error('OpenClaw launcher exceeds the EC2 user-data limit');
   }
   return rendered;
 }

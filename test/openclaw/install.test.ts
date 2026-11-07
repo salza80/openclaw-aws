@@ -18,6 +18,7 @@ import { API_PROVIDERS, OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../../sr
 import type { Provider } from '../../src/cli/types/index.js';
 import {
   renderOpenClawBootstrap,
+  renderOpenClawLauncher,
   type OpenClawBootstrapOptions,
 } from '../../src/openclaw/install.js';
 
@@ -43,6 +44,70 @@ function scratch() {
 }
 
 const bootstrap = () => renderOpenClawBootstrap(options);
+describe('small CloudFormation launcher', () => {
+  const launcherOptions = {
+    ...options,
+    roleName: 'OpenclawStack-test-OpenClawEc2Role-123456789012',
+  };
+
+  it('pins a private helper installation and delegates without a premature success signal', () => {
+    const script = renderOpenClawLauncher(launcherOptions);
+    expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
+    expect(script).not.toMatch(/@@[A-Z_]+@@/);
+    expect(Buffer.byteLength(script)).toBeLessThan(8 * 1024);
+    expect(script).toContain('umask 077');
+    expect(script).toContain('mkdir -m 700 "$CFN_ROOT"');
+    expect(script).toContain('[[ ! -e "$CFN_ROOT" && ! -L "$CFN_ROOT" ]]');
+    expect(script).toContain('python3 -m venv --system-site-packages');
+    expect(script).toContain('--require-hashes');
+    expect(script).toContain('aws-cfn-bootstrap-py3-2.0-42.tar.gz');
+    expect(script).toContain('42a794377bedba5bbd222e3934bdfd3a52c0f27709e16dbe0d203f4aa47cea5b');
+    expect(script).toContain('--role "$ROLE_NAME" --configsets default');
+    expect(script).not.toContain('--break-system-packages');
+    expect(script).not.toMatch(/--success true|--exit-code/);
+    expect(script).not.toContain('GetParameter');
+  });
+
+  it.each([0, 37])('preserves the payload result %s and only signals failure on error', (code) => {
+    const script = renderOpenClawLauncher(launcherOptions);
+    const directory = scratch();
+    const bin = join(directory, 'cfn-bootstrap/bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, 'cfn-init'), `#!/bin/bash\nexit ${code}\n`, { mode: 0o700 });
+    writeFileSync(join(bin, 'cfn-signal'), '#!/bin/bash\nprintf "%s\\n" "$@" > "$SIGNAL_LOG"\n', {
+      mode: 0o700,
+    });
+    const signalLog = join(directory, 'signal');
+    const result = bash(
+      `set -e\nCFN_ROOT=${JSON.stringify(directory)}\nSTACK_ID=test\nLOGICAL_RESOURCE_ID=Ec2\nAWS_REGION=eu-central-1\nROLE_NAME=role\n` +
+        script.slice(script.indexOf('launch_exit()')),
+      { SIGNAL_LOG: signalLog },
+    );
+    expect(result.status).toBe(code);
+    if (code) expect(readFileSync(signalLog, 'utf8')).toContain('--success\nfalse\n');
+    else expect(existsSync(signalLog)).toBe(false);
+  });
+
+  it('quotes launcher identity values literally and bounds the actual delivery script', () => {
+    const directory = scratch();
+    const stackId = `stack'$(touch "${join(directory, 'executed')}")\nsecond line`;
+    const script = renderOpenClawLauncher({ ...launcherOptions, stackId });
+    const assignment = script.slice(
+      script.indexOf('STACK_ID='),
+      script.indexOf('\nLOGICAL_RESOURCE_ID='),
+    );
+    const result = bash(`${assignment}\nprintf '%s' "$STACK_ID"`);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe(stackId);
+    expect(existsSync(join(directory, 'executed'))).toBe(false);
+    expect(() => renderOpenClawLauncher({ ...launcherOptions, roleName: 'role\0name' })).toThrow(
+      'NUL',
+    );
+    expect(() =>
+      renderOpenClawLauncher({ ...launcherOptions, stackId: 'x'.repeat(16 * 1024) }),
+    ).toThrow('user-data limit');
+  });
+});
 describe('fresh team provider bootstrap', () => {
   it('fetches only declared references and uses the public stdin credential writer', () => {
     const script = renderOpenClawBootstrap({
@@ -60,7 +125,6 @@ describe('fresh team provider bootstrap', () => {
     expect(script).toContain('models auth paste-api-key --provider "$provider"');
     expect(script).not.toContain('--api-key "$API_KEY"');
     expect(script.indexOf('ADDITIONAL_PROVIDER')).toBe(-1);
-    expect(Buffer.byteLength(script)).toBeLessThan(16 * 1024 - 256);
     expect(() =>
       renderOpenClawBootstrap({
         ...options,
@@ -87,7 +151,6 @@ describe('keyless runtime bootstrap', () => {
     expect(script).not.toContain('AMAZON_BEDROCK_API_KEY');
     expect(script).not.toContain('models set');
     expect(script).toContain('wait_for_health');
-    expect(Buffer.byteLength(script)).toBeLessThan(16 * 1024 - 256);
     expect(() => renderOpenClawBootstrap({ ...options, apiProvider: 'amazon-bedrock' })).toThrow(
       /credential reference/,
     );
@@ -137,7 +200,6 @@ describe('inactive restore bootstrap', () => {
       `--version "$OPENCLAW_VERSION" --node-version "$NODE_VERSION" --no-onboard --runtime-only`,
     );
     expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
-    expect(Buffer.byteLength(script)).toBeLessThan(16 * 1024 - 256);
   });
   it('does not require fresh Cloudflare onboarding inputs for restored native state', () => {
     expect(() =>
@@ -275,7 +337,6 @@ describe('OpenClaw bootstrap renderer', () => {
       expect(script).not.toMatch(/sudo[^\n]*(?:API_KEY|GATEWAY_TOKEN)=/);
       expect(script).not.toMatch(/jq[^\n]*--arg(?:json)?\s+\S+\s+"\$(?:API_KEY|GATEWAY_TOKEN)"/);
       expect(script).not.toMatch(/@@[A-Z_]+@@/);
-      expect(Buffer.byteLength(script)).toBeLessThanOrEqual(16 * 1024);
       const syntax = spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' });
       expect(syntax.stderr).toBe('');
       expect(syntax.status).toBe(0);
@@ -343,32 +404,23 @@ describe('OpenClaw bootstrap renderer', () => {
     expect(result.stdout).toBe(injectedValue);
     expect(existsSync(join(directory, 'executed'))).toBe(false);
     expect(() => renderOpenClawBootstrap({ ...options, stackId: 'stack\0id' })).toThrow('NUL');
-    expect(() => renderOpenClawBootstrap({ ...options, stackId: 'x'.repeat(16 * 1024) })).toThrow(
-      'user-data limit',
-    );
-  });
-
-  it('reserves user-data space for CDK shell framing and stack ARN expansion', () => {
-    const padding = 'x'.repeat(16 * 1024 - 128 - Buffer.byteLength(bootstrap()));
-    expect(() =>
-      renderOpenClawBootstrap({ ...options, stackId: options.stackId + padding }),
-    ).toThrow('user-data limit');
   });
 
   it('loads packaged assets from the compiled module outside the repository working directory', () => {
     const moduleUrl = new URL('../../dist/openclaw/install.js', import.meta.url).href;
+    const launcherOptions = { ...options, roleName: 'test-role' };
     const result = spawnSync(
       process.execPath,
       [
         '--input-type=module',
         '-e',
-        `const {renderOpenClawBootstrap} = await import(${JSON.stringify(moduleUrl)}); process.stdout.write(renderOpenClawBootstrap(${JSON.stringify(options)}));`,
+        `const {renderOpenClawBootstrap, renderOpenClawLauncher} = await import(${JSON.stringify(moduleUrl)}); process.stdout.write(renderOpenClawBootstrap(${JSON.stringify(options)}) + renderOpenClawLauncher(${JSON.stringify(launcherOptions)}));`,
       ],
       { cwd: scratch(), encoding: 'utf8' },
     );
     expect(result.stderr).toBe('');
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe(bootstrap());
+    expect(result.stdout).toBe(bootstrap() + renderOpenClawLauncher(launcherOptions));
     const packageJson = JSON.parse(
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     );
