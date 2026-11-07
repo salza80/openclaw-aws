@@ -183,6 +183,51 @@ function bash(body: string, environment: Record<string, string> = {}) {
   });
 }
 
+describe('Ubuntu bootstrap user boundary', () => {
+  it.each([undefined, '11111111-1111-1111-1111-111111111111'])(
+    'keeps native data private after sudo resets the umask (restore %s)',
+    (restoreOperationId) => {
+      const directory = scratch();
+      const child = join(directory, 'native-child.cjs');
+      writeFileSync(
+        child,
+        `const fs = require('node:fs');
+fs.mkdirSync(process.argv[2]);
+fs.writeFileSync(process.argv[2] + '/result.json', JSON.stringify({
+  args: process.argv.slice(3), stdin: fs.readFileSync(0, 'utf8'),
+  xdg: process.env.XDG_RUNTIME_DIR, dbus: process.env.DBUS_SESSION_BUS_ADDRESS
+}));
+process.exitCode = 23;`,
+      );
+      const argument = 'space ; $(touch never-execute) "quote"\nsecond line';
+      const result = bash(
+        `${functions(renderOpenClawBootstrap({ ...options, restoreOperationId }), ['as_ubuntu'])}
+# Ubuntu 24.04 PAM resets sudo's child umask to 0002, even from a 0077 caller.
+sudo() { ( [[ "$1 $2 $3" == '-H -u ubuntu' ]] || exit 99; shift 3; umask 002; "$@"; ); }
+UBUNTU_UID=1234
+umask 077
+printf '%s' 'private stdin fixture' | as_ubuntu "$TEST_NODE_BIN" "$TEST_CHILD" "$TEST_DIR/data" "$TEST_ARGUMENT" ''`,
+        {
+          TEST_DIR: directory,
+          TEST_NODE_BIN: process.execPath,
+          TEST_CHILD: child,
+          TEST_ARGUMENT: argument,
+        },
+      );
+      expect(result.status, result.stderr).toBe(23);
+      expect(statSync(join(directory, 'data')).mode & 0o777).toBe(0o700);
+      expect(statSync(join(directory, 'data/result.json')).mode & 0o777).toBe(0o600);
+      expect(JSON.parse(readFileSync(join(directory, 'data/result.json'), 'utf8'))).toEqual({
+        args: [argument, ''],
+        stdin: 'private stdin fixture',
+        xdg: '/run/user/1234',
+        dbus: 'unix:path=/run/user/1234/bus',
+      });
+      expect(result.stdout + result.stderr).not.toContain('private stdin fixture');
+    },
+  );
+});
+
 const providerCases: [Provider, string, string][] = [
   ['anthropic-api-key', 'ANTHROPIC_API_KEY', 'apiKey'],
   ['openrouter-api-key', 'OPENROUTER_API_KEY', 'openrouter-api-key'],

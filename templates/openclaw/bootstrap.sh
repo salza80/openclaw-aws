@@ -187,10 +187,12 @@ download() {
 }
 
 as_ubuntu() {
+  # Ubuntu's sudo/PAM can replace the caller's umask. Set it after the switch
+  # so native workspace/agent parents remain private, preserving argv and stdin.
   sudo -H -u ubuntu env XDG_RUNTIME_DIR="/run/user/$UBUNTU_UID" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UBUNTU_UID/bus" \
     PATH='/home/ubuntu/.openclaw/bin:/home/ubuntu/.openclaw/tools/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' \
-    "$@"
+    bash -c 'umask 077; exec "$@"' -- "$@"
 }
 
 write_dotenv_entry() {
