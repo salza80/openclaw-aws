@@ -1,148 +1,48 @@
-import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import type { CommandModule } from 'yargs';
-import { makeCommandContext } from '../helpers/fixtures/command-context.js';
-
-const tunnelMock = vi.hoisted(() => vi.fn());
-vi.mock('../../src/aws/tunnel.js', () => ({ startDashboardTunnel: tunnelMock }));
-
-const execaMock = vi.hoisted(() => vi.fn());
-
-vi.mock('execa', () => ({
-  execa: execaMock,
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({
+  prepare: vi.fn(),
+  stop: vi.fn(),
+  open: vi.fn(),
+  error: vi.fn(),
 }));
-
-vi.mock('ora', async () => {
-  const { createSpinnerMock } = await import('../helpers/mocks/spinner.js');
-  return {
-    default: vi.fn(() => createSpinnerMock()),
-  };
-});
-
-const buildCommandContextMock = vi.hoisted(() => vi.fn());
-buildCommandContextMock.mockImplementation(async () => makeCommandContext());
-
+vi.mock('../../src/operations/native-dashboard.js', () => ({
+  prepareNativeDashboard: mocks.prepare,
+}));
 vi.mock('../../src/cli/utils/context.js', () => ({
-  buildCommandContext: buildCommandContextMock,
+  buildCommandContext: async () => ({ name: 'alpha' }),
 }));
-
-const resolveInstanceIdMock = vi.hoisted(() => vi.fn());
-const checkSSMStatusMock = vi.hoisted(() => vi.fn());
-const checkGatewayStatusMock = vi.hoisted(() => vi.fn());
-
-vi.mock('../../src/cli/utils/aws.js', () => ({
-  resolveInstanceId: resolveInstanceIdMock,
-  checkSSMStatus: checkSSMStatusMock,
-  checkGatewayStatus: checkGatewayStatusMock,
-}));
-
-vi.mock('../../src/cli/utils/aws-validation.js', () => ({
-  validateSSMPlugin: vi.fn(async () => {}),
-}));
-
-vi.mock('../../src/cli/utils/logger.js', async () => {
-  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
-  return {
-    logger: createLoggerMock(),
-  };
+vi.mock('../../src/cli/utils/errors.js', () => ({ handleError: mocks.error }));
+vi.mock('../../src/cli/utils/logger.js', () => ({ logger: { info: vi.fn() } }));
+import command from '../../src/cli/commands/dashboard.js';
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  mocks.prepare.mockResolvedValue({
+    publicUrl: 'http://localhost:19444',
+    browserUrl: (privateUrl: boolean) =>
+      privateUrl ? 'http://localhost:19444/#token=private-fixture' : 'http://localhost:19444',
+    stop: mocks.stop,
+    open: mocks.open,
+    done: Promise.resolve(),
+  });
 });
-
-const loadOutputsByNameMock = vi.hoisted(() => vi.fn());
-vi.mock('../../src/cli/utils/config.js', () => ({
-  loadOutputsByName: loadOutputsByNameMock,
-}));
-
-const createSsmClientMock = vi.hoisted(() => vi.fn());
-vi.mock('../../src/cli/utils/aws-clients.js', () => ({
-  createSsmClient: createSsmClientMock,
-}));
-
-vi.mock('@aws-sdk/client-ssm', async () => {
-  const { createAwsCommandClass } = await import('../helpers/mocks/aws-commands.js');
-  return {
-    GetParameterCommand: createAwsCommandClass<{ Name: string; WithDecryption: boolean }>(),
-  };
-});
-
-vi.mock('../../src/cli/utils/errors.js', async () => {
-  const { createErrorsModuleMock } = await import('../helpers/mocks/errors.js');
-  return createErrorsModuleMock({ handleError: vi.fn() });
-});
-
-import { AWSError, handleError } from '../../src/cli/utils/errors.js';
-import dashboardCommand from '../../src/cli/commands/dashboard.js';
-
-type DashboardHandler = NonNullable<(typeof dashboardCommand)['handler']>;
-type DashboardHandlerArgs = Parameters<DashboardHandler>[0];
-const handleErrorMock = vi.mocked(handleError);
-
-describe('dashboard command', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    tunnelMock.mockResolvedValue({ port: 19876, done: Promise.resolve(), stop: vi.fn() });
+describe('native dashboard CLI handoff', () => {
+  it('prints only the public URL by default and opens the native UI through the shared operation', async () => {
+    await command.handler?.({ _: [], $0: 'claw' });
+    expect(mocks.open).toHaveBeenCalledOnce();
+    expect(mocks.stop).toHaveBeenCalledOnce();
+    expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining('private-fixture'));
   });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-    vi.useRealTimers();
+  it('permits only deliberate --show-token output and honors --no-open', async () => {
+    await command.handler?.({ _: [], $0: 'claw', showToken: true, open: false });
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining('private-fixture'));
+    expect(mocks.stop).toHaveBeenCalledOnce();
   });
-
-  it('starts port forwarding when ready and noOpen is true', async () => {
-    resolveInstanceIdMock.mockResolvedValue('i-123');
-    checkSSMStatusMock.mockResolvedValue(true);
-    checkGatewayStatusMock.mockResolvedValue({ running: true });
-    loadOutputsByNameMock.mockReturnValue({
-      'OpenclawStack-alpha': { GatewayToken: 'token-123', GatewayPort: '18789' },
-    });
-    createSsmClientMock.mockReturnValue({
-      send: vi.fn(),
-      destroy: vi.fn(),
-    });
-
-    const portForward = Object.assign(Promise.resolve(undefined), { kill: vi.fn() });
-    execaMock.mockReturnValue(portForward);
-
-    const handler = (dashboardCommand as CommandModule).handler!;
-    const args: DashboardHandlerArgs = { noOpen: true, _: [], $0: 'openclaw-aws' };
-    const run = handler(args);
-    await vi.runAllTimersAsync();
-    await run;
-
-    expect(tunnelMock).toHaveBeenCalledWith({
-      instanceId: 'i-123',
-      target: makeCommandContext().target,
-      localPort: undefined,
-    });
-    expect(execaMock).not.toHaveBeenCalled();
-    expect(createSsmClientMock).not.toHaveBeenCalled();
-  });
-
-  it('calls handleError when SSM is not ready', async () => {
-    resolveInstanceIdMock.mockResolvedValue('i-123');
-    checkSSMStatusMock.mockResolvedValue(false);
-    checkGatewayStatusMock.mockResolvedValue({ running: true });
-
-    const handler = (dashboardCommand as CommandModule).handler!;
-    const args: DashboardHandlerArgs = { _: [], $0: 'openclaw-aws' };
-    await handler(args);
-
-    expect(handleErrorMock).toHaveBeenCalledTimes(1);
-    const [error] = handleErrorMock.mock.calls[0];
-    expect(error).toBeInstanceOf(AWSError);
-    expect((error as AWSError).message).toContain('Instance not ready for SSM connection');
-  });
-
-  it('calls handleError when gateway is not running', async () => {
-    resolveInstanceIdMock.mockResolvedValue('i-123');
-    checkSSMStatusMock.mockResolvedValue(true);
-    checkGatewayStatusMock.mockResolvedValue({ running: false });
-
-    const handler = (dashboardCommand as CommandModule).handler!;
-    const args: DashboardHandlerArgs = { _: [], $0: 'openclaw-aws' };
-    await handler(args);
-
-    expect(handleErrorMock).toHaveBeenCalledTimes(1);
-    const [error] = handleErrorMock.mock.calls[0];
-    expect(error).toBeInstanceOf(AWSError);
-    expect((error as AWSError).message).toContain('OpenClaw gateway is not running');
+  it('reports unready targets without inventing a usable tunnel', async () => {
+    mocks.prepare.mockRejectedValueOnce(new Error('Gateway unavailable'));
+    await command.handler?.({ _: [], $0: 'claw' });
+    expect(mocks.open).not.toHaveBeenCalled();
+    expect(mocks.error).toHaveBeenCalled();
   });
 });

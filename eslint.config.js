@@ -16,7 +16,7 @@ export default [
   },
   js.configs.recommended,
   {
-    files: ['**/*.ts'],
+    files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
@@ -35,4 +35,5 @@ export default [
       '@typescript-eslint/no-empty-object-type': ['error', { allowObjectTypes: 'always' }],
     },
   },
+  { files: ['ui/**/*.ts', 'ui/**/*.tsx'], languageOptions: { globals: { ...globals.browser } } },
 ];

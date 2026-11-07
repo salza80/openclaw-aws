@@ -1,10 +1,8 @@
 import { open } from 'node:fs/promises';
 import { parseDocument } from 'yaml';
-import { GetParameterCommand } from '@aws-sdk/client-ssm';
-import { createSsmClient } from './aws-clients.js';
 import { parseTeamDefinition, type TeamDefinition } from '../../openclaw/team-definition.js';
 import type { AwsLocation } from '../../aws/target.js';
-import type { ApiKeyProvider } from '../types/index.js';
+import { resolveCredentialReferences } from '../../operations/credential-references.js';
 
 export async function readTeamFile(filename: string): Promise<TeamDefinition> {
   const file = await open(filename, 'r');
@@ -23,41 +21,5 @@ export async function readTeamFile(filename: string): Promise<TeamDefinition> {
   }
 }
 export async function teamCredentials(definition: TeamDefinition, target: AwsLocation) {
-  const credentials: Partial<Record<ApiKeyProvider, string>> = {};
-  const client = createSsmClient(target);
-  try {
-    for (const reference of definition.credentials) {
-      let value: string | undefined;
-      if (reference.kind === 'env') value = process.env[reference.reference];
-      else {
-        try {
-          const response = await client.send(
-            new GetParameterCommand({ Name: reference.reference, WithDecryption: true }),
-            { abortSignal: AbortSignal.timeout(30000) },
-          );
-          const selected = /^(.*):([1-9][0-9]*)$/.exec(reference.reference);
-          if (
-            response.Parameter?.Name === (selected?.[1] ?? reference.reference) &&
-            response.Parameter.Type === 'SecureString' &&
-            (!selected ||
-              (Number.isSafeInteger(Number(selected[2])) &&
-                response.Parameter.Version === Number(selected[2])))
-          )
-            value = response.Parameter.Value;
-        } catch {
-          throw new Error(
-            `Team provider credential could not be resolved privately: ${reference.provider}`,
-          );
-        }
-      }
-      if (!value?.trim() || value.length > 16384 || /[\r\n\0]/.test(value))
-        throw new Error(
-          `Team provider credential is missing or unsupported: ${reference.provider}`,
-        );
-      credentials[reference.provider] = value;
-    }
-    return credentials;
-  } finally {
-    client.destroy();
-  }
+  return resolveCredentialReferences(definition.credentials, target);
 }

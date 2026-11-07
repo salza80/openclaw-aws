@@ -24,6 +24,7 @@ import cloneCommand from './commands/clone.js';
 import modelsCommand from './commands/models.js';
 import { providersCommand } from './commands/providers.js';
 import teamCommand from './commands/team.js';
+import uiCommand from './commands/ui.js';
 
 yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
@@ -51,6 +52,7 @@ yargs(hideBin(process.argv))
   .command(modelsCommand)
   .command(providersCommand)
   .command(teamCommand)
+  .command(uiCommand)
   .demandCommand(1, 'You must specify a command')
   .help()
   .alias('h', 'help')

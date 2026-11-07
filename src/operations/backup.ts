@@ -212,11 +212,24 @@ export async function createBackup(
     progress?: (message: string) => void;
     archive?: BackupCaptureJob['archive'];
     beforeCapture?: (preparation: BackupPreparation) => Promise<void>;
+    expectedSource?: { stackId: string; instanceId: string; roleId: string };
     lock?: DeploymentLease;
     preparation?: BackupPreparation;
   },
 ): Promise<BackupReceipt> {
   const archivePlan = options.archive ? structuredClone(options.archive) : undefined;
+  const expectedSource = options.expectedSource ? { ...options.expectedSource } : undefined;
+  const assertApprovedSource = (source: RecoverySource) => {
+    if (
+      expectedSource &&
+      (source.stackId !== expectedSource.stackId ||
+        source.instanceId !== expectedSource.instanceId ||
+        source.role.id !== expectedSource.roleId)
+    )
+      throw new Error(
+        'Backup preview target was replaced; no capture or source access change was started',
+      );
+  };
   const id = backupOperationId(options.operationId);
   if (options.label !== undefined) textField(options.label, 128);
   return withDeploymentLock(
@@ -230,11 +243,13 @@ export async function createBackup(
         });
         if (completed) {
           const existing = parsedReceipt(completed.value, ctx.target, vault, id);
+          assertApprovedSource(existing.source);
           if (existing.source.stackName !== ctx.config.stack.name)
             throw new Error('This recovery point belongs to another deployment');
           return existing;
         }
         const source = await inspectRecoverySource(ctx);
+        assertApprovedSource(source);
         assertIndependentVault(source, vault);
         const preflight = await executeSsm(
           source.instanceId,
