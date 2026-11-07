@@ -8,6 +8,13 @@ export interface NativeToolPolicy {
   alsoAllow?: string[];
   deny?: string[];
 }
+export interface NativeModelPolicy {
+  allow?: string[];
+}
+export function nativeModelPolicy(value: unknown): NativeModelPolicy {
+  const row = object(value);
+  return row.allow === undefined ? {} : { allow: nativePolicyStrings(row.allow) };
+}
 export interface NativeAgentToolPolicy extends NativeToolPolicy {
   agentToAgent?: { send?: string[] };
 }

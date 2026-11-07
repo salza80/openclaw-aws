@@ -23,12 +23,30 @@ import { assertDeploymentTarget, recordDeploymentState } from './state.js';
 import { withDeploymentLock } from './lock.js';
 import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
 import { validateProjectName } from '../cli/utils/validation.js';
+import { parseTeamBootstrap, type TeamBootstrap } from '../aws/team-bootstrap.js';
 import {
   prepareInitialBedrock,
   parseInitialBedrock,
   finishInitialBedrock,
   type InitialBedrockPlan,
 } from './fresh-bedrock.js';
+
+function isProviderInventoryValid(
+  team: TeamBootstrap | undefined,
+  credentials: Partial<Record<ApiKeyProvider, string>>,
+) {
+  const providers = Object.keys(credentials).sort();
+  return (
+    JSON.stringify(providers) === JSON.stringify(team?.providers ?? []) &&
+    Object.values(credentials).every(
+      (value) =>
+        typeof value === 'string' &&
+        value.trim().length > 0 &&
+        value.length <= 16384 &&
+        !/[\r\n\0]/.test(value),
+    )
+  );
+}
 
 async function storeApiKey(
   configName: string,
@@ -192,6 +210,8 @@ async function deployFreshStack(
 type FreshProvision = FreshProviderCredentials & {
   mode: 'fresh';
   progress?: (message: string) => void;
+  team?: TeamBootstrap;
+  additionalCredentials?: Partial<Record<ApiKeyProvider, string>>;
 };
 type RestoreProvision = {
   mode: 'restore';
@@ -206,6 +226,8 @@ export async function deployDeployment(
   options: FreshProviderCredentials & {
     progress?: (message: string) => void;
     initialBedrock?: InitialBedrockPlan;
+    team?: TeamBootstrap;
+    additionalCredentials?: Partial<Record<ApiKeyProvider, string>>;
   },
 ): Promise<Record<string, string>> {
   const captured = { ...ctx, config: structuredClone(ctx.config) };
@@ -213,6 +235,8 @@ export async function deployDeployment(
     ...freshProviderCredentials(options.apiProvider, options.apiKey),
     progress: options.progress,
     mode: 'fresh',
+    team: options.team === undefined ? undefined : parseTeamBootstrap(options.team),
+    additionalCredentials: options.additionalCredentials,
   };
   const initial =
     options.initialBedrock === undefined
@@ -303,6 +327,13 @@ async function provisionDeployment(
   const apiKey =
     options.mode === 'fresh' && options.apiProvider !== 'amazon-bedrock' ? options.apiKey : '';
   const config = structuredClone(ctx.config);
+  const additionalCredentials =
+    options.mode === 'fresh' ? (options.additionalCredentials ?? {}) : {};
+  const team = options.mode === 'fresh' ? options.team : undefined;
+  if (!isProviderInventoryValid(team, additionalCredentials))
+    throw new Error('Additional provider credentials differ from the fresh team inventory');
+  if (options.mode === 'fresh' && team?.providers.includes(options.apiProvider as ApiKeyProvider))
+    throw new Error('Initial provider must not be duplicated in additional team credentials');
   const snapshot = JSON.stringify(config);
   if (restore) validateConfig(config);
   else validateProvisioningConfig(config);
@@ -324,7 +355,7 @@ async function provisionDeployment(
     throw new AWSError('AWS CDK CLI not available', ['Reinstall @salza80/openclaw-aws']);
   }
   // Resolve a long-lived snapshot before any secret writes.
-  const privateValues = new Set<string>([apiKey]);
+  const privateValues = new Set<string>([apiKey, ...Object.values(additionalCredentials)]);
   const operationEnvironment = async () => {
     const environment = await ctx.target.environment(30 * 60_000);
     for (const key of ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN']) {
@@ -335,6 +366,7 @@ async function provisionDeployment(
       OPENCLAW_CONFIG_NAME: ctx.name,
       OPENCLAW_CDK_OPERATION: restore ? 'restore' : 'deploy',
       OPENCLAW_RESTORE_BOOTSTRAP: restore ? JSON.stringify(restore) : undefined,
+      OPENCLAW_TEAM_BOOTSTRAP: team ? JSON.stringify(team) : undefined,
       OPENCLAW_CONFIG_SNAPSHOT: snapshot,
       CDK_DISABLE_VERSION_CHECK: 'true',
       CDK_DISABLE_CLI_TELEMETRY: '1',
@@ -347,6 +379,8 @@ async function provisionDeployment(
   try {
     if (options.mode === 'fresh' && options.apiProvider !== 'amazon-bedrock')
       await storeApiKey(ctx.name, options.apiProvider, apiKey, ctx.target);
+    for (const [provider, key] of Object.entries(additionalCredentials))
+      await storeApiKey(ctx.name, provider as ApiKeyProvider, key, ctx.target);
     const gatewayToken = crypto.randomBytes(24).toString('hex');
     privateValues.add(gatewayToken);
     await storeGatewayToken(ctx.name, gatewayToken, ctx.target, restore?.operationId);

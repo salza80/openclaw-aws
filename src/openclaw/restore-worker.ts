@@ -7,6 +7,7 @@ import { stageRecoveryArchive } from './recovery-staging.js';
 import { installRestoreLayout } from './restore-layout.js';
 import { reconcileNativeRestore } from './restore-reconciliation.js';
 import { verifiedRestoreTarget, ownedRestoreRecord as ownedRecord } from './restore-control.js';
+import { publishTeamMembership } from './team-recovery.js';
 
 export interface RestoreWorkerResult {
   schemaVersion: 1;
@@ -74,6 +75,8 @@ export async function runRestoreWorker(
       heldSessionCount: reconciled.sessionHold.held,
       providerParameters: reconciled.imported.parameterNames,
     };
+    if (job.backup.capture.credentials.team)
+      await publishTeamMembership('/home/ubuntu', job.target, job.backup.capture.credentials.team);
     await ownedRecord(path.join(work, 'ready.json'), result);
     return result;
   } finally {

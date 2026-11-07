@@ -12,7 +12,9 @@ describe('clone source policy', () => {
       agents: {
         defaults: {
           systemAgent: { agentId: 'researcher' },
+          maxConcurrent: 3,
           model: { primary: 'openrouter/example', fallbacks: ['openrouter/backup'] },
+          modelPolicy: { allow: ['openrouter/*'] },
           models: {
             'openrouter/example': { alias: 'work', params: { apiKey: 'private-model-key' } },
           },
@@ -28,7 +30,11 @@ describe('clone source policy', () => {
             },
             subagents: { allowAgents: ['researcher'], delegationMode: 'prefer' },
           },
-          researcher: { model: 'openrouter/research', skills: ['research'] },
+          researcher: {
+            model: 'openrouter/research',
+            modelPolicy: { allow: [] },
+            skills: ['research'],
+          },
         },
       },
       tools: {
@@ -48,7 +54,12 @@ describe('clone source policy', () => {
     };
     const policy = clonePolicyFromConfig(config, members);
     expect(policy.systemAgent).toBe('researcher');
+    expect(policy.maxConcurrent).toBe(3);
     expect(policy.models).toEqual({ 'openrouter/example': { alias: 'work' } });
+    expect(policy.modelPolicy).toEqual({ allow: ['openrouter/*'] });
+    expect(policy.agents.find((agent) => agent.id === 'researcher')?.modelPolicy).toEqual({
+      allow: [],
+    });
     expect(policy.agents[0].subagents).toEqual({
       allowAgents: ['researcher'],
       delegationMode: 'prefer',

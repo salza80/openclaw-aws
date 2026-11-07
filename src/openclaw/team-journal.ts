@@ -41,6 +41,10 @@ export async function teamHostJournal(home: string, input: TeamJob, create: bool
     'started',
     'configuration-intent',
     'configuration-acknowledged',
+    'configuration-verified',
+    'model-preimage',
+    'model-intent',
+    'model-acknowledged',
     'complete',
     'aborted',
     ...job.definition.members.map(
@@ -87,7 +91,13 @@ export async function teamHostJournal(home: string, input: TeamJob, create: bool
           );
       }
     },
-    async mark(name: string, fields: { configHash?: string } = {}) {
+    async mark(
+      name: string,
+      fields: {
+        configHash?: string;
+        models?: ReturnType<typeof import('./team-configuration.js').teamModelProjection>;
+      } = {},
+    ) {
       if (!(await ownsMaintenance())) throw new Error('Team maintenance ownership changed');
       if (!names.has(name)) throw new Error('Unsupported team journal transition');
       const value = { ...owner, ...fields };

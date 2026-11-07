@@ -45,7 +45,9 @@ describe('fresh native independent clone', () => {
           ownership: 'explicit',
           defaults: {
             systemAgent: { agentId: 'researcher' },
+            maxConcurrent: 3,
             model: { primary: 'openrouter/auto' },
+            modelPolicy: { allow: ['openrouter/*', 'openai/*'] },
             models: { 'openai/gpt-6-astra': {}, 'openrouter/auto': {} },
             subagents: {
               maxConcurrent: 2,
@@ -64,6 +66,7 @@ describe('fresh native independent clone', () => {
             },
             researcher: {
               name: 'Researcher',
+              modelPolicy: { allow: ['openrouter/auto'] },
               tools: { profile: 'coding', agentToAgent: { send: [] } },
             },
           },
@@ -170,6 +173,9 @@ describe('fresh native independent clone', () => {
         await readFile(path.join(target, '.openclaw/openclaw.json'), 'utf8'),
       );
       expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'researcher' });
+      expect(config.agents.defaults.maxConcurrent).toBe(3);
+      expect(config.agents.defaults.modelPolicy).toEqual({ allow: ['openrouter/*', 'openai/*'] });
+      expect(config.agents.entries.researcher.modelPolicy).toEqual({ allow: ['openrouter/auto'] });
       expect(config.agents.entries[coordinator].subagents).toEqual({
         allowAgents: ['researcher'],
         delegationMode: 'prefer',

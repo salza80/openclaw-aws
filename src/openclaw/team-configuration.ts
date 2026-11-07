@@ -11,6 +11,7 @@ import {
   teamMembers,
   type TeamDefinition,
 } from './team-definition.js';
+import { nativeModelSetting, type ModelSetting } from './model-control.js';
 
 type ConfigSdk = typeof import('openclaw/plugin-sdk/config-mutation');
 type NativeConfig = NonNullable<Parameters<ConfigSdk['replaceConfigFile']>[0]['sourceConfig']>;
@@ -25,6 +26,7 @@ export function teamConfigurationPatch(options: {
   /** Exact preflight roster. New declared entries may be added atomically by
    * the native revision-bound patch without separate agents.create writes. */
   existingMembers?: BackupMember[];
+  includeModels?: boolean;
   config: unknown;
 }): Pick<NativeConfig, 'agents' | 'tools' | 'bindings'> {
   const definition = parseTeamDefinition(options.definition);
@@ -72,7 +74,9 @@ export function teamConfigurationPatch(options: {
       name: member.role,
       workspace: roots.workspace,
       agentDir: roots.agentDir,
-      ...(member.model !== undefined ? { model: structuredClone(member.model) } : {}),
+      ...(options.includeModels !== false && member.model !== undefined
+        ? { model: structuredClone(member.model) }
+        : {}),
       tools: {
         ...(member.tools ?? { profile: 'messaging', alsoAllow: ['sessions_spawn', 'agents_list'] }),
         agentToAgent: { send: member.sendTo.map((target) => teamNativeId(definition, target)) },
@@ -89,7 +93,7 @@ export function teamConfigurationPatch(options: {
       defaults: {
         systemAgent: { agentId: 'main' },
         maxConcurrent: definition.maxConcurrent,
-        ...(definition.defaultModel !== undefined
+        ...(options.includeModels !== false && definition.defaultModel !== undefined
           ? { model: structuredClone(definition.defaultModel) }
           : {}),
         subagents: {
@@ -127,4 +131,86 @@ export function teamConfigurationMatches(config: unknown, patch: unknown): boole
   if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
   const row = config as Record<string, unknown>;
   return Object.entries(patch).every(([key, value]) => teamConfigurationMatches(row[key], value));
+}
+export function teamModelPatch(definition: TeamDefinition) {
+  return {
+    agents: {
+      ...(definition.defaultModel !== undefined
+        ? { defaults: { model: structuredClone(definition.defaultModel) } }
+        : {}),
+      entries: Object.fromEntries(
+        definition.members
+          .filter((member) => member.model !== undefined)
+          .map((member) => [
+            teamNativeId(definition, member.id),
+            { model: structuredClone(member.model) },
+          ]),
+      ),
+    },
+  };
+}
+export function teamModelProjection(input: unknown, definition: TeamDefinition) {
+  const config = object(input),
+    agents = object(config.agents ?? {}),
+    entries = object(agents.entries ?? {});
+  return {
+    ...(definition.defaultModel !== undefined
+      ? { default: nativeModelSetting(object(agents.defaults ?? {}).model) ?? null }
+      : {}),
+    agents: Object.fromEntries(
+      definition.members
+        .filter((member) => member.model !== undefined)
+        .map((member) => [
+          teamNativeId(definition, member.id),
+          nativeModelSetting(object(entries[teamNativeId(definition, member.id)] ?? {}).model) ??
+            null,
+        ]),
+    ),
+  };
+}
+/** Catalog checks use each final owner context; this is configuration metadata,
+ * while native OpenClaw remains the inference and model-policy authority. */
+export function teamModelChoices(input: unknown, definition: TeamDefinition) {
+  const config = object(input),
+    agents = object(config.agents ?? {}),
+    entries = object(agents.entries ?? {});
+  const apply = (previous: unknown, next: ModelSetting | undefined) =>
+    next === undefined
+      ? nativeModelSetting(previous)
+      : typeof next === 'string'
+        ? next
+        : {
+            ...(typeof previous === 'object' && previous !== null
+              ? (nativeModelSetting(previous) as object)
+              : {}),
+            ...next,
+          };
+  const parts = (setting: ModelSetting | undefined) =>
+    typeof setting === 'string' ? { primary: setting } : (setting ?? {});
+  const choices: { agentId: string; model: string }[] = [];
+  const future = definition.members.map((member) => ({
+    agentId: teamNativeId(definition, member.id),
+    setting: parts(
+      apply(object(entries[teamNativeId(definition, member.id)] ?? {}).model, member.model),
+    ),
+  }));
+  const global = parts(definition.defaultModel);
+  if (global.primary)
+    for (const member of future.filter((member) => member.setting.primary === undefined).length
+      ? future.filter((member) => member.setting.primary === undefined)
+      : [future[0]])
+      choices.push({ agentId: member.agentId, model: global.primary });
+  for (const model of global.fallbacks ?? [])
+    for (const member of future.filter((member) => member.setting.fallbacks === undefined).length
+      ? future.filter((member) => member.setting.fallbacks === undefined)
+      : [future[0]])
+      choices.push({ agentId: member.agentId, model });
+  for (const member of definition.members) {
+    const model = parts(member.model);
+    for (const reference of [...(model.primary ? [model.primary] : []), ...(model.fallbacks ?? [])])
+      choices.push({ agentId: teamNativeId(definition, member.id), model: reference });
+  }
+  return [
+    ...new Map(choices.map((choice) => [choice.agentId + '\0' + choice.model, choice])).values(),
+  ];
 }

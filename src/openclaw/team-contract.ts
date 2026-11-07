@@ -29,7 +29,10 @@ export interface TeamJob {
   runtime: ModelJob['runtime'];
   definition: TeamDefinition;
   bedrockRole: boolean;
-  action: { kind: 'preview' } | ({ kind: 'configure'; allowRestart: boolean } & TeamPreflight);
+  action:
+    | { kind: 'preview' }
+    | { kind: 'status' }
+    | ({ kind: 'configure'; allowRestart: boolean } & TeamPreflight);
 }
 export type TeamWorkerMode = 'execute' | 'inspect' | 'resume' | 'abort';
 export function teamId(value: unknown) {
@@ -95,9 +98,9 @@ export function parseTeamJob(input: unknown): TeamJob {
   const definition = parseTeamDefinition(row.definition);
   const action = modelObject(row.action);
   let parsed: TeamJob['action'];
-  if (action.kind === 'preview') {
+  if (action.kind === 'preview' || action.kind === 'status') {
     exact(action, ['kind']);
-    parsed = { kind: 'preview' };
+    parsed = { kind: action.kind };
   } else if (action.kind === 'configure') {
     exact(action, [
       'kind',

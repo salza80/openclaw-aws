@@ -24,6 +24,11 @@ import type { StackConfig } from '../cli/types/index.js';
 import type { Provider } from '../cli/types/index.js';
 import { renderOpenClawBootstrap } from '../openclaw/install.js';
 import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
+import {
+  parseTeamBootstrap,
+  teamProviderParameters,
+  type TeamBootstrap,
+} from '../aws/team-bootstrap.js';
 
 export interface OpenClawStackProps extends StackProps {
   config: StackConfig;
@@ -35,16 +40,22 @@ export interface OpenClawStackProps extends StackProps {
   cloudflareAccountId?: string;
   cloudflareGatewayId?: string;
   restore?: RestoreBootstrap;
+  team?: TeamBootstrap;
 }
 
 export class OpenClawStack extends Stack {
   constructor(scope: Construct, id: string, props: OpenClawStackProps) {
     const restore = props.restore ? parseRestoreBootstrap(props.restore) : undefined;
+    const team = props.team ? parseTeamBootstrap(props.team) : undefined;
+    if (team && restore) throw new Error('Fresh team setup cannot be used for restore onboarding');
     super(scope, id, {
       ...props,
       tags: {
         ...props.tags,
         ...(restore ? { 'openclaw-aws:restore-id': restore.operationId } : {}),
+        ...(team
+          ? { 'openclaw-aws:team-id': team.teamId, 'openclaw-aws:team-create-id': team.operationId }
+          : {}),
       },
     });
 
@@ -121,7 +132,17 @@ export class OpenClawStack extends Stack {
           }),
           gatewayTokenParamArn,
         ]
-      : [...(apiKeyParamArn ? [apiKeyParamArn] : []), gatewayTokenParamArn];
+      : [
+          ...(apiKeyParamArn ? [apiKeyParamArn] : []),
+          gatewayTokenParamArn,
+          ...(team ? teamProviderParameters(config.projectName, team) : []).map(({ parameter }) =>
+            this.formatArn({
+              service: 'ssm',
+              resource: 'parameter',
+              resourceName: parameter.slice(1),
+            }),
+          ),
+        ];
     role.addToPolicy(
       new PolicyStatement({
         actions: ['ssm:GetParameter'],
@@ -186,6 +207,7 @@ export class OpenClawStack extends Stack {
         logicalResourceId: this.getLogicalId(instance.instance),
         apiProvider,
         restoreOperationId: props.restore?.operationId,
+        additionalProviders: team ? teamProviderParameters(config.projectName, team) : undefined,
         model: props.model,
         apiKeyParamName,
         gatewayTokenParamName,

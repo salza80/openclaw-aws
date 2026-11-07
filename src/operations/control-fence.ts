@@ -15,7 +15,7 @@ export interface ControlFence {
   operationId: string;
   requestDigest: string;
   artifactDigest: string;
-  kind?: 'bedrock-connection';
+  kind?: 'bedrock-connection' | 'native-team';
 }
 export function controlFencePath(target: ModelHostTarget) {
   const digest = createHash('sha256')
@@ -42,7 +42,7 @@ export async function readControlFence(target: ModelHostTarget): Promise<Control
       !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(row.operationId) ||
       !/^[a-f0-9]{64}$/.test(modelText(row.requestDigest, 64)) ||
       !/^[a-f0-9]{64}$/.test(modelText(row.artifactDigest, 64)) ||
-      (row.kind !== undefined && row.kind !== 'bedrock-connection')
+      (row.kind !== undefined && row.kind !== 'bedrock-connection' && row.kind !== 'native-team')
     )
       throw new Error('Invalid pending native-control ownership');
     return row as unknown as ControlFence;

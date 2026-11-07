@@ -10,6 +10,7 @@ else
   fi
   : > "$WORK_DIR/openclaw.env"
   @@PROVIDER_KEY_SETUP@@
+  @@ADDITIONAL_PROVIDER_SETUP@@
   fetch_parameter @@GATEWAY_TOKEN_PARAM_NAME@@ "$WORK_DIR/gateway-token.json"
   GATEWAY_TOKEN="$(jq -er '.Parameter.Value' "$WORK_DIR/gateway-token.json")"
   write_dotenv_entry OPENCLAW_GATEWAY_TOKEN "$GATEWAY_TOKEN" >> "$WORK_DIR/openclaw.env"
@@ -25,6 +26,7 @@ else
     --skip-skills --skip-channels --skip-search --skip-hooks --skip-ui --skip-health \
     --suppress-gateway-token-output > "$WORK_DIR/onboard.json" 2> "$WORK_DIR/onboard.err"
   @@MODEL_SETUP@@
+  @@ADDITIONAL_PROVIDER_AUTH@@
 fi
 
 phase service

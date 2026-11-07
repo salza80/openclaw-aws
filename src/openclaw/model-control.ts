@@ -199,7 +199,13 @@ export async function inspectModelSelection(
     checkedAt: new Date().toISOString(),
   };
 }
-async function assertCatalogChoice(client: NativeModelClient, agentId: string, model: string) {
+export async function assertNativeModelChoice(
+  client: NativeModelClient,
+  agentId: string,
+  model: string,
+) {
+  nativeModelScope({ kind: 'agent', agentId });
+  nativeModelReference(model);
   const provider = model.split('/')[0];
   const result = record(
     await client.call('models.list', {
@@ -294,7 +300,7 @@ export async function changeModelSelection(
   );
   const catalogAgents =
     scope.kind === 'agent' ? [scope.agentId] : inheritors.length ? inheritors : [agentIds[0]];
-  for (const agentId of catalogAgents) await assertCatalogChoice(client, agentId, model);
+  for (const agentId of catalogAgents) await assertNativeModelChoice(client, agentId, model);
   const desired: ModelSetting =
     typeof previous === 'string' ? model : { ...previous, primary: model };
   const mutation = {

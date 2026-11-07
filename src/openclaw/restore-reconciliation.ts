@@ -29,6 +29,7 @@ import {
   assertRecoveryBedrockNative,
 } from './recovery-bedrock-native.js';
 import { bedrockRoleProfile } from './bedrock-profile.js';
+import { teamPolicyDigest } from './team-recovery.js';
 
 type ConfigSdk = typeof import('openclaw/plugin-sdk/config-mutation');
 type NativeConfig = NonNullable<Parameters<ConfigSdk['replaceConfigFile']>[0]['sourceConfig']>;
@@ -159,6 +160,13 @@ export async function reconcileNativeRestore(options: {
     throw new Error('Restored native configuration is unavailable at the supported path');
   const source = before.snapshot.sourceConfig;
   if (!source) throw new Error('Restored native source configuration is unavailable');
+  if (
+    options.capture.credentials.team &&
+    teamPolicyDigest(source) !== options.capture.credentials.team.policyDigest
+  )
+    throw new Error(
+      'Saved team coordination/model settings differ from the verified recovery point',
+    );
   let config = restoredInactiveConfig(source, {
     gatewayToken: options.gatewayToken,
     oldPluginDirectory: options.job.pluginDirectory,
@@ -389,6 +397,14 @@ export async function reconcileNativeRestore(options: {
     deploymentRegion: options.deploymentRegion,
     intent: options.bedrock?.intent,
   });
+  if (options.capture.credentials.team) {
+    const final = await sdk.readConfigFileSnapshotForWrite();
+    if (
+      teamPolicyDigest(final.snapshot.sourceConfig) !==
+      options.capture.credentials.team.policyDigest
+    )
+      throw new Error('Restored team coordination/model settings changed during reconciliation');
+  }
   return {
     members,
     imported,

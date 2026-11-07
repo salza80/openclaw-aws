@@ -1,7 +1,14 @@
 import { isDeepStrictEqual } from 'node:util';
 import { archiveMemberIdentity, parseMembers, type BackupMember } from './backup-contract.js';
 import { modelObject, modelText } from './model-contract.js';
-import type { NativeModelClient } from './model-control.js';
+import { privateModelJson } from './model-journal.js';
+import path from 'node:path';
+import {
+  assertNativeModelChoice,
+  inspectModelSelection,
+  nativeModelSetting,
+  type NativeModelClient,
+} from './model-control.js';
 import {
   parseTeamJob,
   parseTeamPreflight,
@@ -9,13 +16,20 @@ import {
   type TeamWorkerMode,
 } from './team-contract.js';
 import { teamMembers, teamDefinitionDigest } from './team-definition.js';
-import { teamConfigurationPatch, teamConfigurationMatches } from './team-configuration.js';
+import {
+  teamConfigurationPatch,
+  teamConfigurationMatches,
+  teamModelPatch,
+  teamModelProjection,
+  teamModelChoices,
+} from './team-configuration.js';
 import {
   inspectTeamInstructions,
   writeTeamInstructions,
   assertTeamInstructions,
 } from './team-workspaces.js';
 import { teamHostJournal, teamHostOwnership } from './team-journal.js';
+import { publishTeamMembership, teamIdentity } from './team-recovery.js';
 
 export interface TeamWorkerHost {
   home: string;
@@ -50,6 +64,40 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
     definitionDigest: teamDefinitionDigest(job.definition),
     inferenceVerified: false,
   };
+  if (job.action.kind === 'status') {
+    if (mode !== 'execute') throw new Error('Read-only team status cannot be resumed');
+    if (!(await teamHostOwnership(host.home, job, false)))
+      throw new Error('Team does not own this hosting deployment');
+    const members = archiveMemberIdentity(parseMembers(await host.members()));
+    if (!isDeepStrictEqual(members, archiveMemberIdentity(desiredMembers(job, host.home, members))))
+      throw new Error('Native roster contains undeclared or changed team members');
+    await host.client.health();
+    const models = [];
+    for (const member of members) {
+      const observation = await inspectModelSelection(host.client, {
+        kind: 'agent',
+        agentId: member.id,
+      });
+      models.push({ agentId: member.id, model: observation.effectiveForNewSessions });
+    }
+    let maintenanceHeld = false;
+    try {
+      await privateModelJson(path.join(host.home, '.openclaw-aws/maintenance.json'));
+      maintenanceHeld = true;
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error;
+    }
+    return {
+      ...base,
+      recordedPhase: 'observed',
+      checkedAt: new Date().toISOString(),
+      gatewayHealthy: true,
+      requestedConfigurationVerified: false,
+      maintenanceHeld,
+      members,
+      models,
+    };
+  }
   if (job.action.kind === 'preview') {
     if (mode !== 'execute') throw new Error('Read-only team preview cannot be resumed');
     const before = await snapshot(host.client);
@@ -97,19 +145,60 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
   try {
     journal = await teamHostJournal(host.home, job, mode === 'execute');
   } catch (error) {
-    if (mode === 'inspect' && error instanceof Error && 'code' in error && error.code === 'ENOENT')
-      return {
-        ...base,
-        recordedPhase: 'not-started' as const,
-        checkedAt: new Date().toISOString(),
-        gatewayHealthy: null,
-        requestedConfigurationVerified: false,
-        maintenanceHeld: false,
-      };
-    throw error;
+    if (mode === 'abort' && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      // Fence a request that never acquired host maintenance. The original
+      // revision/roster must still hold; missing history is not write authority.
+      const current = await snapshot(host.client);
+      if (
+        current.hash !== action.expectedHash ||
+        !isDeepStrictEqual(
+          archiveMemberIdentity(parseMembers(await host.members())),
+          action.existingMembers,
+        )
+      )
+        throw new Error(
+          'Unrecorded team request no longer matches its original preflight; maintenance was retained',
+          { cause: error },
+        );
+      try {
+        await privateModelJson(path.join(host.home, '.openclaw-aws/maintenance.json'));
+        throw new Error(
+          'Host maintenance already exists; an unrecorded request cannot release it',
+          { cause: error },
+        );
+      } catch (maintenanceError) {
+        if (
+          !(maintenanceError instanceof Error) ||
+          !('code' in maintenanceError) ||
+          maintenanceError.code !== 'ENOENT'
+        )
+          throw maintenanceError;
+      }
+      await host.client.health();
+      journal = await teamHostJournal(host.home, job, true);
+    } else {
+      if (
+        mode === 'inspect' &&
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ENOENT'
+      )
+        return {
+          ...base,
+          recordedPhase: 'not-started' as const,
+          checkedAt: new Date().toISOString(),
+          gatewayHealthy: null,
+          requestedConfigurationVerified: false,
+          maintenanceHeld: false,
+        };
+      throw error;
+    }
   }
   const members = desiredMembers(job, host.home, action.existingMembers);
-  const verified = async () => {
+  const hasModels =
+    job.definition.defaultModel !== undefined ||
+    job.definition.members.some((member) => member.model !== undefined);
+  const verified = async (includeModels = true) => {
     const current = await snapshot(host.client);
     const observed = archiveMemberIdentity(parseMembers(await host.members()));
     if (!isDeepStrictEqual(observed, archiveMemberIdentity(members)))
@@ -119,6 +208,7 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
       home: host.home,
       members,
       config: current.config,
+      includeModels,
     });
     if (!teamConfigurationMatches(current.config, patch))
       throw new Error('Native team settings differ from the approved definition');
@@ -133,6 +223,25 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
       )
     )
       throw new Error('Native Gateway has not published the complete team roster');
+    if (includeModels && hasModels) {
+      const agents = modelObject(current.config.agents);
+      const entries = modelObject(agents.entries);
+      const primary = (value: unknown) => {
+        const setting = nativeModelSetting(value);
+        return typeof setting === 'string' ? setting : setting?.primary;
+      };
+      const defaultPrimary = primary(modelObject(agents.defaults ?? {}).model);
+      for (const member of members) {
+        const expected = primary(modelObject(entries[member.id]).model) ?? defaultPrimary;
+        if (!expected) continue;
+        const observed = await inspectModelSelection(host.client, {
+          kind: 'agent',
+          agentId: member.id,
+        });
+        if (observed.configHash !== current.hash || observed.effectiveForNewSessions !== expected)
+          throw new Error('Native Gateway has not published the requested team models');
+      }
+    }
     return current.hash;
   };
   const report = async (
@@ -149,16 +258,73 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
     members: archiveMemberIdentity(members),
     ...(configHash ? { configHash } : {}),
   });
+  const settle = async () => {
+    const rosterHash = await verified(false);
+    if (!(await journal.read('configuration-verified')))
+      await journal.mark('configuration-verified', { configHash: rosterHash });
+    if (hasModels) {
+      if (await journal.read('model-intent')) {
+        // The only permitted continuation after an unknown model write is a
+        // fresh verification of its requested state. Never send it again.
+        await verified();
+      } else {
+        const current = await snapshot(host.client);
+        const patch = teamModelPatch(job.definition);
+        const alreadyConfigured = teamConfigurationMatches(current.config, patch);
+        const preimage = await journal.read('model-preimage');
+        if (
+          !preimage ||
+          (!alreadyConfigured &&
+            !isDeepStrictEqual(
+              preimage.models,
+              teamModelProjection(current.config, job.definition),
+            ))
+        )
+          throw new Error('Team model settings changed after approval; no model patch was sent');
+        for (const choice of teamModelChoices(current.config, job.definition))
+          await assertNativeModelChoice(host.client, choice.agentId, choice.model);
+        if ((await snapshot(host.client)).hash !== current.hash)
+          throw new Error('Native revision changed during team model validation');
+        if (!alreadyConfigured) {
+          const restart =
+            modelObject(modelObject(current.config.gateway ?? {}).reload ?? {}).mode === 'off';
+          if (restart && !action.allowRestart)
+            throw new Error('Team model settings need explicit controlled restart consent');
+          await journal.mark('model-intent', { configHash: current.hash });
+          const response = modelObject(
+            await host.client.call('config.patch', {
+              baseHash: current.hash,
+              raw: JSON.stringify(patch),
+              response: 'summary',
+            }),
+          );
+          if (response.ok !== true)
+            throw new Error('Team model patch was not acknowledged; inspect without replay');
+          await journal.mark('model-acknowledged');
+          if (restart) await host.client.restart();
+        }
+      }
+    }
+    const configHash = await verified();
+    await publishTeamMembership(host.home, job.target, teamIdentity(job.teamId, job.definition));
+    await journal.mark('complete', { configHash });
+    await journal.release();
+    return report('complete', true, configHash);
+  };
   if (mode === 'inspect') {
     const phase = (await journal.read('aborted'))
       ? 'aborted'
       : (await journal.read('complete'))
         ? 'complete'
-        : (await journal.read('configuration-intent'))
-          ? 'configuration-uncertain'
-          : (await journal.read('started'))
-            ? 'preparing'
-            : 'not-started';
+        : (await journal.read('model-intent'))
+          ? 'models-uncertain'
+          : (await journal.read('configuration-verified'))
+            ? 'roles-configured'
+            : (await journal.read('configuration-intent'))
+              ? 'configuration-uncertain'
+              : (await journal.read('started'))
+                ? 'preparing'
+                : 'not-started';
     let configHash: string | undefined;
     if (phase !== 'aborted') {
       try {
@@ -181,26 +347,29 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
     return report('complete', true, configHash);
   }
   if (mode === 'abort') {
-    if (await journal.read('configuration-intent'))
+    const configured = Boolean(await journal.read('configuration-intent'));
+    if ((await journal.read('model-intent')) || (configured && !hasModels))
       throw new Error(
         'Native team configuration may be in flight; inspect/resume without replay instead of aborting',
       );
+    if (configured) await verified(false);
     await journal.claim();
     await journal.mark('aborted');
     await journal.release();
-    return { ...(await report('aborted')), retainedInstructionFiles: true };
+    return {
+      ...(await report('aborted')),
+      retainedInstructionFiles: true,
+      retainedNativeConfiguration: configured,
+    };
   }
   if (await journal.read('configuration-intent')) {
     if (mode !== 'resume')
       throw new Error(
         'Native team setup already started; resume verifies its result without another write',
       );
-    const configHash = await verified();
     if (!(await journal.ownsMaintenance()))
       throw new Error('Interrupted team setup no longer owns host maintenance');
-    await journal.mark('complete', { configHash });
-    await journal.release();
-    return report('complete', true, configHash);
+    return settle();
   }
   const before = await snapshot(host.client);
   const existingMembers = archiveMemberIdentity(parseMembers(await host.members()));
@@ -222,9 +391,14 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
     members,
     existingMembers,
     config: before.config,
+    includeModels: false,
   });
   await journal.claim();
   await journal.mark('started');
+  if (hasModels)
+    await journal.mark('model-preimage', {
+      models: teamModelProjection(before.config, job.definition),
+    });
   await teamHostOwnership(host.home, job, true);
   await writeTeamInstructions({
     home: host.home,
@@ -257,8 +431,5 @@ export async function runTeamOperation(input: unknown, host: TeamWorkerHost, mod
     );
   await journal.mark('configuration-acknowledged');
   if (reloadOff) await host.client.restart();
-  const configHash = await verified();
-  await journal.mark('complete', { configHash });
-  await journal.release();
-  return report('complete', true, configHash);
+  return settle();
 }

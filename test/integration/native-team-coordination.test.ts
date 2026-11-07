@@ -132,6 +132,7 @@ describe('native configured team coordination', () => {
           {
             id: 'researcher',
             role: 'Researcher',
+            model: 'fixture/model',
             instructions: 'TEAMROLE_researcher\nResearch the fixture request.',
           },
           {
@@ -197,6 +198,23 @@ describe('native configured team coordination', () => {
         AWS_EC2_METADATA_DISABLED: 'true',
       };
       const native = path.join(root, 'node_modules/openclaw/openclaw.mjs');
+      // Same public fresh-bootstrap writer: the main-owned credential is a
+      // shared read-through base for subsequently created native roles.
+      await execa(process.execPath, [native, 'plugins', 'enable', 'openrouter'], {
+        env,
+        extendEnv: false,
+        timeout: 60000,
+      });
+      await execa(
+        process.execPath,
+        [native, 'models', 'auth', 'paste-api-key', '--provider', 'openrouter', '--agent', 'main'],
+        {
+          env,
+          extendEnv: false,
+          input: 'fixture-shared-openrouter-key\n',
+          timeout: 60000,
+        },
+      );
       gateway = execa(process.execPath, [native, 'gateway', 'run', `--port=${port}`], {
         env,
         extendEnv: false,
@@ -283,7 +301,25 @@ describe('native configured team coordination', () => {
         requestedConfigurationVerified: true,
         maintenanceHeld: false,
       });
-      expect(methods.filter((method) => method === 'config.patch')).toHaveLength(1);
+      expect(methods.filter((method) => method === 'config.patch')).toHaveLength(2);
+      const authStatus = JSON.parse(
+        (
+          await execa(
+            process.execPath,
+            [native, 'models', 'status', '--agent', 'researcher', '--json'],
+            {
+              env,
+              extendEnv: false,
+              timeout: 60000,
+              maxBuffer: 1024 * 1024,
+            },
+          )
+        ).stdout,
+      );
+      const shared = authStatus.auth.providers.find(
+        (provider: { provider: string }) => provider.provider === 'openrouter',
+      );
+      expect(shared.profiles.count).toBeGreaterThan(0);
       const result = await execa(
         process.execPath,
         [

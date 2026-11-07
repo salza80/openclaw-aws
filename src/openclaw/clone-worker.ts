@@ -24,6 +24,7 @@ import { initializeNativeClone } from './clone-native.js';
 import { verifyNativeClone } from './clone-validate.js';
 import { getApiKeyParamName } from '../cli/utils/api-keys.js';
 import type { ApiKeyProvider } from '../cli/types/index.js';
+import { publishTeamMembership } from './team-recovery.js';
 
 /** The shared entrypoint holds flock; source extraction is never installed as
  * native identity. Every credential is read from this new target's owned SSM paths.
@@ -172,6 +173,11 @@ export async function runCloneWorker(
       assertInactive,
       signal,
     });
+    if (job.backup.capture.credentials.team)
+      await publishTeamMembership(context.home, job.target, {
+        ...job.backup.capture.credentials.team,
+        id: operationId,
+      });
     // Never leave source credentials/history accessible to the fresh Ubuntu
     // agent after activation. Only the explicitly selected files remain.
     await assertInactive();

@@ -54,7 +54,7 @@ export function teamRemoteCommand(input: {
   const job = parseTeamJob(input.job);
   if (
     !['execute', 'inspect', 'resume', 'abort'].includes(input.mode) ||
-    (job.action.kind === 'preview' && input.mode !== 'execute')
+    (job.action.kind !== 'configure' && input.mode !== 'execute')
   )
     throw new Error('Unsupported team dispatch mode');
   return controlCommand(pin, job, input.mode, 'team');

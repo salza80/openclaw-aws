@@ -23,6 +23,7 @@ import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { parse as parseDotenv } from 'dotenv';
 import { privateModelText } from './model-journal.js';
 import { assertRecoveryBedrockNative } from './recovery-bedrock-native.js';
+import { teamPolicyDigest } from './team-recovery.js';
 
 export interface RestoreActivationResult {
   schemaVersion: 1;
@@ -91,6 +92,12 @@ export async function runRestoreActivation(
     if (!snapshot.snapshot.valid || !snapshot.snapshot.sourceConfig)
       throw new Error('Restored configuration is not valid');
     assertInactiveRecoveryConfig(snapshot.snapshot.sourceConfig, gatewayToken);
+    if (
+      job.backup.capture.credentials.team &&
+      teamPolicyDigest(snapshot.snapshot.sourceConfig) !==
+        job.backup.capture.credentials.team.policyDigest
+    )
+      throw new Error('Team coordination/model settings changed before activation');
     if (job.bedrock)
       await assertRecoveryBedrockNative({
         config: snapshot.snapshot.sourceConfig,

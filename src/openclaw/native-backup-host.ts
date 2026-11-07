@@ -13,6 +13,7 @@ import { recoverySessionModels } from './recovery-session-models.js';
 import { restoredPluginInstalls } from './restore-plugins.js';
 import { assertRecoveryBedrockNative } from './recovery-bedrock-native.js';
 import { bedrockRoleProfile } from './bedrock-profile.js';
+import { captureTeamRecovery } from './team-recovery.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import {
   object,
@@ -462,6 +463,12 @@ export async function nativeBackupHost(
         if (path.extname(source) === '.json')
           await inspect(JSON.parse(await readFile(source, 'utf8')));
       }
+      const team = await captureTeamRecovery(
+        homedir(),
+        job.source,
+        members,
+        snapshot.snapshot.sourceConfig,
+      );
       return {
         mode: 'full-native' as const,
         configurationPath,
@@ -475,6 +482,7 @@ export async function nativeBackupHost(
             : []),
         ],
         ...(bedrock ? { bedrock } : {}),
+        ...(team ? { team } : {}),
       };
     },
     async verify(key: string, versions: Record<string, string>) {

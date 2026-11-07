@@ -13,6 +13,10 @@ let revision: number;
 let writes: number;
 let loseReply: boolean;
 let rejectPatch: boolean;
+let loseModelReply: boolean;
+let denyModel: boolean;
+let stalePublishedModel: boolean;
+let catalogContexts: string[];
 let host: TeamWorkerHost;
 let previewJob: TeamJob;
 const secret = 'private-provider-credential-never-a-team-receipt';
@@ -39,6 +43,10 @@ beforeEach(async () => {
   writes = 0;
   loseReply = false;
   rejectPatch = false;
+  loseModelReply = false;
+  denyModel = false;
+  stalePublishedModel = false;
+  catalogContexts = [];
   config = {
     agents: { ownership: 'explicit', entries: { main: { workspace, agentDir } } },
     models: { providers: { private: { apiKey: secret } } },
@@ -64,6 +72,24 @@ beforeEach(async () => {
           };
         if (method === 'agents.list')
           return { agents: (await host.members()).map((member) => ({ id: member.id })) };
+        if (method === 'models.list') {
+          expect(params.view).toBe('default');
+          expect((await host.members()).map((member) => member.id)).toContain(params.agentId);
+          catalogContexts.push(String(params.agentId));
+          return {
+            models: denyModel ? [] : [{ provider: 'fixture', id: 'model', available: true }],
+          };
+        }
+        if (method === 'sessions.list') {
+          const agents = config.agents as {
+            defaults?: { model?: string };
+            entries: Record<string, { model?: string }>;
+          };
+          const selected = agents.entries[String(params.agentId)]?.model ?? agents.defaults?.model;
+          const reference = stalePublishedModel ? 'fixture/old' : selected;
+          const [modelProvider, ...model] = String(reference).split('/');
+          return { defaults: { modelProvider, model: model.join('/') } };
+        }
         if (method === 'config.patch') {
           writes++;
           if (rejectPatch) throw new Error('Patch reply unavailable');
@@ -71,7 +97,8 @@ beforeEach(async () => {
             throw new Error('Native revision conflict');
           config = merge(config, JSON.parse(params.raw as string));
           revision++;
-          if (loseReply) throw new Error('Connection lost after native commit');
+          if (loseReply || (loseModelReply && writes === 2))
+            throw new Error('Connection lost after native commit');
           return { ok: true };
         }
         throw new Error('Unexpected native method');
@@ -109,6 +136,25 @@ async function prepare(): Promise<TeamJob> {
   });
 }
 describe('durable native team setup', () => {
+  it('explicitly fences a never-started request at its original revision, without replaying setup', async () => {
+    const job = await prepare();
+    await expect(runTeamOperation(job, host, 'inspect')).resolves.toMatchObject({
+      recordedPhase: 'not-started',
+    });
+    await expect(runTeamOperation(job, host, 'resume')).rejects.toThrow();
+    await expect(runTeamOperation(job, host, 'abort')).resolves.toMatchObject({
+      recordedPhase: 'aborted',
+      maintenanceHeld: false,
+    });
+    await expect(runTeamOperation(job, host, 'execute')).rejects.toThrow('aborted');
+    expect(writes).toBe(0);
+  });
+  it('does not cancel missing host history after the original native revision changed', async () => {
+    const job = await prepare();
+    revision++;
+    await expect(runTeamOperation(job, host, 'abort')).rejects.toThrow('original preflight');
+    expect(writes).toBe(0);
+  });
   it('previews without writing source instructions, claiming maintenance or returning credentials', async () => {
     const preview = await runTeamOperation(previewJob, host, 'execute');
     expect(preview).toMatchObject({
@@ -195,6 +241,61 @@ describe('durable native team setup', () => {
     await expect(runTeamOperation(job, host, 'execute')).rejects.toThrow('aborted');
     expect(await readFile(filename, 'utf8')).toBe('Concurrent user instructions\n');
     expect(writes).toBe(0);
+  });
+  it('validates a newly published role in its own catalog before setting its model', async () => {
+    previewJob.definition.members[1].model = 'fixture/model';
+    const job = await prepare();
+    await expect(runTeamOperation(job, host, 'execute')).resolves.toMatchObject({
+      recordedPhase: 'complete',
+      inferenceVerified: false,
+    });
+    expect(catalogContexts).toEqual(['researcher']);
+    expect(writes).toBe(2);
+  });
+  it('retains configured roles when native model policy refuses a selection, and permits explicit abort', async () => {
+    previewJob.definition.members[1].model = 'fixture/model';
+    const job = await prepare();
+    denyModel = true;
+    await expect(runTeamOperation(job, host, 'execute')).rejects.toThrow(
+      'permitted by this agent policy',
+    );
+    expect(writes).toBe(1);
+    expect(await host.members()).toHaveLength(2);
+    await expect(runTeamOperation(job, host, 'abort')).resolves.toMatchObject({
+      recordedPhase: 'aborted',
+      retainedNativeConfiguration: true,
+      maintenanceHeld: false,
+    });
+  });
+  it('adopts an uncertain second model patch without repeating either native write', async () => {
+    previewJob.definition.members[1].model = 'fixture/model';
+    const job = await prepare();
+    loseModelReply = true;
+    await expect(runTeamOperation(job, host, 'execute')).rejects.toThrow('Connection lost');
+    await expect(runTeamOperation(job, host, 'abort')).rejects.toThrow('may be in flight');
+    await expect(runTeamOperation(job, host, 'resume')).resolves.toMatchObject({
+      recordedPhase: 'complete',
+      maintenanceHeld: false,
+    });
+    expect(writes).toBe(2);
+    expect(catalogContexts).toEqual(['researcher']);
+  });
+  it('does not report readiness until the Gateway publishes the selected model', async () => {
+    previewJob.definition.members[1].model = 'fixture/model';
+    const job = await prepare();
+    stalePublishedModel = true;
+    await expect(runTeamOperation(job, host, 'execute')).rejects.toThrow(
+      'published the requested team models',
+    );
+    await expect(runTeamOperation(job, host, 'inspect')).resolves.toMatchObject({
+      requestedConfigurationVerified: false,
+      maintenanceHeld: true,
+    });
+    stalePublishedModel = false;
+    await expect(runTeamOperation(job, host, 'resume')).resolves.toMatchObject({
+      recordedPhase: 'complete',
+    });
+    expect(writes).toBe(2);
   });
   it('requires actual host identity before reading or writing any team state', async () => {
     vi.mocked(host.identify).mockRejectedValue(new Error('wrong instance role'));

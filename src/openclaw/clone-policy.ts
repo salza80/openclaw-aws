@@ -7,6 +7,8 @@ import {
   nativeAgentToolPolicy,
   nativeDelegationPolicy,
   nativeDelegationDefaults,
+  nativeModelPolicy,
+  type NativeModelPolicy,
   type NativeToolPolicy,
   type NativeAgentToolPolicy,
   type NativeDelegationPolicy,
@@ -45,6 +47,7 @@ export interface CloneAgentPolicy {
   identity?: { name?: string; theme?: string; emoji?: string };
   model?: CloneModelSelection;
   models?: Record<string, CloneModelSettings>;
+  modelPolicy?: NativeModelPolicy;
   skills?: string[];
   tools?: NativeAgentToolPolicy;
   subagents?: NativeDelegationPolicy;
@@ -52,9 +55,11 @@ export interface CloneAgentPolicy {
 export interface CloneSourcePolicy {
   schemaVersion: 1;
   systemAgent?: string;
+  maxConcurrent?: number;
   model?: CloneModelSelection;
   subagents?: NativeDelegationDefaults;
   models?: Record<string, CloneModelSettings>;
+  modelPolicy?: NativeModelPolicy;
   tools?: CloneToolPolicy;
   agentToAgent?: { enabled?: boolean; allow?: string[] };
   sessionVisibility?: 'self' | 'tree' | 'agent' | 'all';
@@ -133,6 +138,14 @@ export function clonePolicyFromConfig(value: unknown, members: BackupMember[]): 
     throw new Error('Source policy roster differs from the completed backup');
   const owner = text(record(defaults.systemAgent).agentId);
   if (owner && !ids.has(owner)) throw new Error('Source system owner is outside the copied roster');
+  const maxConcurrent = defaults.maxConcurrent;
+  if (
+    maxConcurrent !== undefined &&
+    (!Number.isSafeInteger(maxConcurrent) ||
+      (maxConcurrent as number) < 1 ||
+      (maxConcurrent as number) > 128)
+  )
+    throw new Error('Unsupported source global agent concurrency');
   const sharedTools = record(source.tools);
   const communication = record(sharedTools.agentToAgent);
   const visibility = record(sharedTools.sessions).visibility;
@@ -155,6 +168,9 @@ export function clonePolicyFromConfig(value: unknown, members: BackupMember[]): 
       ...(Object.keys(identityFields).length ? { identity: identityFields } : {}),
       ...(settings.model !== undefined ? { model: model(settings.model) } : {}),
       ...(settings.models !== undefined ? { models: selectedModels(settings.models) } : {}),
+      ...(settings.modelPolicy !== undefined
+        ? { modelPolicy: nativeModelPolicy(settings.modelPolicy) }
+        : {}),
       ...(settings.skills !== undefined ? { skills: strings(settings.skills) } : {}),
       ...(settings.tools !== undefined ? { tools: nativeAgentToolPolicy(settings.tools) } : {}),
       ...(settings.subagents !== undefined
@@ -180,11 +196,15 @@ export function clonePolicyFromConfig(value: unknown, members: BackupMember[]): 
   return {
     schemaVersion: 1,
     ...(owner ? { systemAgent: owner } : {}),
+    ...(maxConcurrent === undefined ? {} : { maxConcurrent: maxConcurrent as number }),
     ...(defaults.model !== undefined ? { model: model(defaults.model) } : {}),
     ...(defaults.subagents !== undefined
       ? { subagents: nativeDelegationDefaults(defaults.subagents) }
       : {}),
     ...(defaults.models !== undefined ? { models } : {}),
+    ...(defaults.modelPolicy !== undefined
+      ? { modelPolicy: nativeModelPolicy(defaults.modelPolicy) }
+      : {}),
     ...(source.tools !== undefined ? { tools: tools(source.tools) } : {}),
     ...(sharedTools.agentToAgent !== undefined
       ? {
