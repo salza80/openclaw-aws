@@ -45,8 +45,16 @@ describe('fresh native independent clone', () => {
           ownership: 'explicit',
           defaults: {
             systemAgent: { agentId: 'researcher' },
+            maxConcurrent: 3,
             model: { primary: 'openrouter/auto' },
+            modelPolicy: { allow: ['openrouter/*', 'openai/*'] },
             models: { 'openai/gpt-6-astra': {}, 'openrouter/auto': {} },
+            subagents: {
+              maxConcurrent: 2,
+              maxChildrenPerAgent: 2,
+              maxSpawnDepth: 2,
+              requireAgentId: true,
+            },
           },
           entries: {
             [coordinator]: {
@@ -54,8 +62,13 @@ describe('fresh native independent clone', () => {
               model: { primary: 'openai/gpt-6-astra', fallbacks: ['openrouter/auto'] },
               models: { 'openai/gpt-6-astra': { agentRuntime: { id: 'openclaw' } } },
               subagents: { allowAgents: ['researcher'], delegationMode: 'prefer' },
+              tools: { agentToAgent: { send: ['researcher'] } },
             },
-            researcher: { name: 'Researcher', tools: { profile: 'coding' } },
+            researcher: {
+              name: 'Researcher',
+              modelPolicy: { allow: ['openrouter/auto'] },
+              tools: { profile: 'coding', agentToAgent: { send: [] } },
+            },
           },
         },
         tools: {
@@ -160,11 +173,24 @@ describe('fresh native independent clone', () => {
         await readFile(path.join(target, '.openclaw/openclaw.json'), 'utf8'),
       );
       expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'researcher' });
+      expect(config.agents.defaults.maxConcurrent).toBe(3);
+      expect(config.agents.defaults.modelPolicy).toEqual({ allow: ['openrouter/*', 'openai/*'] });
+      expect(config.agents.entries.researcher.modelPolicy).toEqual({ allow: ['openrouter/auto'] });
       expect(config.agents.entries[coordinator].subagents).toEqual({
         allowAgents: ['researcher'],
         delegationMode: 'prefer',
       });
-      expect(config.agents.entries.researcher.tools).toEqual({ profile: 'coding' });
+      expect(config.agents.entries.researcher.tools).toEqual({
+        profile: 'coding',
+        agentToAgent: { send: [] },
+      });
+      expect(config.agents.entries[coordinator].tools.agentToAgent.send).toEqual(['researcher']);
+      expect(config.agents.defaults.subagents).toMatchObject({
+        maxConcurrent: 2,
+        maxChildrenPerAgent: 2,
+        maxSpawnDepth: 2,
+        requireAgentId: true,
+      });
       expect(config.tools.agentToAgent).toEqual({
         enabled: true,
         allow: [coordinator, 'researcher'],

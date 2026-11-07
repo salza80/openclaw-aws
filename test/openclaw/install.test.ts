@@ -43,6 +43,34 @@ function scratch() {
 }
 
 const bootstrap = () => renderOpenClawBootstrap(options);
+describe('fresh team provider bootstrap', () => {
+  it('fetches only declared references and uses the public stdin credential writer', () => {
+    const script = renderOpenClawBootstrap({
+      ...options,
+      additionalProviders: [
+        {
+          parameter: '/openclaw/test/providers/openrouter-api-key/api-key',
+          providerId: 'openrouter',
+          envVar: 'OPENROUTER_API_KEY',
+        },
+      ],
+    });
+    expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
+    expect(script).toContain('/openclaw/test/providers/openrouter-api-key/api-key');
+    expect(script).toContain('models auth paste-api-key --provider "$provider"');
+    expect(script).not.toContain('--api-key "$API_KEY"');
+    expect(script.indexOf('ADDITIONAL_PROVIDER')).toBe(-1);
+    expect(Buffer.byteLength(script)).toBeLessThan(16 * 1024 - 256);
+    expect(() =>
+      renderOpenClawBootstrap({
+        ...options,
+        additionalProviders: [
+          { parameter: '/unrelated/key', providerId: 'openrouter', envVar: 'OPENROUTER_API_KEY' },
+        ],
+      }),
+    ).toThrow('additional fresh');
+  });
+});
 describe('keyless runtime bootstrap', () => {
   it('onboards with skip auth and fetches only the real Gateway credential, without a fake model key', () => {
     const script = renderOpenClawBootstrap({

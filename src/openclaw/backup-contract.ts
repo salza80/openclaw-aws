@@ -8,6 +8,7 @@ import {
 } from './bedrock-recovery-intent.js';
 import { parseSettings } from './aws-s3-plugin/settings.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
+import { parseTeamRecovery, type TeamRecovery } from './team-recovery.js';
 
 export interface BackupCaptureJob {
   schemaVersion: 1;
@@ -77,6 +78,7 @@ export interface CapturedBackup {
     sourceEnvironmentIncluded: boolean;
     prerequisites: string[];
     bedrock?: BedrockRecoveryIntent;
+    team?: TeamRecovery;
   };
   omissions: string[];
   gateway: {
@@ -412,6 +414,9 @@ export function parseCapturedBackup(value: unknown, job: BackupCaptureJob): Capt
       prerequisites: list(credentials.prerequisites).map((value) => textField(value)),
       ...(credentials.bedrock !== undefined
         ? { bedrock: parseBedrockRecoveryIntent(credentials.bedrock) }
+        : {}),
+      ...(credentials.team !== undefined
+        ? { team: parseTeamRecovery(credentials.team, members) }
         : {}),
     },
     omissions: list(row.omissions).map((value) => textField(value)),

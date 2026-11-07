@@ -46,15 +46,28 @@ describe('actual native host capture adapter', () => {
       const original = {
         agents: {
           ownership: 'explicit',
-          defaults: { model: { primary: 'openrouter/fixture-model' } },
+          defaults: {
+            model: { primary: 'openrouter/fixture-model' },
+            subagents: { maxConcurrent: 3, maxSpawnDepth: 2 },
+          },
           entries: {
-            main: { workspace },
+            main: {
+              workspace,
+              tools: { agentToAgent: { send: ['researcher'] } },
+              subagents: { allowAgents: ['researcher'], requireAgentId: true },
+            },
             researcher: {
               workspace: researchWorkspace,
               agentDir: researchAgent,
               model: 'openrouter/research-model',
+              tools: { agentToAgent: { send: ['main'] } },
+              subagents: { allowAgents: [] },
             },
           },
+        },
+        tools: {
+          agentToAgent: { enabled: true, allow: ['main', 'researcher'] },
+          sessions: { visibility: 'self' },
         },
         storage: {
           locations: {
@@ -102,6 +115,8 @@ describe('actual native host capture adapter', () => {
       import {createPrivateControlRecord} from ${JSON.stringify(path.join(root, 'dist/openclaw/model-journal.js'))};
       import {createRequire} from 'node:module'; const {S3Client,HeadObjectCommand,GetObjectCommand}=createRequire(${JSON.stringify(path.join(root, 'package.json'))})('@aws-sdk/client-s3');
       const job=${JSON.stringify(job)};
+      const {publishTeamMembership}=await import(${JSON.stringify(path.join(root, 'dist/openclaw/team-recovery.js'))});
+      await publishTeamMembership(${JSON.stringify(directory)},{...job.source,deploymentName:'fixture'},{id:job.operationId,coordinator:'lead',roles:[{logicalId:'lead',nativeId:'main',role:'Coordinator'},{logicalId:'researcher',nativeId:'researcher',role:'Researcher'}]});
       const sessions=await import(${JSON.stringify(path.join(root, 'node_modules/openclaw/dist/plugin-sdk/session-store-runtime.js'))});
       const storePath=${JSON.stringify(path.join(state, 'agents/main/agent/openclaw-agent.sqlite'))};
       await sessions.upsertSessionEntry({agentId:'main',storePath,sessionKey:'agent:main:recovered-history',entry:{sessionId:'22222222-2222-2222-2222-222222222222',updatedAt:Date.now(),status:'interrupted',abortedLastRun:true}});
@@ -217,6 +232,7 @@ describe('actual native host capture adapter', () => {
         import {reconcileNativeRestore} from ${JSON.stringify(path.join(root, 'dist/openclaw/restore-reconciliation.js'))};
         const job=${JSON.stringify(job)},capture=${JSON.stringify(captured)},imported=[];
         const reconciliationOptions={job,capture,deploymentRegion:'eu-central-1',owner:{deploymentName:'restored',deploymentId:'arn:aws:cloudformation:eu-central-1:123456789012:stack/OpenclawStack-restored/target-guid',operationId:job.operationId},gatewayToken:'a'.repeat(48),pluginDirectory:${JSON.stringify(restoredPlugin)},nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},assertInactive:async()=>{},ssm:{send:async command=>{imported.push(command.input);return{Version:1}}}};
+        if(!capture.credentials.team||capture.credentials.team.roles.length!==2)throw Error('Team mapping was not retained in the independent capture');
         const reconciled=await reconcileNativeRestore(reconciliationOptions);
         if(reconciled.members.length!==capture.members.length||imported.length!==1||imported[0].Name!=='/openclaw/restored/providers/openrouter-api-key/api-key'||imported[0].Value!=='fixture-provider')throw Error('Native credential reconciliation mismatch');
         const sessions=await import(${JSON.stringify(path.join(root, 'node_modules/openclaw/dist/plugin-sdk/session-store-runtime.js'))});

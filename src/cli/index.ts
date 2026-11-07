@@ -23,6 +23,7 @@ import restoreCommand from './commands/restore.js';
 import cloneCommand from './commands/clone.js';
 import modelsCommand from './commands/models.js';
 import { providersCommand } from './commands/providers.js';
+import teamCommand from './commands/team.js';
 
 yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
@@ -49,6 +50,7 @@ yargs(hideBin(process.argv))
   .command(cloneCommand)
   .command(modelsCommand)
   .command(providersCommand)
+  .command(teamCommand)
   .demandCommand(1, 'You must specify a command')
   .help()
   .alias('h', 'help')

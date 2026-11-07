@@ -10,6 +10,7 @@ import {
 import { getApiKeyParamName, getGatewayTokenParamName } from '../cli/utils/api-keys.js';
 import type { OpenClawConfig, StackConfig } from '../cli/types/index.js';
 import { parseRestoreBootstrap, type RestoreBootstrap } from '../aws/restore-bootstrap.js';
+import { parseTeamBootstrap } from '../aws/team-bootstrap.js';
 
 const destroyOnly = process.env.OPENCLAW_CDK_OPERATION === 'destroy';
 
@@ -72,6 +73,9 @@ const app = new cdk.App({ builtinCloudFormationValidation: !destroyOnly });
 // Build stack props
 const stackProps: OpenClawStackProps = {
   restore,
+  team: process.env.OPENCLAW_TEAM_BOOTSTRAP
+    ? parseTeamBootstrap(JSON.parse(process.env.OPENCLAW_TEAM_BOOTSTRAP))
+    : undefined,
   config: stackConfig,
   apiProvider,
   model: config.openclaw?.model,

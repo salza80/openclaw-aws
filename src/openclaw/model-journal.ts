@@ -77,7 +77,7 @@ export async function installModelRequest(home: string, input: unknown) {
 }
 export async function installNativeControlRequest(
   home: string,
-  namespace: 'model-requests' | 'bedrock-requests',
+  namespace: 'model-requests' | 'bedrock-requests' | 'team-requests',
   job: { operationId: string },
 ) {
   if (!path.isAbsolute(home) || path.resolve(home) !== home || home === '/')

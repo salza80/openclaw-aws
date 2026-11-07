@@ -38,12 +38,15 @@ export function inactiveCloneConfig(options: {
   config.agents.defaults.skipBootstrap = true;
   config.agents.defaults.heartbeat = { every: '0m' };
   config.agents.defaults.systemAgent = policy.systemAgent ? { agentId: policy.systemAgent } : {};
+  if (policy.maxConcurrent !== undefined)
+    config.agents.defaults.maxConcurrent = policy.maxConcurrent;
   delete config.agents.defaults.authInheritance;
   delete config.agents.defaults.sessionStore;
   if (policy.subagents) config.agents.defaults.subagents = structuredClone(policy.subagents);
   if (policy.model) config.agents.defaults.model = structuredClone(policy.model);
   if (policy.models) config.agents.defaults.models = structuredClone(policy.models);
   else delete config.agents.defaults.models;
+  config.agents.defaults.modelPolicy = structuredClone(policy.modelPolicy ?? {});
   config.tools = {
     ...(policy.tools ?? {}),
     ...(policy.agentToAgent ? { agentToAgent: structuredClone(policy.agentToAgent) } : {}),
@@ -72,6 +75,7 @@ export function inactiveCloneConfig(options: {
           : {}),
       ...(settings.skills ? { skills: [...settings.skills] } : {}),
       ...(settings.models ? { models: structuredClone(settings.models) } : {}),
+      ...(settings.modelPolicy ? { modelPolicy: structuredClone(settings.modelPolicy) } : {}),
       ...(settings.tools ? { tools: structuredClone(settings.tools) } : {}),
       ...(settings.subagents ? { subagents: structuredClone(settings.subagents) } : {}),
       heartbeat: { every: '0m' },

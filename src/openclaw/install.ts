@@ -15,6 +15,8 @@ export interface OpenClawBootstrapOptions {
   cloudflareGatewayId?: string;
   /** An inactive runtime target; ordinary onboarding must never touch restored state. */
   restoreOperationId?: string;
+  /** Explicit deployment-owned provider parameters, fetched only on fresh onboarding. */
+  additionalProviders?: { parameter: string; providerId: string; envVar: string }[];
 }
 
 // Public config values remain compatible while upstream auth choices and env names evolve.
@@ -155,6 +157,20 @@ export function renderOpenClawBootstrap(options: OpenClawBootstrapOptions): stri
   const authArgs = options.restoreOperationId
     ? ['--auth-choice', setup?.authChoice ?? 'skip']
     : openClawProviderAuthArgs(options);
+  const additional = options.additionalProviders ?? [];
+  if (
+    additional.length > 15 ||
+    (additional.length && options.restoreOperationId) ||
+    additional.some(
+      (value) =>
+        !/^\/openclaw\/[a-z0-9-]+\/providers\/[a-z0-9-]+\/api-key$/.test(value.parameter) ||
+        !Object.values(OPENCLAW_PROVIDER_SETUP).some(
+          (setup) => setup.providerId === value.providerId && setup.envVar === value.envVar,
+        ),
+    ) ||
+    new Set(additional.map((value) => value.providerId)).size !== additional.length
+  )
+    throw new Error('Invalid additional fresh provider references');
   const gatewayLogPath = '/home/ubuntu/.openclaw/logs/gateway.log';
   const cloudWatchSetup = options.logGroupName
     ? `phase cloudwatch
@@ -195,6 +211,22 @@ systemctl enable amazon-cloudwatch-agent
       ? `fetch_parameter ${shellQuote(options.apiKeyParamName!)} "$WORK_DIR/api-key.json"\n  API_KEY="$(jq -er '.Parameter.Value' "$WORK_DIR/api-key.json")"\n  write_dotenv_entry ${shellQuote(setup.envVar)} "$API_KEY" >> "$WORK_DIR/openclaw.env"`
       : '',
     AUTH_ARGS: authArgs.map(shellQuote).join(' '),
+    ADDITIONAL_PROVIDER_SETUP: additional.length
+      ? `while IFS=$'\\t' read -r provider_env parameter; do
+    fetch_parameter "$parameter" "$WORK_DIR/additional-key.json"
+    API_KEY="$(jq -er '.Parameter.Value' "$WORK_DIR/additional-key.json")"
+    write_dotenv_entry "$provider_env" "$API_KEY" >> "$WORK_DIR/openclaw.env"
+  done < <(printf '%s' ${shellQuote(JSON.stringify(additional))} | jq -r '.[] | [.envVar,.parameter] | @tsv')`
+      : '',
+    ADDITIONAL_PROVIDER_AUTH: additional.length
+      ? `while IFS=$'\\t' read -r provider parameter; do
+    as_ubuntu "$OPENCLAW_BIN" plugins enable "$provider" > "$WORK_DIR/provider.json" 2> "$WORK_DIR/provider.err"
+    fetch_parameter "$parameter" "$WORK_DIR/additional-key.json"
+    API_KEY="$(jq -er '.Parameter.Value' "$WORK_DIR/additional-key.json")"
+    printf '%s\\n' "$API_KEY" | as_ubuntu "$OPENCLAW_BIN" models auth paste-api-key --provider "$provider" > "$WORK_DIR/auth.json" 2> "$WORK_DIR/auth.err"
+    unset API_KEY
+  done < <(printf '%s' ${shellQuote(JSON.stringify(additional))} | jq -r '.[] | [.providerId,.parameter] | @tsv')`
+      : '',
     MODEL_SETUP:
       options.model && setup
         ? `as_ubuntu "$OPENCLAW_BIN" models set ${shellQuote(options.model)} > "$WORK_DIR/model.json" 2> "$WORK_DIR/model.err"`

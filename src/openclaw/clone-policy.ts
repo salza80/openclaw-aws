@@ -2,6 +2,18 @@ import path from 'node:path';
 import type { BackupMember } from './backup-contract.js';
 import { object } from './backup-contract.js';
 import { selectedBedrockModels } from './bedrock-recovery-intent.js';
+import {
+  nativeToolPolicy,
+  nativeAgentToolPolicy,
+  nativeDelegationPolicy,
+  nativeDelegationDefaults,
+  nativeModelPolicy,
+  type NativeModelPolicy,
+  type NativeToolPolicy,
+  type NativeAgentToolPolicy,
+  type NativeDelegationPolicy,
+  type NativeDelegationDefaults,
+} from './agent-policy.js';
 
 /** Independent copies keep selected policy, not the source's conversations or
  * historical IAM grants. Resolve the same current-schema aliases as recovery. */
@@ -24,12 +36,7 @@ export interface CloneModelSelection {
   primary?: string;
   fallbacks?: string[];
 }
-export interface CloneToolPolicy {
-  profile?: 'minimal' | 'coding' | 'messaging' | 'full';
-  allow?: string[];
-  alsoAllow?: string[];
-  deny?: string[];
-}
+export type CloneToolPolicy = NativeToolPolicy;
 export interface CloneModelSettings {
   alias?: string;
   agentRuntime?: { id: 'auto' | 'openclaw' };
@@ -40,16 +47,19 @@ export interface CloneAgentPolicy {
   identity?: { name?: string; theme?: string; emoji?: string };
   model?: CloneModelSelection;
   models?: Record<string, CloneModelSettings>;
+  modelPolicy?: NativeModelPolicy;
   skills?: string[];
-  tools?: CloneToolPolicy;
-  subagents?: { allowAgents?: string[]; delegationMode?: 'suggest' | 'prefer' };
+  tools?: NativeAgentToolPolicy;
+  subagents?: NativeDelegationPolicy;
 }
 export interface CloneSourcePolicy {
   schemaVersion: 1;
   systemAgent?: string;
+  maxConcurrent?: number;
   model?: CloneModelSelection;
-  subagents?: { allowAgents?: string[]; delegationMode?: 'suggest' | 'prefer' };
+  subagents?: NativeDelegationDefaults;
   models?: Record<string, CloneModelSettings>;
+  modelPolicy?: NativeModelPolicy;
   tools?: CloneToolPolicy;
   agentToAgent?: { enabled?: boolean; allow?: string[] };
   sessionVisibility?: 'self' | 'tree' | 'agent' | 'all';
@@ -86,17 +96,7 @@ function model(value: unknown): CloneModelSelection | undefined {
 }
 function tools(value: unknown): CloneToolPolicy | undefined {
   if (value === undefined) return undefined;
-  const source = object(value);
-  const profile = text(source.profile);
-  if (profile !== undefined && !['minimal', 'coding', 'messaging', 'full'].includes(profile))
-    throw new Error('A custom tool profile needs an explicit supported clone mapping');
-  const result: CloneToolPolicy = {};
-  if (profile) result.profile = profile as CloneToolPolicy['profile'];
-  for (const key of ['allow', 'alsoAllow', 'deny'] as const) {
-    const list = strings(source[key]);
-    if (list) result[key] = list;
-  }
-  return result;
+  return nativeToolPolicy(value);
 }
 
 function selectedModels(value: unknown): Record<string, CloneModelSettings> {
@@ -138,12 +138,14 @@ export function clonePolicyFromConfig(value: unknown, members: BackupMember[]): 
     throw new Error('Source policy roster differs from the completed backup');
   const owner = text(record(defaults.systemAgent).agentId);
   if (owner && !ids.has(owner)) throw new Error('Source system owner is outside the copied roster');
-  const sharedDelegation = record(defaults.subagents);
+  const maxConcurrent = defaults.maxConcurrent;
   if (
-    sharedDelegation.delegationMode !== undefined &&
-    !['suggest', 'prefer'].includes(String(sharedDelegation.delegationMode))
+    maxConcurrent !== undefined &&
+    (!Number.isSafeInteger(maxConcurrent) ||
+      (maxConcurrent as number) < 1 ||
+      (maxConcurrent as number) > 128)
   )
-    throw new Error('Unsupported source default delegation mode');
+    throw new Error('Unsupported source global agent concurrency');
   const sharedTools = record(source.tools);
   const communication = record(sharedTools.agentToAgent);
   const visibility = record(sharedTools.sessions).visibility;
@@ -155,10 +157,6 @@ export function clonePolicyFromConfig(value: unknown, members: BackupMember[]): 
   const policies = members.map((member) => {
     const settings = record(entries[member.id]);
     const identity = record(settings.identity);
-    const delegation = record(settings.subagents);
-    const mode = delegation.delegationMode;
-    if (mode !== undefined && !['suggest', 'prefer'].includes(String(mode)))
-      throw new Error('Unsupported source delegation mode');
     const identityFields: NonNullable<CloneAgentPolicy['identity']> = {};
     for (const key of ['name', 'theme', 'emoji'] as const) {
       const field = text(identity[key]);
@@ -170,17 +168,13 @@ export function clonePolicyFromConfig(value: unknown, members: BackupMember[]): 
       ...(Object.keys(identityFields).length ? { identity: identityFields } : {}),
       ...(settings.model !== undefined ? { model: model(settings.model) } : {}),
       ...(settings.models !== undefined ? { models: selectedModels(settings.models) } : {}),
+      ...(settings.modelPolicy !== undefined
+        ? { modelPolicy: nativeModelPolicy(settings.modelPolicy) }
+        : {}),
       ...(settings.skills !== undefined ? { skills: strings(settings.skills) } : {}),
-      ...(settings.tools !== undefined ? { tools: tools(settings.tools) } : {}),
+      ...(settings.tools !== undefined ? { tools: nativeAgentToolPolicy(settings.tools) } : {}),
       ...(settings.subagents !== undefined
-        ? {
-            subagents: {
-              ...(delegation.allowAgents !== undefined
-                ? { allowAgents: strings(delegation.allowAgents) }
-                : {}),
-              ...(mode !== undefined ? { delegationMode: mode as 'suggest' | 'prefer' } : {}),
-            },
-          }
+        ? { subagents: nativeDelegationPolicy(settings.subagents) }
         : {}),
     };
   });
@@ -202,20 +196,15 @@ export function clonePolicyFromConfig(value: unknown, members: BackupMember[]): 
   return {
     schemaVersion: 1,
     ...(owner ? { systemAgent: owner } : {}),
+    ...(maxConcurrent === undefined ? {} : { maxConcurrent: maxConcurrent as number }),
     ...(defaults.model !== undefined ? { model: model(defaults.model) } : {}),
     ...(defaults.subagents !== undefined
-      ? {
-          subagents: {
-            ...(sharedDelegation.allowAgents !== undefined
-              ? { allowAgents: strings(sharedDelegation.allowAgents) }
-              : {}),
-            ...(sharedDelegation.delegationMode !== undefined
-              ? { delegationMode: sharedDelegation.delegationMode as 'suggest' | 'prefer' }
-              : {}),
-          },
-        }
+      ? { subagents: nativeDelegationDefaults(defaults.subagents) }
       : {}),
     ...(defaults.models !== undefined ? { models } : {}),
+    ...(defaults.modelPolicy !== undefined
+      ? { modelPolicy: nativeModelPolicy(defaults.modelPolicy) }
+      : {}),
     ...(source.tools !== undefined ? { tools: tools(source.tools) } : {}),
     ...(sharedTools.agentToAgent !== undefined
       ? {

@@ -41,6 +41,7 @@ import { BEDROCK_PLUGIN } from '../openclaw/bedrock-configuration.js';
 import { parseBedrockRecoveryIntent } from '../openclaw/bedrock-recovery-intent.js';
 import { parseBedrockRecoveryPlan } from '../openclaw/bedrock-recovery-plan.js';
 import { prepareRecoveryBedrock, ensureRecoveryBedrockAccess } from './recovery-bedrock.js';
+import { saveTeamIdentityState } from './team-state.js';
 
 /** Whole-team knowledge clone intake. Source infrastructure may still be live;
  * source identity is not adopted, so no takeover/destruction check is required.
@@ -283,6 +284,11 @@ export async function resumeClone(
       record.result = parseCloneWorkerResult(output, delivery.job);
       record.phase = 'ready-inactive';
     }
+    if (delivery.job.backup.capture.credentials.team)
+      await saveTeamIdentityState(delivery.job.target, operationId, {
+        ...delivery.job.backup.capture.credentials.team,
+        id: operationId,
+      });
     saveCloneRecord(record);
     return record;
   });
@@ -484,6 +490,11 @@ async function continueCloneStage(
   if (record.result.fileCount !== record.report.copiedFiles)
     throw new Error('Clone file count differs from the reviewed preview');
   record.phase = 'ready-inactive';
+  if (lease.delivery.job.backup.capture.credentials.team)
+    await saveTeamIdentityState(lease.delivery.job.target, record.operationId, {
+      ...lease.delivery.job.backup.capture.credentials.team,
+      id: record.operationId,
+    });
   saveCloneRecord(record);
   options.progress?.('Removing temporary source-backup/key access before any activation...');
   await removeRecoveryAccessStack(ctx.target, lease.access);

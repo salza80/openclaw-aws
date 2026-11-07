@@ -373,7 +373,21 @@ openclaw-aws restore cleanup --operation-id <restore-uuid> --yes
 
 Staging creates an inactive host; activation starts a validated Gateway with channels, schedules, hooks and restored sessions still paused. Add `--activate` to the first command to request both steps. `--target-region`, `--target-profile`, `--instance-type` and `--volume-gib` override the new target settings within the same account. The disk includes space for staged extraction. Resume verifies an existing operation and reuses its exact code/request versions; it does not create another instance when the original target is missing. Inspection reports the saved operation state. Cleanup verifies operation ownership and removes imported provider keys as well as the Gateway credential; the independent backup remains. After activation, review pairing and integrations in the native dashboard and restore selected archived conversations or create a new thread to deliberately restart reviewed work. See the [reconnection runbook](docs/native-backup-transport.md#reconnection-and-reviewed-work). The fresh-host AWS acceptance drill is deferred; the complete EC2 restore path has not yet been demonstrated.
 
-### Archive while idle
+### Agent teams
+
+Run a coordinator, researcher and reviewer as native agents on one shared EC2/Gateway:
+
+```sh
+openclaw-aws team create research --file team.yaml --provider openrouter --region eu-central-1 --yes
+openclaw-aws team status research
+openclaw-aws team archive research --vault s3://my-vault/recovery --yes
+openclaw-aws team restore research-again --from <backup-uuid> --vault s3://my-vault/recovery --region eu-central-1 --yes
+openclaw-aws team activate --operation-id <restore-uuid> --yes
+```
+
+Roles have separate workspaces and native communication/tool/model policies while sharing host IAM/OS permissions. Adding a member reuses the host. Archive takes one complete verified installation backup and deletes the shared deployment once; recovery storage and retained secrets remain billable. Restore preserves current native policy and holds historical work until reviewed. OpenRouter and optional Bedrock use the same provider/model operations as individual claws. See the [team definition, setup and recovery runbook](docs/teams.md). Live validation belongs to final issue #28.
+
+## Archive while idle
 
 ```sh
 openclaw-aws archive --name personal --vault s3://my-vault/recovery
