@@ -15,7 +15,9 @@
 
 ### Patch Changes
 
-- 4cf5812: Update dependencies and development tooling. Require Node.js 22.13+ for the local CLI and use Node.js 24.22.2 with OpenClaw 2026.10.9 for new AWS deployments.
+- Report the installed CLI's own version even when it runs inside another project's directory. Keep generated release and lockfile versions synchronized, and configure npm registry authentication for publishing with the existing CI secret.
+
+- 4cf5812: Update dependencies and development tooling. Require Node.js 22.13+ for the local CLI and use Node.js 24.22.2 for new AWS deployments.
 
   Configure the gateway token before installing its service, and stop bootstrap on missing secrets or failed onboarding rather than reporting a successful setup.
 
@@ -27,7 +29,7 @@
 
   Wait for authenticated Gateway health and CloudFormation readiness signals, then confirm SSM access before deployment succeeds. Bound runtime SSM parameter reads to the deployment's secrets, retain optional CloudWatch logging, and support required Cloudflare Gateway metadata. Existing deployed instances are not upgraded or replaced by updating the CLI.
 
-  Preserve failed fresh deployments and bounded private diagnostics for investigation, with explicit cleanup guidance. Keep legacy Cloudflare configurations usable for lifecycle commands and deletion without requiring new-instance metadata.
+  Preserve failed fresh deployments and bounded private diagnostics for investigation, with explicit cleanup guidance.
 
 - 95d1168: Check EC2 memory and architecture before creating bootstrap or deployment resources. Reject hosts below this deployment's supported 2 GiB memory floor and ARM types incompatible with the x86_64 installation. Preserve valid AWS instance type names without depending on the bundled CDK enum. Replace stale monthly-price labels with capacity guidance and document the measured baseline.
 

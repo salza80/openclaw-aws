@@ -54,7 +54,7 @@
     "format": "prettier . --write",
     "format:check": "prettier . --check",
     "changeset": "changeset",
-    "version": "changeset version",
+    "version": "changeset version && npm install --package-lock-only --ignore-scripts --no-audit --no-fund --offline",
     "release": "changeset publish"
   },
   "dependencies": {
