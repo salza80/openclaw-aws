@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   backup: vi.fn(),
   list: vi.fn(),
   archiveInspect: vi.fn(),
+  archivePreview: vi.fn(),
   restorePreview: vi.fn(),
   restoreStage: vi.fn(),
   teamRestoreStage: vi.fn(),
@@ -39,6 +40,7 @@ vi.mock('../../src/operations/backup.js', async (importOriginal) => ({
 vi.mock('../../src/operations/archive.js', async (importOriginal) => ({
   ...(await importOriginal()),
   inspectArchive: mocks.archiveInspect,
+  planArchive: mocks.archivePreview,
 }));
 vi.mock('../../src/operations/restore.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -67,6 +69,7 @@ import { createUiBackend } from '../../src/ui/backend.js';
 import { parseUiPlanView } from '../../src/ui/public.js';
 import { modelJob } from '../helpers/model-operation.js';
 import { nativeModelAction } from '../../src/openclaw/model-contract.js';
+import { parseTeamDefinition } from '../../src/openclaw/team-definition.js';
 const id = 'a1000000-0000-4000-8000-000000000001';
 const target = { account: '123456789012', region: 'eu-central-1', profile: 'fixture' };
 const source = {
@@ -177,6 +180,9 @@ describe('UI application adapter', () => {
       point: { ...point, capture: { ...point.capture, credentials: { team } } },
       bootstrap: { volumeGiB: 32 },
       sourcePresence: { kind: 'gone' },
+      prerequisites: [
+        'Re-pair clients after Gateway credential rotation.\nKeep historical work held.',
+      ],
     };
     mocks.restorePreview.mockResolvedValue(plan);
     mocks.teamRestoreStage.mockResolvedValue({ phase: 'ready-inactive' });
@@ -192,6 +198,10 @@ describe('UI application adapter', () => {
     );
     expect(mocks.context).not.toHaveBeenCalled();
     expect(JSON.stringify(parseUiPlanView(operation.view))).not.toContain('PRIVATE-AWS');
+    expect(operation.view.facts).toContainEqual({
+      label: 'Recovery prerequisites and omissions',
+      value: plan.prerequisites[0],
+    });
     const result = await operation.apply(() => {});
     expect(mocks.teamRestoreStage).toHaveBeenCalledWith(
       { ...plan, team },
@@ -216,6 +226,77 @@ describe('UI application adapter', () => {
     expect((await backend.recovery(reference))[0].state).toBe('backup');
     mocks.archiveInspect.mockResolvedValue({ recordedPhase: 'archived' });
     expect((await backend.recovery(reference))[0].state).toBe('archived');
+  });
+  it('shows the exact archive deletion inventory without private parameter values', async () => {
+    mocks.archivePreview.mockResolvedValue({
+      vaultUri: 's3://fixture-vault/backups',
+      expectedMembers: [{ id: 'main' }],
+      deleteConfig: true,
+      config: { network: { useDefaultVpc: true } },
+      deletion: {
+        source: {
+          ...source,
+          resources: [
+            { type: 'AWS::EC2::Instance', id: source.instanceId },
+            { type: 'AWS::IAM::Role', id: 'owned-role' },
+          ],
+        },
+        volumeId: 'vol-0123456789abcdef0',
+        parameters: [{ name: '/openclaw/alpha/gateway-token', value: 'PRIVATE-PARAMETER-VALUE' }],
+      },
+    });
+    const operation = await createUiBackend().prepare(
+      { action: 'archive', name: 'alpha', vault: 's3://fixture-vault/backups' },
+      id,
+    );
+    const view = parseUiPlanView(operation.view);
+    expect(view.facts).toEqual(
+      expect.arrayContaining([
+        { label: 'Root volume to delete', value: 'vol-0123456789abcdef0' },
+        { label: 'Owned source parameters to delete', value: '/openclaw/alpha/gateway-token' },
+        { label: 'Original source stack', value: source.stackId },
+      ]),
+    );
+    expect(
+      view.facts.find((fact) => fact.label === 'Hosting resources to delete')?.value,
+    ).toContain('AWS::IAM::Role: owned-role');
+    expect(JSON.stringify(view)).not.toContain('PRIVATE-');
+  });
+  it('reviews native role instructions, communication grants and concurrency before team apply', async () => {
+    const definition = parseTeamDefinition({
+      schemaVersion: 1,
+      topology: 'single-host',
+      coordinator: 'lead',
+      maxConcurrent: 2,
+      maxSpawnDepth: 1,
+      members: [
+        { id: 'lead', role: 'Coordinator', instructions: 'Collect actual research replies.' },
+        {
+          id: 'researcher',
+          role: 'Research',
+          instructions: 'Report evidence.',
+          sendTo: ['lead'],
+          delegateTo: [],
+        },
+      ],
+    });
+    mocks.teamPreview.mockResolvedValue({ job: { teamId: id, definition } });
+    const operation = await createUiBackend().prepare(
+      { action: 'team-configure', name: 'alpha', definition },
+      id,
+    );
+    const view = parseUiPlanView(operation.view);
+    expect(view.facts).toContainEqual({
+      label: 'Native concurrency / spawn depth',
+      value: '2 / 1',
+    });
+    expect(view.facts).toContainEqual({
+      label: 'Instructions researcher',
+      value: 'Report evidence.',
+    });
+    expect(view.facts.find((fact) => fact.label === 'Role researcher')?.value).toContain(
+      'send to lead; delegate to none',
+    );
   });
   it('makes unknown model writes require inspection rather than reporting success', async () => {
     mocks.modelPreview.mockResolvedValue({ before: { effectiveForNewSessions: 'openrouter/old' } });

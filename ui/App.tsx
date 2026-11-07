@@ -360,7 +360,10 @@ export function App() {
                 <input
                   required={request.action !== 'resume' || request.recoveryKind !== 'archive'}
                   value={request.name ?? ''}
-                  onChange={(event) => update({ name: event.target.value || undefined })}
+                  onChange={(event) => {
+                    update({ name: event.target.value || undefined });
+                    setCatalog(null);
+                  }}
                   autoComplete="off"
                   placeholder="research-team"
                 />

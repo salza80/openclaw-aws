@@ -13,7 +13,18 @@ export function uiFacts(value: unknown): UiFact[] {
   return value.map((input) => {
     const row = modelObject(input);
     exact(row, ['label', 'value']);
-    return { label: modelText(row.label, 80), value: modelText(row.value, 4096) };
+    if (
+      typeof row.value !== 'string' ||
+      !row.value ||
+      row.value.length > 8192 ||
+      [...row.value].some(
+        (character) =>
+          (character.charCodeAt(0) < 32 && !['\n', '\r', '\t'].includes(character)) ||
+          character.charCodeAt(0) === 127,
+      )
+    )
+      throw new Error('Invalid public UI fact text');
+    return { label: modelText(row.label, 80), value: row.value };
   });
 }
 const recovery = (value: unknown) => {

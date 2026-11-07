@@ -30,7 +30,8 @@ vi.mock('../../src/cli/utils/aws-validation.js', () => ({
 }));
 vi.mock('../../src/operations/fresh-bedrock.js', () => ({
   prepareInitialBedrock: mocks.initial,
-  initialBedrockSummary: () => 'Pinned plugin and scoped invocation route',
+  initialBedrockSummary: () =>
+    'Pinned plugin and scoped invocation route\nInvoke: arn:aws:bedrock:eu-central-1:123456789012:inference-profile/eu.amazon.nova-micro-v1:0',
 }));
 vi.mock('../../src/operations/credential-references.js', () => ({
   resolveCredentialReferences: mocks.credentials,
@@ -79,6 +80,30 @@ afterEach(async () => {
   await rm(mocks.root, { recursive: true, force: true });
 });
 describe('fresh UI provisioning review', () => {
+  it('preserves multiline Bedrock route/plugin approvals while rejecting terminal controls', async () => {
+    mocks.initial.mockResolvedValue({ deploymentName: 'alpha' });
+    const operation = await prepareUiCreate(
+      {
+        ...input,
+        provider: 'amazon-bedrock',
+        model: 'amazon-bedrock/eu.amazon.nova-micro-v1:0',
+        bedrockRegion: target.region,
+        credentials: [],
+      },
+      view(),
+    );
+    const review = parseUiPlanView(operation.view);
+    expect(review.facts.find((fact) => fact.label === 'Bedrock approval')?.value).toContain(
+      '\nInvoke: arn:aws:bedrock:',
+    );
+    expect(() =>
+      parseUiPlanView({
+        ...operation.view,
+        facts: [{ label: 'Invalid', value: 'control\u001b[31m' }],
+      }),
+    ).toThrow('Invalid public UI fact text');
+    expect(mocks.deploy).not.toHaveBeenCalled();
+  });
   it('resolves reference values only after approval and uses the shared deployment operation', async () => {
     const operation = await prepareUiCreate(input, view());
     expect(JSON.stringify(parseUiPlanView(operation.view))).not.toContain('PRIVATE-');

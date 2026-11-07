@@ -35,7 +35,7 @@ import {
 import { prepareRestore, stageRestore, resumeRestore } from '../operations/restore.js';
 import { prepareClone, stageClone, resumeClone } from '../operations/clone.js';
 import { cloneReport } from '../operations/clone-record.js';
-import { parseTeamDefinition } from '../openclaw/team-definition.js';
+import { parseTeamDefinition, teamNativeId } from '../openclaw/team-definition.js';
 import { modelObject, modelText } from '../openclaw/model-contract.js';
 import type {
   UiBackend,
@@ -227,6 +227,7 @@ export function createUiBackend(): UiBackend {
           fact('Source stack', plan.point.source.stackId),
           fact('EC2 type', plan.context.config.instance.type),
           fact('Encrypted disk GiB', plan.bootstrap.volumeGiB),
+          fact('Independent vault', request.vault),
         ];
         view.effects = [
           'Create one billed EC2 host and disk; retained independent vault and keys continue to incur storage costs.',
@@ -251,9 +252,12 @@ export function createUiBackend(): UiBackend {
             'Recreate the reviewed instance-role Bedrock connection, pinned model/embedding plugin and scoped IAM grants; model usage is billed through AWS.',
           );
         }
-        if (request.action === 'restore')
+        if (request.action === 'restore') {
+          const restore = plan as Awaited<ReturnType<typeof prepareRestore>>;
+          view.facts.push(
+            fact('Recovery prerequisites and omissions', restore.prerequisites.join('\n')),
+          );
           return prepared(async (progress) => {
-            const restore = plan as Awaited<ReturnType<typeof prepareRestore>>;
             const team = restore.point.capture.credentials.team;
             const result = team
               ? await stageTeamRestore({ ...restore, team }, recoveryTarget, { progress })
@@ -264,11 +268,14 @@ export function createUiBackend(): UiBackend {
               recovery: [{ ...recoveryRequest(request, id, 'restore'), activate: true }],
             };
           });
+        }
         const clone = plan as Awaited<ReturnType<typeof prepareClone>>;
         const report = cloneReport(clone.preview);
         view.facts.push(
           fact('Copied files', report.copiedFiles),
           fact('Required credential providers', report.providersInUse.join(', ')),
+          fact('Copied native agents', report.agentIds.join(', ')),
+          fact('Deliberately omitted content', report.omissions.join('\n')),
         );
         return prepared(async (progress) => {
           // Resolve only references after the user approves. Values never enter UI records.
@@ -442,6 +449,22 @@ export function createUiBackend(): UiBackend {
             plan.expectedMembers.map((member) => member.id).join(', '),
           ),
           fact('Delete local configuration', plan.deleteConfig),
+          fact('Original source stack', plan.deletion.source.stackId),
+          fact('Root volume to delete', plan.deletion.volumeId),
+          fact(
+            'Owned source parameters to delete',
+            plan.deletion.parameters.map((parameter) => parameter.name).join('\n'),
+          ),
+          fact(
+            'Hosting resources to delete',
+            plan.deletion.source.resources
+              .map((resource) => `${resource.type}: ${resource.id}`)
+              .join('\n'),
+          ),
+          fact(
+            'Shared resources retained',
+            `${plan.config.network.useDefaultVpc ? 'Default VPC; ' : ''}CDK bootstrap; independent vault and key`,
+          ),
         ];
         view.effects = [
           'Verify a complete backup, persist recovery metadata independently, then delete the approved original hosting stack and owned source credentials.',
@@ -486,12 +509,17 @@ export function createUiBackend(): UiBackend {
             ? ['Apply the reviewed additive Bedrock role permissions required by this model.']
             : []),
         ];
-        if (plan.bedrock)
+        if (plan.bedrock) {
+          view.facts.push(
+            fact('Bedrock policy stack', plan.bedrock.access.stackName),
+            fact('Reviewed policy digest', plan.bedrock.access.templateDigest),
+          );
           for (const route of plan.bedrock.selection.routes)
             view.facts.push(
               fact('Bedrock invocation', route.invocationArn),
               fact('Backing model resources', route.modelArns.join(', ')),
             );
+        }
         view.recovery = [recoveryRequest(request, id, 'model')];
         return prepared(
           async () => {
@@ -517,6 +545,9 @@ export function createUiBackend(): UiBackend {
           fact('Inference region', request.bedrockRegion),
           fact('Approved routes', plan.selection.routes.map((route) => route.model).join(', ')),
           fact('Restart allowed', request.allowRestart ?? false),
+          fact('Host role identity', plan.job.target.roleId),
+          fact('Bedrock policy stack', plan.access.stackName),
+          fact('Reviewed policy digest', plan.access.templateDigest),
         ];
         for (const route of plan.selection.routes)
           view.facts.push(
@@ -563,7 +594,21 @@ export function createUiBackend(): UiBackend {
             plan.job.definition.members.map((member) => `${member.id}: ${member.role}`).join(', '),
           ),
           fact('Restart allowed', request.allowRestart ?? false),
+          fact(
+            'Native concurrency / spawn depth',
+            `${plan.job.definition.maxConcurrent} / ${plan.job.definition.maxSpawnDepth}`,
+          ),
+          fact('Bindings', JSON.stringify(plan.job.definition.bindings)),
         ];
+        for (const member of plan.job.definition.members) {
+          view.facts.push(
+            fact(
+              `Role ${member.id}`,
+              `${member.role}; native ID ${teamNativeId(plan.job.definition, member.id)}; model ${JSON.stringify(member.model ?? 'inherit')}; send to ${member.sendTo.join(', ') || 'none'}; delegate to ${member.delegateTo.join(', ') || 'none'}; tools ${JSON.stringify(member.tools ?? 'inherit')}`,
+            ),
+            fact(`Instructions ${member.id}`, member.instructions),
+          );
+        }
         view.effects = [
           'Configure native agent roles, instructions and explicit communication/delegation on this one host. No second EC2 instance is created.',
           'Native OpenClaw remains responsible for coordination, conversations and work.',
