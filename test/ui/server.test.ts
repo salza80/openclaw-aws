@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 const paths = vi.hoisted(() => ({ root: '' }));
 vi.mock('../../src/cli/utils/config.js', () => ({ getConfigRoot: () => paths.root }));
 import { createUiApp } from '../../src/ui/server.js';
@@ -37,6 +38,45 @@ async function pair() {
   return String(response.headers['set-cookie']).split(';')[0];
 }
 describe('local console HTTP boundary', () => {
+  it('returns a slow native preview over a real socket without losing its review', async () => {
+    const prepare = backend.prepare;
+    vi.spyOn(backend, 'prepare').mockImplementation(async (...args) => {
+      await delay(31000);
+      return prepare(...args);
+    });
+    const address = await ui.app.listen({ host: '127.0.0.1', port: 0 });
+    ui.setOrigin(address);
+    const requestHeaders = {
+      origin: address,
+      'x-openclaw-ui': '1',
+      'content-type': 'application/json',
+    };
+    const session = await fetch(`${address}/api/session`, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify({ code }),
+    });
+    expect(session.status).toBe(200);
+    const response = await fetch(`${address}/api/plans`, {
+      method: 'POST',
+      headers: {
+        ...requestHeaders,
+        cookie: session.headers.get('set-cookie')!.split(';')[0],
+      },
+      body: JSON.stringify({ action: 'stop', name: 'alpha' }),
+    }).catch((error: unknown) => error);
+    // Even the old disconnected request could finish preparing a hidden review.
+    // Drain that preparation before cleanup and assert its actual HTTP delivery.
+    await vi.waitFor(async () => expect(await ui.jobs.list()).toHaveLength(1), {
+      timeout: 3000,
+    });
+    expect(response).toBeInstanceOf(Response);
+    const delivered = response as Response;
+    expect(delivered.status).toBe(200);
+    const job = await delivered.json();
+    expect(job.phase).toBe('preview');
+    expect((await ui.jobs.get(job.id)).id).toBe(job.id);
+  }, 40000);
   it('pairs once using an HttpOnly cookie and requires the exact local host/origin', async () => {
     expect((await ui.app.inject({ url: '/api/state', headers })).statusCode).toBe(401);
     const cookie = await pair();

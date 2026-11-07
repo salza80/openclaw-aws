@@ -8,6 +8,8 @@ The console lists each saved deployment using that configuration's AWS profile a
 
 Choose an operation, enter its structured inputs and select **Prepare review**. Review the concrete AWS account, region, original host identity, recovery point, effects and retained costs, then select **Apply reviewed operation**. A prepared review alone does not authorize execution. IAM previews can create review metadata; discarding the preview cleans up its owned unapplied change set.
 
+Preparing a review can take several minutes while AWS and native checks run. The console keeps the authenticated request open until those bounded checks return; elapsed socket inactivity does not imply the operation failed.
+
 Create uses the pinned fresh installer, a default VPC, encrypted 30 GiB root disk and a supported instance type (`t3a.small` by default). If required, the review includes account/region CDK bootstrap creation or upgrade. Bedrock setup reviews the native model/embedding plugin and concrete invocation resources. AWS bills Bedrock inference; existing OpenRouter and other API credentials remain separate.
 
 Credential inputs are existing environment-variable names or SSM SecureString references, optionally with an exact version. Never enter API key values. Extra provider references can be supplied for a mixed-provider team or independent copy. For a copy, SSM references use the vault region/profile, even when the new host uses a different region/profile. Values are resolved privately on the backend after approval and never returned to the lifecycle application.

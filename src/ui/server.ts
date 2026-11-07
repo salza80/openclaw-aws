@@ -25,7 +25,9 @@ export async function createUiApp(
     logger: false,
     bodyLimit: 64 * 1024,
     requestTimeout: 30000,
-    connectionTimeout: 30000,
+    // AWS/native previews are bounded by their operations and can be quiet for
+    // minutes. A socket inactivity timer would drop a legitimate pending reply.
+    connectionTimeout: 0,
     keepAliveTimeout: 5000,
   });
   const jobs = new UiJobs(backend);
