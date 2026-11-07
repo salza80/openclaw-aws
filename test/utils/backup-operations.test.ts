@@ -112,6 +112,22 @@ beforeEach(() => {
 const create = () =>
   createBackup(ctx, { vaultUri: backupVault.uri, operationId: backupId, label: 'checkpoint' });
 describe('portable backup operations', () => {
+  it('refuses a replaced UI approval before native reads, source grants or request uploads', async () => {
+    await expect(
+      createBackup(ctx, {
+        vaultUri: backupVault.uri,
+        operationId: backupId,
+        expectedSource: {
+          stackId: backupSource.stackId,
+          instanceId: 'i-aaaaaaaaaaaaaaaaa',
+          roleId: backupSource.role.id,
+        },
+      }),
+    ).rejects.toThrow('replaced');
+    expect(mocks.remote).not.toHaveBeenCalled();
+    expect(mocks.access).not.toHaveBeenCalled();
+    expect(mocks.put).not.toHaveBeenCalled();
+  });
   it('commits a receipt after host verification, with scoped permissions and no secret transport', async () => {
     const result = await create();
     expect(result.capture.verification.ok).toBe(true);

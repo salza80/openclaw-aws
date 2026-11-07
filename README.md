@@ -149,6 +149,17 @@ See the [sizing report](https://github.com/salza80/openclaw-aws/blob/main/docs/e
 
 ## Commands
 
+### `openclaw-aws ui`
+
+Open the optional local AWS lifecycle console. Its production React assets ship with the npm package; it works without a running claw and can discover archived teams from an independent vault after local configuration loss.
+
+```bash
+npx openclaw-aws ui
+npx openclaw-aws ui --no-open  # Print a private one-use pairing link
+```
+
+Review/apply create, start/stop, backup, archive, restore, clone, team and provider/model operations through the same application workflows as the CLI. Native agents appear under their shared EC2/Gateway host. Operation history survives browser reconnects; interrupted backend work requires inspection rather than automatic replay. Use **Open OpenClaw** for native conversations and activity through SSM. See the [local console runbook](docs/local-console.md) for pairing, retained costs and recovery.
+
 ### `openclaw-aws models`
 
 Read the running Gateway's native inventory and change its persistent default or one existing agent's model through SSM:

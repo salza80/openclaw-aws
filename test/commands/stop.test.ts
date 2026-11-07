@@ -1,103 +1,55 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-const withLockMock = vi.hoisted(() =>
-  vi.fn(async (_ctx: unknown, operation: () => Promise<void>) => operation()),
-);
-vi.mock('../../src/operations/lock.js', () => ({ withDeploymentLock: withLockMock }));
-import type { CommandModule } from 'yargs';
-import { makeCommandContext, testTarget } from '../helpers/fixtures/command-context.js';
-
-vi.mock('ora', async () => {
-  const { createSpinnerMock } = await import('../helpers/mocks/spinner.js');
-  return {
-    default: vi.fn(() => createSpinnerMock()),
-  };
-});
-
-const promptsMock = vi.hoisted(() => vi.fn());
-vi.mock('prompts', () => ({
-  default: promptsMock,
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { makeCommandContext } from '../helpers/fixtures/command-context.js';
+const mocks = vi.hoisted(() => ({
+  prepare: vi.fn(),
+  apply: vi.fn(),
+  error: vi.fn(),
+  prompt: vi.fn(),
 }));
-
-const buildCommandContextMock = vi.hoisted(() => vi.fn());
-buildCommandContextMock.mockImplementation(async () => makeCommandContext());
-
+vi.mock('../../src/operations/instances.js', () => ({
+  prepareInstancePower: mocks.prepare,
+  applyInstancePower: mocks.apply,
+}));
 vi.mock('../../src/cli/utils/context.js', () => ({
-  buildCommandContext: buildCommandContextMock,
+  buildCommandContext: async () => makeCommandContext(),
 }));
-
-const resolveInstanceIdMock = vi.hoisted(() => vi.fn());
-vi.mock('../../src/cli/utils/aws.js', () => ({
-  resolveInstanceId: resolveInstanceIdMock,
+vi.mock('../../src/cli/utils/errors.js', () => ({ handleError: mocks.error }));
+vi.mock('../../src/cli/utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), success: vi.fn() },
 }));
-
-const getInstanceStateMock = vi.hoisted(() => vi.fn());
-const stopInstanceMock = vi.hoisted(() => vi.fn());
-const waitForInstanceStateMock = vi.hoisted(() => vi.fn());
-
-vi.mock('../../src/cli/utils/ec2.js', () => ({
-  getInstanceState: getInstanceStateMock,
-  stopInstance: stopInstanceMock,
-  waitForInstanceState: waitForInstanceStateMock,
-}));
-
-vi.mock('../../src/cli/utils/logger.js', async () => {
-  const { createLoggerMock } = await import('../helpers/mocks/logger.js');
-  return {
-    logger: createLoggerMock(),
-  };
+vi.mock('prompts', () => ({ default: mocks.prompt }));
+import command from '../../src/cli/commands/stop.js';
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  mocks.prepare.mockResolvedValue({
+    before: 'running',
+    target: { instanceId: 'i-approved', account: '123456789012', region: 'us-east-1' },
+  });
+  mocks.apply.mockResolvedValue({ state: 'stopped', changed: true, ssmReady: true });
 });
-
-vi.mock('../../src/cli/utils/errors.js', async () => {
-  const { createErrorsModuleMock } = await import('../helpers/mocks/errors.js');
-  return createErrorsModuleMock({ handleError: vi.fn() });
-});
-
-import { handleError } from '../../src/cli/utils/errors.js';
-import stopCommand from '../../src/cli/commands/stop.js';
-
-type StopHandler = NonNullable<(typeof stopCommand)['handler']>;
-type StopHandlerArgs = Parameters<StopHandler>[0];
-const handleErrorMock = vi.mocked(handleError);
-
-describe('stop command', () => {
-  afterEach(() => {
-    vi.clearAllMocks();
+describe('stop shared-operation CLI', () => {
+  it('delegates to the same application plan and apply functions as the local UI', async () => {
+    await command.handler?.({ _: [], $0: 'claw', force: true });
+    expect(mocks.prepare).toHaveBeenCalledWith(makeCommandContext(), 'stop');
+    expect(mocks.apply).toHaveBeenCalledWith(
+      makeCommandContext(),
+      mocks.prepare.mock.results[0].value ? await mocks.prepare.mock.results[0].value : undefined,
+      expect.any(Object),
+    );
   });
-
-  it('does not read or mutate while backup owns the deployment lock', async () => {
-    withLockMock.mockRejectedValueOnce(new Error('deployment lock owned by backup'));
-    await stopCommand.handler?.({ _: [], $0: 'openclaw-aws' });
-    expect(resolveInstanceIdMock).not.toHaveBeenCalled();
-    expect(stopInstanceMock).not.toHaveBeenCalled();
-    expect(handleErrorMock).toHaveBeenCalled();
+  it('reports a failed plan without sending a power operation', async () => {
+    mocks.prepare.mockRejectedValueOnce(new Error('owned deployment lock'));
+    await command.handler?.({ _: [], $0: 'claw' });
+    expect(mocks.apply).not.toHaveBeenCalled();
+    expect(mocks.error).toHaveBeenCalled();
   });
-
-  it('returns early when instance is already stopped', async () => {
-    resolveInstanceIdMock.mockResolvedValue('i-123');
-    getInstanceStateMock.mockResolvedValue('stopped');
-
-    const handler = (stopCommand as CommandModule).handler!;
-    const args: StopHandlerArgs = { _: [], $0: 'openclaw-aws' };
-    await handler(args);
-
-    expect(stopInstanceMock).not.toHaveBeenCalled();
-    expect(waitForInstanceStateMock).not.toHaveBeenCalled();
-    expect(handleErrorMock).not.toHaveBeenCalled();
-  });
-
-  it('stops instance when force is true', async () => {
-    resolveInstanceIdMock.mockResolvedValue('i-123');
-    getInstanceStateMock.mockResolvedValue('running');
-    stopInstanceMock.mockResolvedValue(undefined);
-    waitForInstanceStateMock.mockResolvedValue(true);
-
-    const handler = (stopCommand as CommandModule).handler!;
-    const args: StopHandlerArgs = { force: true, _: [], $0: 'openclaw-aws' };
-    await handler(args);
-
-    expect(promptsMock).not.toHaveBeenCalled();
-    expect(stopInstanceMock).toHaveBeenCalledWith('i-123', testTarget);
-    expect(waitForInstanceStateMock).toHaveBeenCalledWith('i-123', testTarget, 'stopped', 120000);
-    expect(handleErrorMock).not.toHaveBeenCalled();
+  it('requires confirmation before stopping and leaves cancellation without a power write', async () => {
+    mocks.prompt.mockResolvedValueOnce({ confirm: false });
+    await command.handler?.({ _: [], $0: 'claw' });
+    expect(mocks.apply).not.toHaveBeenCalled();
+    mocks.prompt.mockResolvedValueOnce({ confirm: true });
+    await command.handler?.({ _: [], $0: 'claw' });
+    expect(mocks.apply).toHaveBeenCalledOnce();
   });
 });
