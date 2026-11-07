@@ -5,7 +5,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { spawnSync } from 'node:child_process';
 import { OpenClawStack } from '../../src/cdk/stack.js';
 import type { RestoreBootstrap } from '../../src/aws/restore-bootstrap.js';
-import { OPENCLAW_VERSION, OPENCLAW_NODE_VERSION } from '../../src/cli/constants.js';
+import { API_PROVIDERS, OPENCLAW_VERSION, OPENCLAW_NODE_VERSION } from '../../src/cli/constants.js';
 import type { Provider } from '../../src/cli/types/index.js';
 import type { TeamBootstrap } from '../../src/aws/team-bootstrap.js';
 
@@ -13,7 +13,7 @@ afterEach(() => vi.restoreAllMocks());
 
 const stackArn = 'arn:aws:cloudformation:us-east-1:123456789012:stack/TestStack/test-id';
 
-// UserData contains the deployment's StackId token; resolve only the intrinsics
+// Bootstrap metadata and UserData contain the deployment's StackId token; resolve only the intrinsics
 // used by this stack, without relying on CDK's serialized Fn::Join shape.
 function resolveString(value: unknown): string {
   if (typeof value === 'string') return value;
@@ -25,6 +25,8 @@ function resolveString(value: unknown): string {
       'AWS::Region': 'us-east-1',
       'AWS::AccountId': '123456789012',
       'AWS::StackId': stackArn,
+      OpenClawEc2Role03F62F3B:
+        'OpenclawStack-maximum-length-role-name-for-cfn-init-123456789012345',
     };
     const resolved = refs[expression.Ref as string];
     if (!resolved) throw new Error(`Unexpected reference: ${expression.Ref}`);
@@ -43,21 +45,26 @@ function bootstrap(
   restore?: RestoreBootstrap,
   provider: Provider = 'anthropic-api-key',
   team?: TeamBootstrap,
+  deployment?: { name: string; model: string },
 ) {
   vi.spyOn(MachineImage, 'lookup').mockReturnValue(
     MachineImage.genericLinux({ 'us-east-1': 'ami-0123456789abcdef0' }),
   );
-  const stack = new OpenClawStack(new App(), 'TestStack', {
+  const name = deployment?.name ?? 'test';
+  const stack = new OpenClawStack(new App(), deployment ? `OpenclawStack-${name}` : 'TestStack', {
     restore,
     team,
     env: { account: '123456789012', region: 'us-east-1' },
     apiProvider: provider,
-    ...(provider === 'amazon-bedrock' ? {} : { apiKeyParamName: '/openclaw/test/key' }),
-    gatewayTokenParamName: '/openclaw/test/token',
+    model: deployment?.model,
+    ...(provider === 'amazon-bedrock'
+      ? {}
+      : { apiKeyParamName: deployment ? `/openclaw/${name}/api-key` : '/openclaw/test/key' }),
+    gatewayTokenParamName: deployment ? `/openclaw/${name}/gateway-token` : '/openclaw/test/token',
     useDefaultVpc: false,
     config: {
-      projectName: 'test',
-      instanceName: 'test',
+      projectName: name,
+      instanceName: name,
       instanceType,
       enableCloudWatchLogs,
       useDefaultVpc: false,
@@ -66,12 +73,25 @@ function bootstrap(
   const template = Template.fromStack(stack);
   const [[instanceId, instance]] = Object.entries(template.findResources('AWS::EC2::Instance'));
   const userData = instance.Properties.UserData['Fn::Base64'];
-  const script = resolveString(userData);
+  const launcher = resolveString(userData);
+  const init = instance.Metadata['AWS::CloudFormation::Init'];
+  const script = resolveString(init.install.files['/opt/openclaw-aws/bootstrap.sh'].content);
   const policies = template.findResources('AWS::IAM::Policy');
   const statements = Object.values(policies).flatMap(
     (policy) => policy.Properties.PolicyDocument.Statement,
   );
-  return { stack, template, instanceId, instance, userData, script, policies, statements };
+  return {
+    stack,
+    template,
+    instanceId,
+    instance,
+    userData,
+    script,
+    launcher,
+    init,
+    policies,
+    statements,
+  };
 }
 
 function actions(statement: { Action: string | string[] }): string[] {
@@ -79,6 +99,63 @@ function actions(statement: { Action: string | string[] }): string[] {
 }
 
 describe('EC2 bootstrap', () => {
+  it('synthesizes the real OpenRouter deployment with logging without exceeding EC2 user data', () => {
+    const { script, launcher, init } = bootstrap(
+      true,
+      't3a.small',
+      undefined,
+      'openrouter-api-key',
+      undefined,
+      {
+        name: 'final2-source-20261107',
+        model: 'openrouter/openai/gpt-4.1-nano',
+      },
+    );
+    expect(script).toContain("models set 'openrouter/openai/gpt-4.1-nano'");
+    expect(script).toContain('/openclaw/final2-source-20261107/api-key');
+    expect(init.install.files['/opt/openclaw-aws/bootstrap.sh']).toMatchObject({
+      mode: '000700',
+      owner: 'root',
+      group: 'root',
+    });
+    expect(launcher).not.toContain('onboard --non-interactive');
+    expect(launcher).not.toContain('OPENROUTER_API_KEY');
+    expect(Buffer.byteLength(launcher)).toBeLessThanOrEqual(16 * 1024);
+  });
+  it.each([false, true])(
+    'keeps maximum-name fresh/restore=%s payloads outside EC2 user data',
+    (restore) => {
+      const providers = API_PROVIDERS.map(({ value }) => value)
+        .filter((provider) => provider !== 'amazon-bedrock' && provider !== 'openrouter-api-key')
+        .slice(0, 15);
+      const { script, launcher } = bootstrap(
+        true,
+        't3a.small',
+        restore
+          ? {
+              operationId: '11111111-1111-1111-1111-111111111111',
+              volumeGiB: 32,
+              runtime: { openclaw: OPENCLAW_VERSION, node: OPENCLAW_NODE_VERSION },
+            }
+          : undefined,
+        'openrouter-api-key',
+        restore
+          ? undefined
+          : {
+              teamId: '11111111-1111-1111-1111-111111111111',
+              operationId: '22222222-2222-2222-2222-222222222222',
+              providers,
+            },
+        { name: 'x'.repeat(50), model: 'openrouter/openai/gpt-4.1-nano' },
+      );
+      expect(Buffer.byteLength(launcher)).toBeLessThan(8 * 1024);
+      expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
+      if (!restore) {
+        expect(Buffer.byteLength(script)).toBeGreaterThan(16 * 1024);
+        expect(script).toContain('models auth paste-api-key');
+      } else expect(script).toContain('phase restore-inactive');
+    },
+  );
   it('scopes extra team keys exactly and binds fresh team/create ownership without multiplying EC2', () => {
     const team = {
       teamId: '11111111-1111-1111-1111-111111111111',
@@ -165,15 +242,22 @@ describe('EC2 bootstrap', () => {
   });
 
   it('waits for a signal from this instance without changing existing resource identities', () => {
-    const { template, instanceId, instance, userData, script } = bootstrap();
+    const { template, instanceId, instance, userData, script, launcher, init } = bootstrap();
     expect(instanceId).toBe('OpenClawEc242967934');
     expect(instance.CreationPolicy).toEqual({ ResourceSignal: { Count: 1, Timeout: 'PT20M' } });
     expect(JSON.stringify(userData)).toContain('AWS::StackId');
     expect(JSON.stringify(userData)).not.toContain(`"Ref":"${instanceId}"`);
     expect(script).toContain(stackArn);
+    expect(launcher).toContain(stackArn);
+    expect(launcher).toContain(instanceId);
+    expect(init.configSets).toEqual({ default: ['install'] });
+    expect(init.install.commands).toEqual({
+      install: { command: '/bin/bash /opt/openclaw-aws/bootstrap.sh' },
+    });
+    expect(spawnSync('bash', ['-n'], { input: launcher, encoding: 'utf8' }).status).toBe(0);
     expect(script).toContain(instanceId);
     expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
-    expect(Buffer.byteLength(script)).toBeLessThanOrEqual(16 * 1024);
+    expect(Buffer.byteLength(launcher)).toBeLessThanOrEqual(16 * 1024);
 
     const resources = template.toJSON().Resources;
     expect(resources.OpenClawVpc819234F9.Type).toBe('AWS::EC2::VPC');
@@ -236,12 +320,15 @@ describe('EC2 bootstrap', () => {
     );
     expect(signalStatements).toHaveLength(1);
     expect(signalStatements[0].Effect).toBe('Allow');
-    expect(actions(signalStatements[0])).toEqual(['cloudformation:SignalResource']);
+    expect(actions(signalStatements[0])).toEqual([
+      'cloudformation:DescribeStackResource',
+      'cloudformation:SignalResource',
+    ]);
     expect(resolveString(signalStatements[0].Resource)).toBe(stackArn);
   });
 
   it('ships bootstrap and gateway logs with scoped permissions and bounded retention', () => {
-    const { template, instance, script, policies, statements } = bootstrap(true);
+    const { template, instance, script, launcher, policies, statements } = bootstrap(true);
     template.hasResourceProperties('AWS::Logs::LogGroup', {
       LogGroupName: '/openclaw/TestStack',
       RetentionInDays: 30,
@@ -276,7 +363,7 @@ describe('EC2 bootstrap', () => {
     expect(script).toContain('amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s');
     expect(script).toContain('/home/ubuntu/.openclaw/logs/gateway.log');
     expect(spawnSync('bash', ['-n'], { input: script, encoding: 'utf8' }).status).toBe(0);
-    expect(Buffer.byteLength(script)).toBeLessThanOrEqual(16 * 1024);
+    expect(Buffer.byteLength(launcher)).toBeLessThanOrEqual(16 * 1024);
 
     const logStatements = statements.filter((statement) =>
       actions(statement).includes('logs:PutLogEvents'),

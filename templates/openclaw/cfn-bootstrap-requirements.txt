@@ -1,0 +1,7 @@
+# AWS helper release 2.0-42; dependencies are pinned for Ubuntu 24.04/Python 3.12.
+# setuptools/wheel come from Ubuntu's signed packages in the private venv.
+aws-cfn-bootstrap @ https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-2.0-42.tar.gz --hash=sha256:42a794377bedba5bbd222e3934bdfd3a52c0f27709e16dbe0d203f4aa47cea5b
+python-daemon==2.2.4 --hash=sha256:a0d5dc0b435a02c7e0b401e177a7c17c3f4c7b4e22e2d06271122c8fec5f8946
+lockfile==0.12.2 --hash=sha256:6c3cb24f344923d30b2785d5ad75182c8ea7ac1b6171b08657258ec7429d50fa
+chevron==0.14.0 --hash=sha256:fbf996a709f8da2e745ef763f482ce2d311aa817d287593a5b990d6d6e4f0443
+docutils==0.22.2 --hash=sha256:b0e98d679283fc3bb0ead8a5da7f501baa632654e7056e9c5846842213d674d8

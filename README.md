@@ -30,7 +30,7 @@ openclaw-aws ui
 
 `create` reviews provisioning and any required CDK bootstrap before approval. It uses the region's default VPC, an encrypted 30 GiB root disk and SSM access without public SSH or Gateway ports. Add `--profile work` to select an AWS profile. Named configurations live under `.openclaw-aws` in your working directory.
 
-Fresh hosts use Ubuntu 24.04, OpenClaw 2026.11.1 and Node.js 24.22.2. Supported instances are x86_64 with at least 2 GiB RAM; small hosts receive managed swap. See [EC2 sizing](docs/ec2-sizing.md). Failed provisioning retains resources for inspection: check status and clean up deliberately to stop charges.
+Fresh hosts use Ubuntu 24.04, OpenClaw 2026.11.1 and Node.js 24.22.2. A small startup launcher retrieves the installation through CloudFormation Init; fresh creation waits for authenticated Gateway health. Supported instances are x86_64 with at least 2 GiB RAM; small hosts receive managed swap. See [EC2 sizing](docs/ec2-sizing.md). Failed provisioning retains resources for inspection: check status and clean up deliberately to stop charges.
 
 ## Local console
 
