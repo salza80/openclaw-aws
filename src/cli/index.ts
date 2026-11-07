@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import createCommand from './commands/create.js';
@@ -25,6 +26,12 @@ import modelsCommand from './commands/models.js';
 import { providersCommand } from './commands/providers.js';
 import teamCommand from './commands/team.js';
 import uiCommand from './commands/ui.js';
+
+const packageVersion = (
+  JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as {
+    version: string;
+  }
+).version;
 
 yargs(hideBin(process.argv))
   .scriptName('openclaw-aws')
@@ -56,7 +63,7 @@ yargs(hideBin(process.argv))
   .demandCommand(1, 'You must specify a command')
   .help()
   .alias('h', 'help')
-  .version()
+  .version(packageVersion)
   .alias('v', 'version')
   .epilogue('For more information, visit: https://github.com/salza80/openclaw-aws')
   .strict()
