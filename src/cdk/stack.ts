@@ -3,6 +3,7 @@ import { Construct } from 'constructs';
 import {
   Instance,
   InstanceType,
+  HttpTokens,
   MachineImage,
   BlockDeviceVolume,
   EbsDeviceVolumeType,
@@ -185,7 +186,9 @@ export class OpenClawStack extends Stack {
       userData,
       userDataCausesReplacement: false,
       vpcSubnets: { subnetType: SubnetType.PUBLIC },
-      requireImdsv2: true,
+      // Use native metadata options. CDK's requireImdsv2 aspect creates a
+      // fixed-name launch template that collides across named deployments.
+      httpTokens: HttpTokens.REQUIRED,
       blockDevices: [
         {
           deviceName: '/dev/sda1',

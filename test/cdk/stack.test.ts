@@ -99,6 +99,25 @@ function actions(statement: { Action: string | string[] }): string[] {
 }
 
 describe('EC2 bootstrap', () => {
+  it('enforces IMDSv2 directly for two named hosts without a shared launch-template name', () => {
+    for (const [name, provider, model] of [
+      ['parallel-source', 'openrouter-api-key', 'openrouter/openai/gpt-4.1-nano'],
+      ['parallel-bedrock', 'amazon-bedrock', 'amazon-bedrock/eu.amazon.nova-micro-v1:0'],
+    ] as const) {
+      const { template, instanceId, instance } = bootstrap(
+        true,
+        't3a.small',
+        undefined,
+        provider,
+        undefined,
+        { name, model },
+      );
+      expect(instanceId).toBe('OpenClawEc242967934');
+      expect(instance.Properties.MetadataOptions).toEqual({ HttpTokens: 'required' });
+      expect(instance.Properties.LaunchTemplate).toBeUndefined();
+      template.resourceCountIs('AWS::EC2::LaunchTemplate', 0);
+    }
+  });
   it('synthesizes the real OpenRouter deployment with logging without exceeding EC2 user data', () => {
     const { script, launcher, init } = bootstrap(
       true,
@@ -281,8 +300,8 @@ describe('EC2 bootstrap', () => {
         },
       ],
     });
-    template.hasResourceProperties('AWS::EC2::LaunchTemplate', {
-      LaunchTemplateData: { MetadataOptions: { HttpTokens: 'required' } },
+    template.hasResourceProperties('AWS::EC2::Instance', {
+      MetadataOptions: { HttpTokens: 'required' },
     });
     template.resourceCountIs('AWS::EC2::NatGateway', 0);
     template.resourceCountIs('AWS::EC2::SecurityGroupIngress', 0);
