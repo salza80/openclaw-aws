@@ -57,6 +57,24 @@ const options = () => ({
   pointId: backupId,
 });
 describe('clean-client saved clone preview', () => {
+  it.each(['..', '../outside', '/outside', '..\\outside', 'archive/nested'])(
+    'rejects unsafe native archive root %j before manifest intake',
+    async (archiveRoot) => {
+      const receipt = structuredClone(backupReceipt);
+      receipt.capture.verification.archiveRoot = archiveRoot;
+      mocks.inspect.mockResolvedValue(receipt);
+      mocks.restore.mockImplementation(async ({ operation }) => {
+        await mkdir(operation.targetDirectory, { recursive: true });
+        return { ...receipt.capture.verification, targetPath: operation.targetDirectory };
+      });
+      await expect(previewSavedClone(options())).rejects.toThrow('single safe directory name');
+      expect(mocks.preview).not.toHaveBeenCalled();
+      const extraction = mocks.restore.mock.calls[0][0];
+      await expect(lstat(path.dirname(extraction.operation.targetDirectory))).rejects.toMatchObject(
+        { code: 'ENOENT' },
+      );
+    },
+  );
   it('pins archive versions and recovery key, uses only native-verified mappings and removes decrypted staging before returning', async () => {
     mocks.vault.mockResolvedValue({
       ...backupVault,

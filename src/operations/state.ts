@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { CommandContext } from '../cli/utils/context.js';
 import { getConfigRoot } from '../cli/utils/config.js';
+import { validateProjectName } from '../cli/utils/validation.js';
 import type { DeploymentStatus } from '../cli/types/index.js';
 import { OPENCLAW_NODE_VERSION, OPENCLAW_VERSION } from '../cli/constants.js';
 import { AWSError } from '../cli/utils/errors.js';
@@ -118,6 +119,7 @@ function bedrockConnection(value: unknown): ConfirmedBedrockConnection {
   };
 }
 function statePath(ctx: CommandContext): string {
+  if (validateProjectName(ctx.name) !== true) throw new AWSError('Invalid deployment name');
   return path.join(getConfigRoot(), 'deployments', `${ctx.name}.json`);
 }
 /** Remove only the exact historical identity after its AWS resources have been deleted. */

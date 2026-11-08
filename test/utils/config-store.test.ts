@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { saveConfigByName } from '../../src/cli/utils/config.js';
+import {
+  getConfigPathByName,
+  getOutputsPathByName,
+  loadConfigByName,
+  loadOutputsByName,
+  saveConfigByName,
+} from '../../src/cli/utils/config.js';
 import {
   listConfigNames,
   resolveConfig,
@@ -48,6 +54,20 @@ describe('config-store', () => {
   it('lists no configs when empty', () => {
     expect(listConfigNames()).toEqual([]);
   });
+
+  it.each(['../escape', '../../escape', '/tmp/escape', '..\\escape', '.', '', 'a'.repeat(51)])(
+    'rejects the invalid local deployment name %j at every config/output path boundary',
+    (name) => {
+      for (const operation of [
+        getConfigPathByName,
+        getOutputsPathByName,
+        loadConfigByName,
+        loadOutputsByName,
+      ])
+        expect(() => operation(name)).toThrow('Invalid deployment name');
+      expect(() => saveConfigByName(validConfig, name)).toThrow('Invalid deployment name');
+    },
+  );
 
   it('saves and lists configs by name', () => {
     saveConfigByName(validConfig, 'alpha');

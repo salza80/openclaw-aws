@@ -26,6 +26,14 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe('deployment identity and native observations', () => {
+  it('rejects traversal before reading or writing deployment metadata', () => {
+    const ctx = { ...makeCommandContext(), name: '../outside' };
+    const outside = path.join(mocks.root, 'outside.json');
+    fs.writeFileSync(outside, 'retained unrelated file');
+    expect(() => loadDeploymentState(ctx)).toThrow('Invalid deployment name');
+    expect(() => recordDeploymentState(ctx, status)).toThrow('Invalid deployment name');
+    expect(fs.readFileSync(outside, 'utf8')).toBe('retained unrelated file');
+  });
   it('lets archive compose backup under one live lease without reacquiring its own lock', async () => {
     const ctx = makeCommandContext();
     let saved: DeploymentLease | undefined;
