@@ -1,5 +1,19 @@
 # @salza80/openclaw-aws
 
+## 0.2.1
+
+### Patch Changes
+
+- 57a6e48: Resolve saved agent directories inside verified backup staging before native clone-policy inspection, including modular configuration files, so multi-agent previews do not probe the source host's paths on the client.
+- 57a6e48: Validate new Bedrock IAM reviews through their tagged change sets before AWS publishes stack tags, including safe review cancellation and host cleanup.
+- 57a6e48: Allow multiple named hosts in one AWS region by requiring IMDSv2 directly on each EC2 instance, avoiding a shared launch-template name.
+- 57a6e48: Accept OpenClaw's declared transient-file omissions in verified backups and archives while retaining full member coverage and omission-count validation.
+- 88309b0: Set the native bootstrap umask after switching to Ubuntu so sudo/PAM cannot create group-writable workspace and agent parents that block team setup.
+- 01daede: Keep local console requests open during bounded AWS/native previews that take longer than thirty seconds, so the browser receives its prepared review instead of a connection failure.
+- 57a6e48: Wait briefly for a clone's newly attached target-credential read permission without retrying setup. Retain fixed nonsecret activation failure phases and native error categories in the private host result while preserving inactive-mask verification and uncertainty handling.
+- 82360a8: Deliver installation through CloudFormation Init metadata so OpenRouter, logging and larger team setups do not exceed EC2's user-data limit. Preserve the existing authenticated fresh-install and inactive-restore readiness checks.
+- 57a6e48: Allow CLI and local-console start operations to verify and restart stopped instances while preserving immutable AWS ownership checks.
+
 ## 0.2.0
 
 ### Minor Changes
