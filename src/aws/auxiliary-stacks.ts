@@ -8,9 +8,11 @@ import {
   CreateStackCommand,
   DeleteStackCommand,
   DescribeStacksCommand,
+  DescribeChangeSetCommand,
   GetTemplateCommand,
   ListChangeSetsCommand,
   type Stack,
+  type DescribeChangeSetOutput,
 } from '@aws-sdk/client-cloudformation';
 import type { RecoveryAccessProps } from '../cdk/vault.js';
 import { awsClientConfig, type AwsTarget } from './target.js';
@@ -39,16 +41,25 @@ const tags = (plan: { kind: AuxiliaryKind; identity: string }) => [
   { Key: 'openclaw-aws:identity', Value: plan.identity },
 ];
 type AuxiliaryKind = RecoveryStackPlan['kind'] | 'bedrock-access';
-export function assertRecoveryStack(
+type AuxiliaryIdentity = { kind: AuxiliaryKind; identity: string; stackName: string };
+export function assertRecoveryStackIdentity(
   stack: Stack,
   target: AwsTarget,
-  plan: { kind: AuxiliaryKind; identity: string; stackName: string },
+  plan: AuxiliaryIdentity,
 ) {
   if (
     !stack.StackId?.startsWith(
       `arn:${target.arn.split(':')[1]}:cloudformation:${target.region}:${target.account}:stack/${plan.stackName}/`,
     ) ||
-    stack.StackName !== plan.stackName ||
+    stack.StackName !== plan.stackName
+  )
+    throw new Error(
+      'Existing recovery stack does not match the selected AWS identity and ownership',
+    );
+}
+export function assertRecoveryStack(stack: Stack, target: AwsTarget, plan: AuxiliaryIdentity) {
+  assertRecoveryStackIdentity(stack, target, plan);
+  if (
     !tags(plan).every((expected) =>
       stack.Tags?.some((tag) => tag.Key === expected.Key && tag.Value === expected.Value),
     )
@@ -56,6 +67,33 @@ export function assertRecoveryStack(
     throw new Error(
       'Existing recovery stack does not match the selected AWS identity and ownership',
     );
+}
+/** CREATE reviews have no stack tags until execution; bind their exact prepared change set. */
+export function assertRecoveryReview(
+  stack: Stack,
+  target: AwsTarget,
+  plan: AuxiliaryIdentity,
+  review: DescribeChangeSetOutput,
+) {
+  assertRecoveryStackIdentity(stack, target, plan);
+  if (
+    stack.StackStatus !== 'REVIEW_IN_PROGRESS' ||
+    review.StackId !== stack.StackId ||
+    review.StackName !== stack.StackName ||
+    !review.ChangeSetId?.startsWith(
+      `arn:${target.arn.split(':')[1]}:cloudformation:${target.region}:${target.account}:changeSet/`,
+    ) ||
+    review.Status !== 'CREATE_COMPLETE' ||
+    review.ExecutionStatus !== 'AVAILABLE' ||
+    review.NextToken ||
+    !tags(plan).every(
+      (expected) =>
+        review.Tags?.filter((tag) => tag.Key === expected.Key).length === 1 &&
+        review.Tags?.some((tag) => tag.Key === expected.Key && tag.Value === expected.Value),
+    )
+  )
+    throw new Error('Prepared recovery review ownership differs or it is unavailable');
+  if (stack.Tags?.length) assertRecoveryStack(stack, target, plan);
 }
 const missing = (error: unknown) =>
   error instanceof Error &&
@@ -195,7 +233,9 @@ export async function removeOwnedRolePolicyStack(
   try {
     const stack = await describe(client, plan.stackName, signal);
     if (!stack) return;
-    assertRecoveryStack(stack, target, plan);
+    const reviewOnly = stack.StackStatus === 'REVIEW_IN_PROGRESS';
+    if (reviewOnly) assertRecoveryStackIdentity(stack, target, plan);
+    else assertRecoveryStack(stack, target, plan);
     const reviews: (string | undefined)[] = [];
     if (stack.StackStatus === 'REVIEW_IN_PROGRESS') {
       if (plan.kind !== 'bedrock-access')
@@ -223,6 +263,16 @@ export async function removeOwnedRolePolicyStack(
             throw new Error(
               'Bedrock review may be executing or has unexpected ownership; source resources were preserved',
             );
+          const prepared = await client.send(
+            new DescribeChangeSetCommand({
+              StackName: stack.StackId,
+              ChangeSetName: review.ChangeSetId,
+            }),
+            { abortSignal: signal },
+          );
+          if (prepared.ChangeSetId !== review.ChangeSetId)
+            throw new Error('Bedrock review identity changed; source resources were preserved');
+          assertRecoveryReview(stack, target, plan, prepared);
           reviews.push(review.ChangeSetId);
         }
         next = listed.NextToken;
@@ -285,7 +335,8 @@ export async function removeOwnedRolePolicyStack(
     while (true) {
       const current = await describe(client, stack.StackId!, signal);
       if (!current) return;
-      assertRecoveryStack(current, target, plan);
+      if (reviewOnly && !current.Tags?.length) assertRecoveryStackIdentity(current, target, plan);
+      else assertRecoveryStack(current, target, plan);
       if (current.StackId !== stack.StackId)
         throw new Error('Recovery access stack identity changed during removal');
       if (current.StackStatus === 'DELETE_COMPLETE') return;

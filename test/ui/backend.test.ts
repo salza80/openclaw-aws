@@ -134,34 +134,40 @@ describe('UI application adapter', () => {
       }),
     );
   });
-  it('uses the shared immutable power plan and never serializes the private context', async () => {
-    const plan = {
-      action: 'stop',
-      before: 'running',
-      target: {
-        ...modelJob.target,
-        deploymentName: 'alpha',
-        account: target.account,
-        region: target.region,
-      },
-    };
-    mocks.powerPreview.mockResolvedValue(plan);
-    mocks.powerApply.mockResolvedValue({
-      state: 'stopped',
-      ssmReady: null,
-      checkedAt: '2026-11-07T00:00:00Z',
-    });
-    const operation = await createUiBackend().prepare({ action: 'stop', name: 'alpha' }, id);
-    expect(parseUiPlanView(operation.view).target.name).toBe('alpha');
-    expect(JSON.stringify(operation.view)).not.toContain('PRIVATE-AWS');
-    expect(mocks.powerApply).not.toHaveBeenCalled();
-    await operation.apply(() => {});
-    expect(mocks.powerApply).toHaveBeenCalledWith(
-      ctx,
-      plan,
-      expect.objectContaining({ progress: expect.any(Function) }),
-    );
-  });
+  it.each(['start', 'stop'] as const)(
+    'uses the shared %s power plan without a running-only precheck or private context leak',
+    async (action) => {
+      const plan = {
+        action,
+        before: action === 'start' ? 'stopped' : 'running',
+        target: {
+          ...modelJob.target,
+          deploymentName: 'alpha',
+          account: target.account,
+          region: target.region,
+        },
+      };
+      mocks.source.mockRejectedValue(new Error('Native controls require a running host'));
+      mocks.powerPreview.mockResolvedValue(plan);
+      mocks.powerApply.mockResolvedValue({
+        state: 'stopped',
+        ssmReady: null,
+        checkedAt: '2026-11-07T00:00:00Z',
+      });
+      const operation = await createUiBackend().prepare({ action, name: 'alpha' }, id);
+      expect(mocks.source).not.toHaveBeenCalled();
+      expect(mocks.powerPreview).toHaveBeenCalledWith(ctx, action);
+      expect(parseUiPlanView(operation.view).target.name).toBe('alpha');
+      expect(JSON.stringify(operation.view)).not.toContain('PRIVATE-AWS');
+      expect(mocks.powerApply).not.toHaveBeenCalled();
+      await operation.apply(() => {});
+      expect(mocks.powerApply).toHaveBeenCalledWith(
+        ctx,
+        plan,
+        expect.objectContaining({ progress: expect.any(Function) }),
+      );
+    },
+  );
   it('binds a backup to the preview source before capture', async () => {
     const operation = await createUiBackend().prepare(
       { action: 'backup', name: 'alpha', vault: 's3://fixture-vault/backups' },

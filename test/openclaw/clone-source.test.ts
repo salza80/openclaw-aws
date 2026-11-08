@@ -45,6 +45,7 @@ afterEach(async () => {
 });
 const input = () => ({
   configurationPath: '/home/ubuntu/.openclaw/openclaw.json',
+  members,
   stagingDirectory: staging,
   moves: [{ source: state, destination: '/home/ubuntu/.openclaw' }],
   viewDirectory: view,
@@ -52,6 +53,54 @@ const input = () => ({
 });
 
 describe('isolated archived clone configuration', () => {
+  it('inspects a multi-agent archive without probing original host directories', async () => {
+    const roster = [
+      members[0],
+      {
+        ...members[0],
+        id: 'researcher',
+        agentDir: '/home/ubuntu/.openclaw/agents/researcher/agent',
+      },
+    ];
+    await mkdir(path.join(state, 'agents/main/agent'), { recursive: true });
+    await mkdir(path.join(state, 'agents/researcher/agent'), { recursive: true });
+    await writeFile(
+      path.join(state, 'openclaw.json'),
+      JSON.stringify({ agents: { $include: './roles.json5' } }),
+    );
+    const source = JSON.stringify({
+      ownership: 'explicit',
+      entries: Object.fromEntries(
+        roster.map((member) => [
+          member.id,
+          { agentDir: member.agentDir, model: 'openrouter/auto' },
+        ]),
+      ),
+    });
+    await writeFile(path.join(state, 'roles.json5'), source);
+    const policy = await readCloneSourcePolicy({
+      ...input(),
+      members: roster,
+      nativePackageJson,
+      signal: AbortSignal.timeout(6000),
+    });
+    expect(policy.agents.map((agent) => agent.id).sort()).toEqual(['main', 'researcher']);
+    expect(JSON.stringify(policy)).not.toContain(staging);
+    expect(await readFile(path.join(state, 'roles.json5'), 'utf8')).toBe(source);
+  }, 15000);
+  it('refuses member paths that disagree with capture or link outside the archive', async () => {
+    const config = { agents: { entries: { main: { agentDir: members[0].agentDir } } } };
+    await writeFile(path.join(state, 'openclaw.json'), JSON.stringify(config));
+    await mkdir(path.join(state, 'agents/main'), { recursive: true });
+    await symlink(root, path.join(state, 'agents/main/agent'));
+    await expect(prepareCloneConfigView(input())).rejects.toThrow('outside the verified backup');
+    await rm(path.join(state, 'agents/main/agent'));
+    config.agents.entries.main.agentDir = '/home/ubuntu/another-agent';
+    await writeFile(path.join(state, 'openclaw.json'), JSON.stringify(config));
+    await expect(prepareCloneConfigView(input())).rejects.toThrow(
+      'differs from its verified backup',
+    );
+  });
   it('ships a read-only bundled preview with no physical staging paths or source/operator credentials in the result', async () => {
     const original = JSON.stringify({
       agents: { ownership: 'explicit', entries: { main: { model: 'openrouter/auto' } } },

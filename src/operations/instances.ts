@@ -44,7 +44,7 @@ export async function prepareInstancePower(
   action: 'start' | 'stop',
 ): Promise<InstancePowerPlan> {
   return withDeploymentLock(ctx, async () => {
-    const source = await inspectRecoverySource(ctx);
+    const source = await inspectRecoverySource(ctx, { allowStopped: true });
     const before = await getInstanceState(source.instanceId, ctx.target);
     if (before !== 'running' && before !== 'stopped')
       throw new Error(
@@ -81,7 +81,7 @@ export async function applyInstancePower(
   )
     throw new Error('Power approval belongs to another deployment/account/region');
   return withDeploymentLock(ctx, async () => {
-    const source = await inspectRecoverySource(ctx);
+    const source = await inspectRecoverySource(ctx, { allowStopped: true });
     if (
       source.stackId !== target.stackId ||
       source.instanceId !== target.instanceId ||

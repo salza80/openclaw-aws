@@ -68,6 +68,7 @@ export async function archivedClonePath(options: {
  */
 export async function prepareCloneConfigView(options: {
   configurationPath: string;
+  members: BackupMember[];
   moves: RestoreAssetMove[];
   stagingDirectory: string;
   viewDirectory: string;
@@ -77,11 +78,12 @@ export async function prepareCloneConfigView(options: {
   const active = new Set<string>();
   let files = 0;
   let totalBytes = 0;
-  const visit = async (original: string, depth: number): Promise<string> => {
+  const visit = async (original: string, depth: number, location: string[]): Promise<string> => {
     if (depth > 16) throw new Error('Clone configuration include depth exceeds its limit');
     const resolved = await archivedClonePath({ ...options, original });
     if (active.has(resolved.original)) throw new Error('Clone configuration has cyclic includes');
-    const existing = completed.get(resolved.original);
+    const cacheKey = JSON.stringify([resolved.original, location]);
+    const existing = completed.get(cacheKey);
     if (existing) return existing;
     if (++files > 64) throw new Error('Clone configuration include count exceeds its limit');
     const destination = path.join(options.viewDirectory, `config-${files}.json`);
@@ -110,17 +112,43 @@ export async function prepareCloneConfigView(options: {
     } finally {
       await file.close();
     }
-    const rewrite = async (node: unknown, nested = 0): Promise<unknown> => {
+    const rewrite = async (node: unknown, nested = 0, position = location): Promise<unknown> => {
       if (nested > 100) throw new Error('Clone configuration nesting exceeds its limit');
       if (Array.isArray(node)) {
         const result: unknown[] = [];
-        for (const item of node) result.push(await rewrite(item, nested + 1));
+        for (const [index, item] of node.entries())
+          result.push(await rewrite(item, nested + 1, [...position, String(index)]));
         return result;
       }
       if (!node || typeof node !== 'object') return node;
       const result: Record<string, unknown> = Object.create(null);
       for (const [key, field] of Object.entries(node)) {
-        if (key !== '$include') result[key] = await rewrite(field, nested + 1);
+        // Native multi-agent validation canonicalizes agent directories through
+        // the local filesystem. Bind those probes to verified archived members.
+        const memberField =
+          position.length === 3 &&
+          position[0] === 'agents' &&
+          position[1] === 'entries' &&
+          (key === 'agentDir' || key === 'workspace');
+        const defaultWorkspace =
+          position.length === 2 &&
+          position[0] === 'agents' &&
+          position[1] === 'defaults' &&
+          key === 'workspace';
+        if (memberField || defaultWorkspace) {
+          const member = options.members.find(
+            (item) => item.id === (defaultWorkspace ? 'main' : position[2]),
+          );
+          const expected = member?.[key as 'agentDir' | 'workspace'];
+          if (!expected || field !== expected)
+            throw new Error('Clone source member path differs from its verified backup');
+          const archived = await archivedClonePath({ ...options, original: expected });
+          const info = await lstat(archived.source);
+          if (!info.isDirectory() || info.isSymbolicLink())
+            throw new Error('Clone source member path is not an archived directory');
+          result[key] = archived.source;
+        } else if (key !== '$include')
+          result[key] = await rewrite(field, nested + 1, [...position, key]);
         else {
           const includes = Array.isArray(field) ? field : [field];
           if (
@@ -138,6 +166,7 @@ export async function prepareCloneConfigView(options: {
               await visit(
                 path.posix.resolve(path.posix.dirname(resolved.original), include),
                 depth + 1,
+                position,
               ),
             );
           result[key] = Array.isArray(field) ? rewritten : rewritten[0];
@@ -147,10 +176,10 @@ export async function prepareCloneConfigView(options: {
     };
     await writeFile(destination, JSON.stringify(await rewrite(value)), { flag: 'wx', mode: 0o600 });
     active.delete(resolved.original);
-    completed.set(resolved.original, destination);
+    completed.set(cacheKey, destination);
     return destination;
   };
-  return visit(options.configurationPath, 0);
+  return visit(options.configurationPath, 0, []);
 }
 
 /** Inspect only verified staged source configuration in an isolated native reader.

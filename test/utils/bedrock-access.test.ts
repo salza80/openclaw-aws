@@ -91,6 +91,7 @@ function changes() {
     StackName: stackName,
     Status: 'CREATE_COMPLETE',
     ExecutionStatus: executed ? 'EXECUTE_COMPLETE' : 'AVAILABLE',
+    Tags: tags,
     Changes: [
       {
         ResourceChange: {
@@ -126,7 +127,7 @@ beforeEach(() => {
               : exists
                 ? 'CREATE_COMPLETE'
                 : 'REVIEW_IN_PROGRESS',
-            Tags: tags,
+            Tags: exists || executed ? tags : [],
           },
         ],
       };
@@ -188,6 +189,39 @@ async function existingPreview() {
   return created;
 }
 describe('Bedrock policy-only preview and execution', () => {
+  it.each(['missing', 'foreign', 'duplicate'])(
+    'refuses an untagged review stack with %s change-set ownership before apply or cancel',
+    async (kind) => {
+      const preview = await previewBedrockAccess(ctx, selection, { pollMs: 0 });
+      const original = mocks.cfn.getMockImplementation()!;
+      mocks.cfn.mockImplementation(async (command) => {
+        const result = await original(command);
+        if (command instanceof DescribeChangeSetCommand)
+          return {
+            ...result,
+            Tags:
+              kind === 'missing'
+                ? []
+                : kind === 'foreign'
+                  ? tags.map((tag) => ({ ...tag, Value: 'another-owner' }))
+                  : [...tags, tags[0]],
+          };
+        return result;
+      });
+      await expect(applyBedrockAccess(ctx, selection, preview)).rejects.toThrow(
+        /ownership|unavailable/,
+      );
+      await expect(discardBedrockAccessPreview(ctx, preview)).rejects.toThrow(
+        /ownership|unavailable/,
+      );
+      expect(
+        mocks.cfn.mock.calls.some(
+          ([command]) =>
+            command instanceof ExecuteChangeSetCommand || command instanceof DeleteStackCommand,
+        ),
+      ).toBe(false);
+    },
+  );
   it('discovers the exact applied host route union after local state loss without AWS writes', async () => {
     expect(await inspectBedrockAccess(ctx)).toBeUndefined();
     const preview = await previewBedrockAccess(ctx, selection, { pollMs: 0 });

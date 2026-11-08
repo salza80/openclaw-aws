@@ -116,6 +116,53 @@ beforeEach(() => {
   });
 });
 describe('source recovery ownership', () => {
+  it('permits a verified stopped host only when explicitly inspecting for power control', async () => {
+    mocks.ec2.mockResolvedValueOnce({
+      Reservations: [
+        { OwnerId: target.account, Instances: [{ ...host, State: { Name: 'stopped' } }] },
+      ],
+    });
+    await expect(inspectRecoverySource(ctx, { allowStopped: true })).resolves.toMatchObject({
+      stackId,
+      instanceId: host.InstanceId,
+      role: { id: role.RoleId },
+      instance: { minimumDiskGiB: 30 },
+    });
+  });
+  it('still requires a running host for ordinary recovery inspection', async () => {
+    mocks.ec2.mockResolvedValueOnce({
+      Reservations: [
+        { OwnerId: target.account, Instances: [{ ...host, State: { Name: 'stopped' } }] },
+      ],
+    });
+    await expect(inspectRecoverySource(ctx)).rejects.toThrow('running');
+    expect(mocks.iam).not.toHaveBeenCalled();
+  });
+  it.each(['pending', 'stopping', 'shutting-down', 'terminated', undefined])(
+    'rejects unstable or unavailable hosts (%s) even for power control',
+    async (state) => {
+      mocks.ec2.mockResolvedValueOnce({
+        Reservations: [
+          { OwnerId: target.account, Instances: [{ ...host, State: { Name: state } }] },
+        ],
+      });
+      await expect(inspectRecoverySource(ctx, { allowStopped: true })).rejects.toThrow(
+        'identified host',
+      );
+      expect(mocks.iam).not.toHaveBeenCalled();
+    },
+  );
+  it('retains immutable profile identity checks for a stopped power target', async () => {
+    mocks.ec2.mockResolvedValueOnce({
+      Reservations: [
+        { OwnerId: target.account, Instances: [{ ...host, State: { Name: 'stopped' } }] },
+      ],
+    });
+    mocks.iam.mockResolvedValueOnce({
+      InstanceProfile: { ...profile, InstanceProfileId: 'replaced' },
+    });
+    await expect(inspectRecoverySource(ctx, { allowStopped: true })).rejects.toThrow('profile');
+  });
   it('binds the stack, single host, owned profile and stable role identity before permission planning', async () => {
     expect(await inspectRecoverySource(ctx)).toMatchObject({
       stackId,

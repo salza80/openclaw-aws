@@ -227,6 +227,12 @@ export function parseCapture(value: unknown): NativeCaptureSummary {
     throw new Error(
       'Native capture reported warnings requiring private inspection before full recovery certification',
     );
+  const skippedVolatileCount = count(row.skippedVolatileCount);
+  const skipped = list(row.skipped);
+  if (
+    skipped.filter((entry) => object(entry).reason === 'volatile').length !== skippedVolatileCount
+  )
+    throw new Error('Native volatile omission inventory does not match its declared count');
   return {
     createdAt: textField(row.createdAt, 64),
     assets: list(row.assets).map((entry) => {
@@ -237,10 +243,14 @@ export function parseCapture(value: unknown): NativeCaptureSummary {
       const root = object(entry);
       return { agentId: textField(root.agentId, 128), sourcePath: textField(root.sourcePath) };
     }),
-    skipped: list(row.skipped).map((entry) => {
+    skipped: skipped.map((entry) => {
       const item = object(entry);
-      if (!['covered', 'missing', 'regenerable', 'private'].includes(String(item.reason)))
+      if (
+        !['covered', 'missing', 'regenerable', 'private', 'volatile'].includes(String(item.reason))
+      )
         throw new Error('Native backup reported an unsupported omission');
+      if (item.reason === 'volatile' && item.kind !== 'entry')
+        throw new Error('Native volatile omission must identify a transient entry');
       return {
         kind: textField(item.kind, 64),
         sourcePath: textField(item.sourcePath),
@@ -248,7 +258,7 @@ export function parseCapture(value: unknown): NativeCaptureSummary {
         ...(typeof item.coveredBy === 'string' ? { coveredBy: textField(item.coveredBy) } : {}),
       };
     }),
-    skippedVolatileCount: count(row.skippedVolatileCount),
+    skippedVolatileCount,
     warnings: [],
     location: {
       key,
@@ -308,10 +318,14 @@ export function assertMemberCoverage(capture: NativeCaptureSummary, members: Bac
       !agent ||
       capture.skipped.some(
         (entry) =>
-          entry.reason === 'private' &&
-          [member.agentDir, member.workspace].some((root) =>
-            inside(path.resolve(root), path.resolve(entry.sourcePath)),
-          ),
+          (entry.reason === 'private' &&
+            [member.agentDir, member.workspace].some((root) =>
+              inside(path.resolve(root), path.resolve(entry.sourcePath)),
+            )) ||
+          (entry.reason === 'volatile' &&
+            [member.agentDir, member.workspace].some((root) =>
+              inside(path.resolve(entry.sourcePath), path.resolve(root)),
+            )),
       ) ||
       !capture.assets.some((asset) =>
         inside(path.resolve(asset.sourcePath), path.resolve(member.agentDir)),

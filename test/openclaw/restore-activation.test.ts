@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { activateRestoredService } from '../../src/openclaw/restore-activation.js';
+import { RecoveryActivationFailure } from '../../src/openclaw/recovery-service.js';
 function fixture() {
   return {
     validate: vi.fn(async () => {}),
@@ -39,7 +40,14 @@ describe('deliberate restored Gateway activation', () => {
           .mockResolvedValueOnce(undefined)
           .mockRejectedValueOnce(new Error('hold changed'));
       else host[phase].mockRejectedValueOnce(new Error('private failure'));
-      await expect(activateRestoredService(host)).rejects.toThrow('masked and inactive');
+      const error = await activateRestoredService(host).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(RecoveryActivationFailure);
+      expect(error).toMatchObject({
+        phase:
+          phase === 'unmaskAndInstall' ? 'install' : phase === 'validate' ? 'revalidate' : phase,
+        inactiveVerified: true,
+      });
+      expect(JSON.stringify(error)).not.toContain('private failure');
       expect(host.maskInactive).toHaveBeenCalledOnce();
     }
   });
@@ -47,6 +55,9 @@ describe('deliberate restored Gateway activation', () => {
     const host = fixture();
     host.health.mockRejectedValueOnce(new Error('not ready'));
     host.maskInactive.mockRejectedValueOnce(new Error('service manager unavailable'));
-    await expect(activateRestoredService(host)).rejects.toThrow('could not be confirmed');
+    await expect(activateRestoredService(host)).rejects.toMatchObject({
+      phase: 'health',
+      inactiveVerified: false,
+    });
   });
 });
