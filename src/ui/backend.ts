@@ -375,8 +375,6 @@ export function createUiBackend(): UiBackend {
         return prepareUiCreate(request, view);
       }
       const ctx = await buildCommandContext({ name: request.name });
-      const source = await inspectRecoverySource(ctx);
-      view.target = sourceTarget(ctx, source);
       if (request.action === 'start' || request.action === 'stop') {
         const plan = await prepareInstancePower(ctx, request.action);
         view.target = {
@@ -403,6 +401,8 @@ export function createUiBackend(): UiBackend {
           };
         });
       }
+      const source = await inspectRecoverySource(ctx);
+      view.target = sourceTarget(ctx, source);
       if (request.action === 'backup') {
         view.facts = [fact('Independent vault', request.vault), fact('Operation', id)];
         view.effects = [

@@ -22,7 +22,7 @@ openclaw-aws clone --from <backup-uuid> \
   --name research-copy --provider openrouter --key-env COPY_OPENROUTER_KEY --yes
 ```
 
-Creation repeats preview and displays its concrete EC2/disk/account/region plan. It binds selected content/policy digests to the host request and checks them again before fresh initialization. One new host/Gateway contains the complete supported roster; this command does not export one agent into an existing team. `--instance-type` and `--volume-gib` can increase capacity. Sizing reserves extracted source data, the archive and the selected second copy. Compute and disk remain billable while staged.
+Creation repeats preview and displays its concrete EC2/disk/account/region plan. It binds selected content/policy digests to the host request and checks them again before fresh initialization. One new host/Gateway contains the complete supported roster; this command does not export one agent into an existing team. `--instance-type` and `--volume-gib` can increase capacity. Sizing reserves extracted source data, the archive and the selected second copy. Compute and disk remain billable while staged. A newly attached role policy can take time to permit the target credential ownership read. The worker waits up to two minutes for that read alone; mismatched ownership still fails immediately, and onboarding is never replayed by this wait.
 
 ## Explicit model credentials
 

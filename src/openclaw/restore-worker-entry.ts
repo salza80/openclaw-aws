@@ -10,6 +10,7 @@ import { parseClonePreviewRequest, previewCloneStaging } from './clone-preview.j
 import { parseCloneJob } from './clone-contract.js';
 import { runCloneWorker } from './clone-worker.js';
 import { runCloneActivation } from './clone-activation.js';
+import { RecoveryActivationFailure } from './recovery-service.js';
 
 async function main() {
   const [mode, inputFile, resultFile] = process.argv.slice(2);
@@ -132,12 +133,21 @@ async function main() {
         )
       : await run(job, signal);
     await writeFile(resultFile, JSON.stringify({ ok: true, ...result }), { mode: 0o600 });
-  } catch {
+  } catch (error) {
     await writeFile(
       resultFile,
       JSON.stringify({
         ok: false,
         operationId: job.bootstrap.operationId,
+        ...(error instanceof RecoveryActivationFailure
+          ? {
+              activationFailure: {
+                phase: error.phase,
+                inactiveVerified: error.inactiveVerified,
+                ...(error.nativeCategory ? { nativeCategory: error.nativeCategory } : {}),
+              },
+            }
+          : {}),
         message:
           mode === '--activate' || mode === '--activate-clone'
             ? 'Recovery activation failed; Gateway inactivity is unconfirmed. Inspect the target immediately and retain its owned maintenance records and resources.'

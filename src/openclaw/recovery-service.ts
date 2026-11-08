@@ -20,16 +20,63 @@ export interface RecoveryActivationHost {
   commit?(): Promise<void>;
 }
 
+type ActivationPhase = 'install' | 'start' | 'health' | 'revalidate' | 'commit';
+type NativeFailureCategory =
+  'service-definition' | 'runtime-pin' | 'configuration' | 'service-manager' | 'unclassified';
+
+class NativeRecoveryCommandFailure extends Error {
+  constructor(readonly category: NativeFailureCategory) {
+    super('Native activation command failed; private output was not published');
+  }
+}
+
+/** Only fixed, nonsecret facts may be included in the terminal host receipt. */
+export class RecoveryActivationFailure extends Error {
+  constructor(
+    readonly phase: ActivationPhase,
+    readonly inactiveVerified: boolean,
+    readonly nativeCategory?: NativeFailureCategory,
+  ) {
+    super(
+      inactiveVerified
+        ? 'Recovery Gateway activation failed; the service is masked and inactive, and recovery data is retained'
+        : 'Recovery Gateway activation failed and its inactive hold could not be confirmed; inspect the retained target immediately',
+    );
+  }
+}
+
+function nativeFailureCategory(error: unknown): NativeFailureCategory {
+  // Execa context/output can contain credentials. Classify in memory against
+  // known diagnostics; never save messages, commands, environments or causes.
+  const result = error as { stdout?: unknown; stderr?: unknown } | null;
+  const text = [result?.stdout, result?.stderr]
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n');
+  if (/SERVICE_DEFINITION_(UNKNOWN|SEALED)|SERVICE_OWNERSHIP_REFUSED/.test(text))
+    return 'service-definition';
+  if (/runtime pin (?:inspection failed|changed|is invalid|differs)/i.test(text))
+    return 'runtime-pin';
+  if (/config(?:uration)? (?:is )?invalid|invalid config/i.test(text)) return 'configuration';
+  if (/systemd user (?:session )?bus|systemd-user-bus-unavailable/i.test(text))
+    return 'service-manager';
+  return 'unclassified';
+}
+
 /** Only an explicitly requested activation enters this state transition. */
 export async function activateRecoveryService(host: RecoveryActivationHost) {
   await host.validate();
+  let phase: ActivationPhase = 'install';
   try {
     await host.unmaskAndInstall();
+    phase = 'start';
     await host.start();
+    phase = 'health';
     await host.health();
+    phase = 'revalidate';
     await host.validate();
+    phase = 'commit';
     await host.commit?.();
-  } catch {
+  } catch (error) {
     let inactive = false;
     try {
       await host.maskInactive();
@@ -37,10 +84,10 @@ export async function activateRecoveryService(host: RecoveryActivationHost) {
     } catch {
       /* Report uncertainty below. */
     }
-    throw new Error(
-      inactive
-        ? 'Recovery Gateway activation failed; the service is masked and inactive, and recovery data is retained'
-        : 'Recovery Gateway activation failed and its inactive hold could not be confirmed; inspect the retained target immediately',
+    throw new RecoveryActivationFailure(
+      phase,
+      inactive,
+      error instanceof NativeRecoveryCommandFailure ? error.category : undefined,
     );
   }
 }
@@ -81,8 +128,8 @@ export function createRecoveryServiceHost(options: {
         [path.join(path.dirname(packageJson), 'openclaw.mjs'), ...args],
         { env: childEnv, extendEnv: false, timeout, cancelSignal: signal, maxBuffer: 1024 * 1024 },
       );
-    } catch {
-      throw new Error('Native activation command failed; private output was not published');
+    } catch (error) {
+      throw new NativeRecoveryCommandFailure(nativeFailureCategory(error));
     }
   };
   const systemctl = (args: string[]) =>

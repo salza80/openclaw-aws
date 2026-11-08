@@ -69,7 +69,11 @@ export async function sourceResources(
     client.destroy();
   }
 }
-export async function inspectRecoverySource(ctx: CommandContext): Promise<RecoverySource> {
+/** Power control may inspect a stopped host; native operations require a running one. */
+export async function inspectRecoverySource(
+  ctx: CommandContext,
+  options: { allowStopped?: boolean } = {},
+): Promise<RecoverySource> {
   const status = await getStackStatus(ctx.config.stack.name, ctx.target);
   assertDeploymentTarget(ctx, status);
   if (
@@ -111,7 +115,8 @@ export async function inspectRecoverySource(ctx: CommandContext): Promise<Recove
       reservations[0].OwnerId !== ctx.target.account ||
       reservations[0].Instances?.length !== 1 ||
       host?.InstanceId !== instanceId ||
-      host.State?.Name !== 'running' ||
+      (host.State?.Name !== 'running' &&
+        (!options.allowStopped || host.State?.Name !== 'stopped')) ||
       !host.IamInstanceProfile?.Arn ||
       !host.InstanceType ||
       !host.ImageId ||
@@ -120,7 +125,7 @@ export async function inspectRecoverySource(ctx: CommandContext): Promise<Recove
       !host.Architecture
     )
       throw new Error(
-        'Source instance is not a running, fully identified host in the selected account',
+        `Source instance is not a ${options.allowStopped ? 'running or stopped' : 'running'}, fully identified host in the selected account`,
       );
     const profileArn = host.IamInstanceProfile.Arn;
     if (

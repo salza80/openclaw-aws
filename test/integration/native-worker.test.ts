@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
 import {
   copyFile,
   mkdtemp,
@@ -19,19 +21,28 @@ import { installRestoreLayout, planRestoreLayout } from '../../src/openclaw/rest
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 describe('actual native host capture adapter', () => {
-  it.each(['backup', 'archive'])(
+  it.each(['backup', 'archive', 'active-backup'])(
     '%s preserves native settings, uses role storage and restores the whole native installation',
     async (mode) => {
       const directory = await realpath(
         await mkdtemp(path.join(tmpdir(), 'openclaw-worker-native-')),
       );
       const server = await localS3();
+      const reservation = createServer();
+      reservation.listen(0, '127.0.0.1');
+      await once(reservation, 'listening');
+      const address = reservation.address();
+      if (!address || typeof address === 'string') throw Error('No fixture Gateway port');
+      const port = address.port;
+      await new Promise<void>((resolve) => reservation.close(() => resolve()));
       const state = path.join(directory, '.openclaw');
       const workspace = path.join(directory, 'workspace');
       const researchWorkspace = path.join(directory, 'research-workspace');
       const researchAgent = path.join(directory, 'research-agent');
       const configPath = path.join(state, 'openclaw.json');
       await mkdir(state);
+      await mkdir(path.join(state, 'logs'));
+      await writeFile(path.join(state, 'logs/config-audit.jsonl'), '{"event":"synthetic"}\n');
       await mkdir(workspace);
       await mkdir(researchWorkspace);
       await mkdir(researchAgent);
@@ -48,6 +59,7 @@ describe('actual native host capture adapter', () => {
           ownership: 'explicit',
           defaults: {
             model: { primary: 'openrouter/fixture-model' },
+            heartbeat: { every: '0m' },
             subagents: { maxConcurrent: 3, maxSpawnDepth: 2 },
           },
           entries: {
@@ -78,6 +90,34 @@ describe('actual native host capture adapter', () => {
             },
           },
         },
+        cron: { enabled: false, triggers: { enabled: false } },
+        hooks: { enabled: false, internal: { enabled: false } },
+        ...(mode === 'active-backup'
+          ? {
+              gateway: {
+                mode: 'local',
+                bind: 'loopback',
+                port,
+                auth: { mode: 'token', token: 'a'.repeat(48) },
+              },
+              models: {
+                mode: 'replace',
+                providers: {
+                  openrouter: {
+                    baseUrl: `${server.endpoint}/v1`,
+                    api: 'openai-completions',
+                    apiKey: 'fixture-provider',
+                    models: ['fixture-model', 'research-model'].map((id) => ({
+                      id,
+                      name: id,
+                      contextWindow: 32000,
+                      maxTokens: 100,
+                    })),
+                  },
+                },
+              },
+            }
+          : {}),
       };
       await writeFile(configPath, JSON.stringify(original), { mode: 0o600 });
       const job = {
@@ -119,8 +159,19 @@ describe('actual native host capture adapter', () => {
       await publishTeamMembership(${JSON.stringify(directory)},{...job.source,deploymentName:'fixture'},{id:job.operationId,coordinator:'lead',roles:[{logicalId:'lead',nativeId:'main',role:'Coordinator'},{logicalId:'researcher',nativeId:'researcher',role:'Researcher'}]});
       const sessions=await import(${JSON.stringify(path.join(root, 'node_modules/openclaw/dist/plugin-sdk/session-store-runtime.js'))});
       const storePath=${JSON.stringify(path.join(state, 'agents/main/agent/openclaw-agent.sqlite'))};
-      await sessions.upsertSessionEntry({agentId:'main',storePath,sessionKey:'agent:main:recovered-history',entry:{sessionId:'22222222-2222-2222-2222-222222222222',updatedAt:Date.now(),status:'interrupted',abortedLastRun:true}});
-      const host=await nativeBackupHost(job,{nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},gateway:{inspect:async()=> 'inactive',stop:async()=>{throw Error('Inactive Gateway must not be stopped')},start:async()=>{throw Error('Inactive Gateway must not be started')}}});
+      await sessions.upsertSessionEntry({agentId:'main',storePath,sessionKey:'agent:main:recovered-history',entry:{sessionId:'22222222-2222-2222-2222-222222222222',updatedAt:Date.now(),...(${JSON.stringify(mode)}==='active-backup'?{status:'idle',abortedLastRun:false}: {status:'interrupted',abortedLastRun:true})}});
+      let gatewayProcess;
+      const stopGateway=async()=>{const current=gatewayProcess;gatewayProcess=undefined;if(current){current.kill('SIGTERM');await current}};
+      process.once('SIGTERM',async()=>{await stopGateway();process.exit(143)});
+      process.once('SIGINT',async()=>{await stopGateway();process.exit(130)});
+      const startGateway=async()=>{
+        const {execa}=await import(${JSON.stringify(path.join(root, 'node_modules/execa/index.js'))});
+        gatewayProcess=execa(process.execPath,[${JSON.stringify(path.join(root, 'node_modules/openclaw/openclaw.mjs'))},'gateway','run'],{env:process.env,extendEnv:false,reject:false,forceKillAfterDelay:5000,maxBuffer:4*1024*1024});
+        const end=Date.now()+60000;while(Date.now()<end&&gatewayProcess.exitCode==null){try{if((await fetch('http://127.0.0.1:'+process.env.OPENCLAW_GATEWAY_PORT+'/healthz',{signal:AbortSignal.timeout(1000)})).ok)return}catch{}await new Promise(resolve=>setTimeout(resolve,250));}
+        await stopGateway();throw Error('Active backup fixture Gateway did not start');
+      };
+      const active=${JSON.stringify(mode)}==='active-backup';
+      const host=await nativeBackupHost(job,{nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},gateway:active?{inspect:async()=> 'active',stop:stopGateway,start:startGateway}:{inspect:async()=> 'inactive',stop:async()=>{throw Error('Inactive Gateway must not be stopped')},start:async()=>{throw Error('Inactive Gateway must not be started')}}});
       let archiveControl,maintenanceReleased=0;
       if(${JSON.stringify(mode)}==='archive'){
         const fileOps=await import('node:fs/promises'),path=await import('node:path');
@@ -137,12 +188,12 @@ describe('actual native host capture adapter', () => {
       const pin=async key=>{const r=await client.send(new HeadObjectCommand({...common,Key:job.settings.prefix+'/'+key}));return{versionId:r.VersionId,storedBytes:r.ContentLength}};
       let captured;
       const storage={identify:async()=>{},passphrase:async()=> 'fixture-vault-key\\0\\n',marker:async id=>{const p=await pin('openclaw-storage.json'); const r=await client.send(new GetObjectCommand({...common,Key:job.settings.prefix+'/openclaw-storage.json',VersionId:p.versionId}));if(JSON.parse(await r.Body.transformToString()).locationId!==id)throw Error('marker mismatch');return p},archive:async capture=>pin('backups/'+job.namespace+'/'+capture.location.key),publish:async result=>{captured=result;console.log(JSON.stringify(result));return{key:'capture.json',versionId:'fixture-result'}},close:()=>client.destroy()};
-      try{await captureInstallation(job,host,storage,{enter:async record=>record,release:async()=>{maintenanceReleased++}},archiveControl);
+      try{if(active)await startGateway();await captureInstallation(job,host,storage,{enter:async record=>record,release:async()=>{maintenanceReleased++}},archiveControl);
         if(archiveControl){await archiveControl.assertHeld();if(maintenanceReleased!==0)throw Error('Archive maintenance was prematurely released');}
         else if(maintenanceReleased!==1)throw Error('Ordinary backup did not release its source');
         const staged=await stageNativeRestore({job,capture:captured,passphrase:'fixture-vault-key\\0\\n',pluginDirectory:job.pluginDirectory,stagingDirectory:${JSON.stringify(path.join(directory, 'restore-stage'))},nativePackageJson:${JSON.stringify(path.join(root, 'node_modules/openclaw/package.json'))},home:${JSON.stringify(directory)}});
         if(staged.moves.length!==captured.capture.assets.length)throw Error('Native staged inventory mismatch');
-      }finally{storage.close()}
+      }finally{await stopGateway();storage.close()}
     `;
       try {
         const result = await execa(process.execPath, ['--input-type=module', '-e', script], {
@@ -152,6 +203,7 @@ describe('actual native host capture adapter', () => {
             TMPDIR: directory,
             OPENCLAW_STATE_DIR: state,
             OPENCLAW_CONFIG_PATH: configPath,
+            OPENCLAW_GATEWAY_PORT: String(port),
             AWS_CONFIG_FILE: path.join(directory, 'empty-config'),
             AWS_SHARED_CREDENTIALS_FILE: path.join(directory, 'empty-credentials'),
             AWS_EC2_METADATA_SERVICE_ENDPOINT: server.endpoint,
@@ -165,6 +217,16 @@ describe('actual native host capture adapter', () => {
         });
         const captured = JSON.parse(result.stdout);
         expect(captured.verification.ok).toBe(true);
+        expect(captured.capture.skippedVolatileCount).toBeGreaterThan(0);
+        expect(captured.capture.skipped).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              kind: 'entry',
+              reason: 'volatile',
+              sourcePath: path.join(state, 'logs/config-audit.jsonl'),
+            }),
+          ]),
+        );
         if (mode === 'archive')
           expect(captured.gateway).toMatchObject({
             initial: 'inactive',
@@ -175,7 +237,11 @@ describe('actual native host capture adapter', () => {
               requestDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
             },
           });
-        else expect(captured.gateway).toEqual({ initial: 'inactive', restored: true });
+        else
+          expect(captured.gateway).toEqual({
+            initial: mode === 'active-backup' ? 'active' : 'inactive',
+            restored: true,
+          });
         expect(captured.members[0].id).toBe('main');
         expect(captured.members.map((member: { id: string }) => member.id).sort()).toEqual([
           'main',

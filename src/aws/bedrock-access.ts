@@ -24,6 +24,7 @@ import {
 } from '@aws-sdk/client-iam';
 import type { CommandContext } from '../cli/utils/context.js';
 import { awsClientConfig, type AwsTarget } from './target.js';
+import { assertRecoveryReview, assertRecoveryStackIdentity } from './auxiliary-stacks.js';
 import {
   inspectRecoverySource,
   bedrockAccessStackName,
@@ -73,20 +74,41 @@ const absent = (error: unknown) =>
   error instanceof Error &&
   error.name === 'ValidationError' &&
   /(?:does not exist|not exist)/i.test(error.message);
-function assertStack(stack: Stack, target: AwsTarget, preview: BedrockAccessPreview) {
+function assertStack(
+  stack: Stack,
+  target: AwsTarget,
+  preview: BedrockAccessPreview,
+  review?: DescribeChangeSetOutput,
+) {
+  const plan = {
+    kind: 'bedrock-access' as const,
+    identity: identity(preview.source),
+    stackName: preview.stackName,
+  };
+  if (review) assertRecoveryReview(stack, target, plan, review);
   if (
     stack.StackName !== preview.stackName ||
     !stack.StackId?.startsWith(
       `arn:${target.arn.split(':')[1]}:cloudformation:${target.region}:${target.account}:stack/${preview.stackName}/`,
     ) ||
     (preview.stackId && stack.StackId !== preview.stackId) ||
-    !ownershipTags(preview.source).every((expected) =>
-      stack.Tags?.some((tag) => tag.Key === expected.Key && tag.Value === expected.Value),
-    )
+    (!review &&
+      !ownershipTags(preview.source).every((expected) =>
+        stack.Tags?.some((tag) => tag.Key === expected.Key && tag.Value === expected.Value),
+      ))
   )
     throw new Error(
       'Bedrock access stack ownership or immutable identity differs from the preview',
     );
+}
+function assertPinnedStackIdentity(stack: Stack, target: AwsTarget, preview: BedrockAccessPreview) {
+  assertRecoveryStackIdentity(stack, target, {
+    kind: 'bedrock-access',
+    identity: identity(preview.source),
+    stackName: preview.stackName,
+  });
+  if (!preview.stackId || stack.StackId !== preview.stackId)
+    throw new Error('Bedrock access immutable stack identity differs from the preview');
 }
 function policyResource(
   template: Template,
@@ -280,6 +302,11 @@ function assertChangeSet(
     result.NextToken ||
     result.Status !== 'CREATE_COMPLETE' ||
     result.ExecutionStatus !== 'AVAILABLE' ||
+    !ownershipTags(preview.source).every(
+      (expected) =>
+        result.Tags?.filter((tag) => tag.Key === expected.Key).length === 1 &&
+        result.Tags?.some((tag) => tag.Key === expected.Key && tag.Value === expected.Value),
+    ) ||
     result.Changes?.length !== 1
   )
     throw new Error('Bedrock change set is incomplete, changed or unavailable');
@@ -493,8 +520,20 @@ export async function applyBedrockAccess(
     const stack = await describeStack(client, preview.stackId ?? preview.stackName, signal);
     if (!stack)
       throw new Error('Bedrock access review stack disappeared; no replacement was created');
-    assertStack(stack, ctx.target, preview);
     const creating = preview.previousTemplateDigest === undefined;
+    const originalReview =
+      creating && preview.changeSetId
+        ? await client.send(
+            new DescribeChangeSetCommand({
+              StackName: preview.stackId,
+              ChangeSetName: preview.changeSetId,
+            }),
+            { abortSignal: signal },
+          )
+        : undefined;
+    if (originalReview && originalReview.ChangeSetId !== preview.changeSetId)
+      throw new Error('Bedrock review identity changed');
+    assertStack(stack, ctx.target, preview, originalReview);
     if (
       creating
         ? stack.StackStatus !== 'REVIEW_IN_PROGRESS'
@@ -546,7 +585,9 @@ export async function applyBedrockAccess(
         throw new Error(
           'Bedrock policy stack disappeared during execution; reconcile before model activation',
         );
-      assertStack(live, ctx.target, preview);
+      if (creating && live.StackStatus === 'CREATE_IN_PROGRESS' && !live.Tags?.length)
+        assertPinnedStackIdentity(live, ctx.target, preview);
+      else assertStack(live, ctx.target, preview);
       if (
         change.ExecutionStatus === 'EXECUTE_COMPLETE' &&
         ['CREATE_COMPLETE', 'UPDATE_COMPLETE'].includes(live.StackStatus ?? '')
@@ -609,8 +650,21 @@ export async function discardBedrockAccessPreview(
   try {
     const stack = await describeStack(client, preview.stackId, signal);
     if (!stack) return;
-    assertStack(stack, ctx.target, preview);
     const creating = preview.previousTemplateDigest === undefined;
+    if (creating && stack.StackStatus !== 'REVIEW_IN_PROGRESS')
+      throw new Error('Bedrock policy preview may be executing; automatic cancellation refused');
+    const originalReview = creating
+      ? await client.send(
+          new DescribeChangeSetCommand({
+            StackName: preview.stackId,
+            ChangeSetName: preview.changeSetId,
+          }),
+          { abortSignal: signal },
+        )
+      : undefined;
+    if (originalReview && originalReview.ChangeSetId !== preview.changeSetId)
+      throw new Error('Bedrock review identity changed');
+    assertStack(stack, ctx.target, preview, originalReview);
     if (
       creating
         ? stack.StackStatus !== 'REVIEW_IN_PROGRESS'
@@ -639,7 +693,8 @@ export async function discardBedrockAccessPreview(
     while (true) {
       const live = await describeStack(client, preview.stackId, signal);
       if (!live) return;
-      assertStack(live, ctx.target, preview);
+      if (creating && !live.Tags?.length) assertPinnedStackIdentity(live, ctx.target, preview);
+      else assertStack(live, ctx.target, preview);
       if (live.StackStatus === 'DELETE_COMPLETE') return;
       if (live.StackStatus !== 'DELETE_IN_PROGRESS')
         throw new Error('Bedrock review-stack cleanup requires inspection');

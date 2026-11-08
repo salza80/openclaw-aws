@@ -1,5 +1,5 @@
 import { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { GetParameterCommand, ListTagsForResourceCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -25,6 +25,7 @@ import { verifyNativeClone } from './clone-validate.js';
 import { getApiKeyParamName } from '../cli/utils/api-keys.js';
 import type { ApiKeyProvider } from '../cli/types/index.js';
 import { publishTeamMembership } from './team-recovery.js';
+import { readCloneCredentialTags } from './clone-credential-readiness.js';
 
 /** The shared entrypoint holds flock; source extraction is never installed as
  * native identity. Every credential is read from this new target's owned SSM paths.
@@ -118,10 +119,7 @@ export async function runCloneWorker(
     const providerParameters: string[] = [];
     for (const provider of job.credentials.providers) {
       const name = getApiKeyParamName(job.target.deploymentName, provider);
-      const tags = await ssm.send(
-        new ListTagsForResourceCommand({ ResourceType: 'Parameter', ResourceId: name }),
-        request(),
-      );
+      const tags = await readCloneCredentialTags(ssm, name, request, signal);
       if (
         ![
           ['openclaw-aws:deployment-id', job.target.stackId],

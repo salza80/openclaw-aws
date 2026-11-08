@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CreateStackCommand,
+  DescribeChangeSetCommand,
   DeleteStackCommand,
   DescribeStacksCommand,
   GetTemplateCommand,
@@ -56,10 +57,7 @@ describe('independent recovery stack lifecycle', () => {
       StackName: access.stackName,
       StackId: stackId.replace(plan.stackName, access.stackName),
       StackStatus: 'REVIEW_IN_PROGRESS',
-      Tags: [
-        { Key: 'openclaw-aws:kind', Value: access.kind },
-        { Key: 'openclaw-aws:identity', Value: access.identity },
-      ],
+      Tags: [],
     };
     const changeSetId =
       'arn:aws:cloudformation:eu-central-1:123456789012:changeSet/review/prepared';
@@ -81,6 +79,18 @@ describe('independent recovery stack lifecycle', () => {
               Status: 'CREATE_COMPLETE',
               ExecutionStatus: 'AVAILABLE',
             },
+          ],
+        };
+      if (command instanceof DescribeChangeSetCommand)
+        return {
+          StackId: identity.StackId,
+          StackName: identity.StackName,
+          ChangeSetId: changeSetId,
+          Status: 'CREATE_COMPLETE',
+          ExecutionStatus: 'AVAILABLE',
+          Tags: [
+            { Key: 'openclaw-aws:kind', Value: access.kind },
+            { Key: 'openclaw-aws:identity', Value: access.identity },
           ],
         };
       if (command instanceof GetTemplateCommand) {

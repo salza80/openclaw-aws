@@ -44,6 +44,8 @@ describe('shared instance power approvals', () => {
   it('starts exactly the approved immutable instance and reports SSM separately from native health', async () => {
     const plan = await prepareInstancePower(ctx, 'start');
     const result = await applyInstancePower(ctx, plan);
+    expect(mocks.source).toHaveBeenCalledTimes(2);
+    for (const call of mocks.source.mock.calls) expect(call).toEqual([ctx, { allowStopped: true }]);
     expect(mocks.start).toHaveBeenCalledWith(source.instanceId, ctx.target);
     expect(result).toMatchObject({ state: 'running', changed: true, ssmReady: true });
     expect(result).not.toHaveProperty('gatewayHealthy');
