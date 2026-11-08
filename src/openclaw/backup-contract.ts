@@ -271,6 +271,17 @@ export function parseCapture(value: unknown): NativeCaptureSummary {
 }
 export function parseVerification(value: unknown): NativeVerification {
   const row = object(value);
+  const archiveRoot = textField(row.archiveRoot, 256);
+  if (
+    archiveRoot === '.' ||
+    archiveRoot === '..' ||
+    archiveRoot.includes('/') ||
+    archiveRoot.includes('\\') ||
+    [...archiveRoot].some(
+      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+    )
+  )
+    throw new Error('Native archive root must be a single safe directory name');
   if (
     row.ok !== true ||
     row.runtimeVersion !== OPENCLAW_VERSION ||
@@ -285,7 +296,7 @@ export function parseVerification(value: unknown): NativeVerification {
     ok: true,
     runtimeVersion: OPENCLAW_VERSION,
     createdAt: textField(row.createdAt, 64),
-    archiveRoot: textField(row.archiveRoot),
+    archiveRoot,
     assetCount: count(row.assetCount),
     entryCount: count(row.entryCount),
     symlinkCount: count(row.symlinkCount),

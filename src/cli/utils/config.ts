@@ -3,6 +3,7 @@ import fs from 'fs';
 import type { OpenClawConfig } from '../types/index.js';
 import { ConfigError } from './errors.js';
 import { validateConfig, validateConfigStructure } from './config-validation.js';
+import { validateProjectName } from './validation.js';
 
 const CONFIG_ROOT = '.openclaw-aws';
 const CONFIGS_DIR = 'configs';
@@ -18,7 +19,12 @@ export function getConfigsDir(): string {
 }
 
 export function getConfigPathByName(name: string): string {
-  return path.join(getConfigsDir(), `${name}.json`);
+  return namedPath(getConfigsDir(), name);
+}
+
+function namedPath(directory: string, name: string): string {
+  if (validateProjectName(name) !== true) throw new ConfigError('Invalid deployment name');
+  return path.join(directory, `${name}.json`);
 }
 
 export function getOutputsDir(): string {
@@ -26,7 +32,7 @@ export function getOutputsDir(): string {
 }
 
 export function getOutputsPathByName(name: string): string {
-  return path.join(getOutputsDir(), `${name}.json`);
+  return namedPath(getOutputsDir(), name);
 }
 
 export function getCurrentPath(): string {
